@@ -1,26 +1,44 @@
-import requests
+import ccxt
+import pandas as pd
 import time
 
-# --- CONFIGURATION DU ROBOT 24H ---
-SYMBOLE = "BTCUSDT"
-SOLDE_INITIAL = 5.0
-RISQUE_NORMAL = 0.30
-RISQUE_REDUIT = 0.05  # Règle du 1% après une perte
-DERNIER_GAIN = True
+# --- CONFIGURATION TEST 24H ---
+exchange = ccxt.binance({
+    'apiKey': 'TES_CLES_TESTNET',
+    'secret': 'TES_SECRET_TESTNET',
+    'enableRateLimit': True,
+    'options': {'defaultType': 'future'}
+})
+exchange.set_sandbox_mode(True) # Mode Testnet activé
 
-print("🚀 ROBOT SMC V14 EN LIGNE - TEST 24H DÉMARRÉ")
+SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
+SOLDE_INITIAL = 10.0
+RISQUE_NORMAL = 0.50 # Ton réglage 0.5$
+RISQUE_REDUIT = 0.10 # Ta règle du 1% (0.10$ sur 10$)
+DERNIER_GAIN = True  # Devient False si le robot perd
+
+def calculate_size(symbol, price, balance):
+    global DERNIER_GAIN
+    # Règle du 13/01 : 1% si perte, sinon 0.5$
+    risk = RISQUE_NORMAL if DERNIER_GAIN else RISQUE_REDUIT
+    # Levier x20 pour permettre les petits montants
+    quantity = (risk * 20) / price
+    return exchange.amount_to_precision(symbol, quantity)
+
+print("🚀 ROBOT SMC V17 - TEST FUTURES DÉMARRÉ")
 
 while True:
     try:
-        # Le robot scanne le prix sur Binance
-        url = f"https://api.binance.com/api/v3/ticker/price?symbol={SYMBOLE}"
-        prix = float(requests.get(url).json()['price'])
-        
-        # Logique simplifiée pour les logs du test
-        print(f"[{time.strftime('%H:%M:%S')}] Scan {SYMBOLE} | Prix: {prix} | Solde: {SOLDE_INITIAL}$")
-        
-        # Attend 5 minutes (bougie M5)
-        time.sleep(300) 
+        balance = exchange.fetch_balance()['total']['USDT']
+        for symbol in SYMBOLS:
+            ticker = exchange.fetch_ticker(symbol)
+            price = ticker['last']
+            print(f"[{time.strftime('%H:%M')}] Scan {symbol}: {price}$ | Solde: {balance}$")
+            
+            # Ici le robot cherche le signal SMC...
+            # Si signal : qty = calculate_size(symbol, price, balance)
+            
+        time.sleep(300)
     except Exception as e:
-        print(f"⚠️ Erreur de connexion : {e}")
-        time.sleep(60)
+        print(f"Erreur: {e}")
+        time.sleep(10)
