@@ -1,0 +1,64 @@
+import time
+import random
+
+# --- CONFIGURATION ---
+SOLDE = 5.0
+SOLDE_INITIAL = 5.0
+SOLDE_MAX_ATTEINT = 5.0 
+RISQUE_DE_BASE = 0.30
+MARCHES = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+
+print("🚀 ROBOT SMC V14 - MODE RECOVERY ACTIVÉ")
+print(f"💰 Solde : {SOLDE}$ | Seuil Recovery : -25%")
+print("-" * 50)
+
+def calculer_mise_dynamique(solde_actuel, solde_max):
+    # 1. CALCUL DE LA PERTE ACTUELLE (Correction du nom de la variable ici)
+    perte_pourcentage = (solde_max - solde_actuel) / solde_max if solde_max > 0 else 0
+    
+    # 2. CALCUL DE LA MISE DE BASE (Augmentation +5% tous les +300%)
+    nb_paliers = int(solde_actuel / (SOLDE_INITIAL * 4))
+    mise_normale = RISQUE_DE_BASE * (1 + (0.05 * nb_paliers))
+    
+    # 3. RÈGLE RECOVERY : Si perte > 25% du solde max atteint
+    if perte_pourcentage >= 0.25:
+        # On réduit le lot de 40% (on garde 60% de la mise)
+        return mise_normale * 0.60, True
+    
+    return mise_normale, False
+
+while True:
+    # Mise à jour du solde maximum
+    if SOLDE > SOLDE_MAX_ATTEINT:
+        SOLDE_MAX_ATTEINT = SOLDE
+
+    mise_actuelle, en_recovery = calculer_mise_dynamique(SOLDE, SOLDE_MAX_ATTEINT)
+    trades_pris = 0
+    
+    for marche in MARCHES:
+        if trades_pris >= 3: 
+            break
+            
+        probabilite = random.randint(30, 95)
+        
+        if probabilite >= 75:
+            trades_pris += 1
+            mode = "⚠️ RECOVERY (-40% lot)" if en_recovery else "🔥 NORMAL"
+            print(f"📡 {marche} | {mode} | Probabilité : {probabilite}%")
+            print(f"⚖️ Mise : {round(mise_actuelle, 3)}$")
+            
+            # Simulation de résultat (Winrate basé sur la probabilité)
+            if random.random() * 100 < probabilite:
+                profit = (mise_actuelle * 2.5) * 0.90
+                SOLDE += profit
+                print(f"✅ GAIN : +{round(profit, 2)}$")
+            else:
+                SOLDE -= mise_actuelle
+                print(f"❌ PERTE")
+            
+            print(f"📊 Nouveau Solde : {round(SOLDE, 2)}$")
+            time.sleep(2)
+
+    print("-" * 50)
+    # Pour ton test 24h, on peut réduire l'attente à 10 min (600s) pour voir plus de trades
+    time.sleep(600) 
