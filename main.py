@@ -1,7 +1,8 @@
 import os
 import sys
+import time
 
-# Force l'installation des modules manquants au démarrage
+# --- AUTO-INSTALLATION ---
 try:
     import pandas as pd
     import ccxt
@@ -9,7 +10,6 @@ try:
     from ta.trend import EMAIndicator
     from ta.volatility import AverageTrueRange
 except ImportError:
-    print("📦 Installation des bibliothèques manquantes...")
     os.system(f"{sys.executable} -m pip install pandas ccxt numpy ta")
     import pandas as pd
     import ccxt
@@ -17,127 +17,91 @@ except ImportError:
     from ta.trend import EMAIndicator
     from ta.volatility import AverageTrueRange
 
-import time
-
-# ================= CONFIG =================
+# ================= CONFIGURATION =================
+CAPITAL_INITIAL_JOUR = 5.0
 CAPITAL = 5.0
-CAPITAL_MAX = CAPITAL
-RISQUE_PCT = 0.03  # Reste à 3% (ne sera plus réduit à 1%)
-RISQUE_MAX_DOLLAR = 3.0
-
-TIMEFRAME = '1m'
-MARKETS = [
-    'BTC/USDT', 'ETH/USDT', 'BNB/USDT',
-    'SOL/USDT', 'XRP/USDT', 'AVAX/USDT'
-]
-
+MISE_BASE = 0.30            
+SEUIL_PROFIT_300 = 20.0     
+TIMEFRAME = '5m'            # ANALYSE EN M5
+PROBA_MINIMUM = 70          # Le robot ne trade que si probabilité > 70%
+MARKETS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'AVAX/USDT']
 MAX_TRADES = 3
 open_trades = []
 
-# ================= BINANCE =================
 exchange = ccxt.binance({'enableRateLimit': True})
 
-# ================= DATA =================
-def get_ohlc(symbol, limit=100):
-    try:
-        ohlc = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=limit)
-        df = pd.DataFrame(ohlc, columns=['time','open','high','low','close','volume'])
-        return df
-    except Exception as e:
-        print(f"⚠️ Erreur réseau sur {symbol}: {e}")
-        return None
-
-# ================= SMC ANALYSIS =================
-def smc_analysis(df):
-    if df is None: return 0, 0, 0
-    ema = EMAIndicator(df['close'], window=50).ema_indicator()
+def calculer_probabilite(df):
+    """ Calcule la probabilité de succès (0 à 100%) """
+    ema_50 = EMAIndicator(df['close'], window=50).ema_indicator()
     atr = AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
-
-    trend = 1 if df['close'].iloc[-1] > ema.iloc[-1] else -1
-    volatility = atr.iloc[-1]
-
-    structure = abs(df['close'].iloc[-1] - df['close'].iloc[-10]) > volatility
-    breaker = df['high'].iloc[-2] < df['high'].iloc[-5]
-    imbalance = (df['high'] - df['low']).iloc[-1] > volatility * 1.2
-
-    score = 0
-    score += 0.25 if trend == 1 else 0
-    score += 0.25 if structure else 0
-    score += 0.25 if breaker else 0
-    score += 0.25 if imbalance else 0
-
-    return score, volatility, trend
-
-# ================= TRADE ENGINE =================
-def open_trade(symbol, price, volatility):
-    global CAPITAL
-    risk_dollar = min(CAPITAL * RISQUE_PCT, RISQUE_MAX_DOLLAR)
     
-    if risk_dollar > CAPITAL or risk_dollar <= 0:
-        return
+    prix = df['close'].iloc[-1]
+    vol = atr.iloc[-1]
+    
+    score = 0
+    # 1. Force de la tendance (30%)
+    if prix > ema_50.iloc[-1]: score += 30
+    # 2. Momentum (30%) - Est-ce que les 3 dernières bougies montent ?
+    if df['close'].iloc[-1] > df['close'].iloc[-3]: score += 30
+    # 3. Volatilité saine (40%) - Pas de bougies trop géantes/dangereuses
+    corps_bougie = abs(df['close'].iloc[-1] - df['open'].iloc[-1])
+    if corps_bougie < (vol * 1.5): score += 40
+    
+    return score
 
-    trade = {
-        'symbol': symbol,
-        'entry': price,
-        'risk': risk_dollar,
-        'sl': price - (volatility * 1.5), # SL un peu plus large pour respirer
-        'rr': 0,
-        'secured': False,
-        'vol': volatility
-    }
+def calculer_lot():
+    global CAPITAL, CAPITAL_INITIAL_JOUR
+    # Richesse (+300%) -> Lot +5%
+    if CAPITAL >= SEUIL_PROFIT_300: return MISE_BASE * 1.05
+    # Sécurité (-30%) -> Lot -5%
+    if ((CAPITAL - CAPITAL_INITIAL_JOUR) / CAPITAL_INITIAL_JOUR) <= -0.30: return MISE_BASE * 0.95
+    return MISE_BASE
 
-    CAPITAL -= risk_dollar
-    open_trades.append(trade)
-    print(f"🚀 TRADE OUVERT: {symbol} à {price}$ (Risque: {round(risk_dollar, 2)}$)")
-
-def manage_trade(trade, price):
+def scanner_et_trader():
     global CAPITAL
-    move = price - trade['entry']
-    trade['rr'] = move / trade['vol']
+    for symbol in MARKETS:
+        if len(open_trades) < MAX_TRADES and not any(t['symbol'] == symbol for t in open_trades):
+            try:
+                # Récupération M5
+                ohlc = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=100)
+                df = pd.DataFrame(ohlc, columns=['time','open','high','low','close','volume'])
+                
+                # CALCUL DE LA PROBABILITÉ
+                proba = calculer_probabilite(df)
+                
+                print(f"📊 Analyse {symbol} (M5) : Probabilité {proba}%")
+                
+                if proba >= PROBA_MINIMUM:
+                    mise = calculer_lot()
+                    if mise <= CAPITAL:
+                        prix = df['close'].iloc[-1]
+                        atr = AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
+                        trade = {
+                            'symbol': symbol,
+                            'entry': prix,
+                            'lot': mise,
+                            'sl': prix - (atr.iloc[-1] * 1.5),
+                            'proba': proba
+                        }
+                        CAPITAL -= mise
+                        open_trades.append(trade)
+                        print(f"✅ POSITION VALIDÉE : {symbol} ({proba}%) | Lot: {round(mise,3)}$")
+                else:
+                    print(f"💤 {symbol} : Probabilité trop faible, on attend.")
+            except:
+                continue
 
-    # Break Even à 1R
-    if trade['rr'] >= 1 and not trade['secured']:
-        trade['sl'] = trade['entry']
-        trade['secured'] = True
-        print(f"🛡️ SL déplacé au point d'entrée pour {trade['symbol']}")
-
-    # Stop loss ou Take Profit
-    if price <= trade['sl']:
-        profit = trade['risk'] * trade['rr']
-        CAPITAL += trade['risk'] + profit
-        print(f"🔴 Fermeture {trade['symbol']} | Résultat: {round(profit, 2)}$")
-        open_trades.remove(trade)
-
-# ================= MAIN LOOP =================
-print("🤖 ROBOTKING DÉMARRÉ (Cycles de 30s)")
+# ================= BOUCLE DE 30 SECONDES =================
+print(f"🤖 ROBOTKING M5 DÉMARRÉ")
+print(f"⚙️ Stratégie : Seuil {PROBA_MINIMUM}% | Temps de réflexion : 30s")
 
 while True:
-    try:
-        setups = []
-        for symbol in MARKETS:
-            df = get_ohlc(symbol)
-            if df is not None:
-                score, vol, trend = smc_analysis(df)
-                if score >= 0.75:
-                    setups.append((score, symbol, df['close'].iloc[-1], vol))
-
-        setups.sort(reverse=True)
-
-        for setup in setups[:MAX_TRADES]:
-            if len(open_trades) < MAX_TRADES:
-                _, symbol, price, vol = setup
-                # Vérifier si on n'a pas déjà ce symbole ouvert
-                if not any(t['symbol'] == symbol for t in open_trades):
-                    open_trade(symbol, price, vol)
-
-        for trade in open_trades[:]:
-            ticker = exchange.fetch_ticker(trade['symbol'])
-            manage_trade(trade, ticker['last'])
-
-        print(f"💰 Capital: {round(CAPITAL,2)}$ | Actifs: {len(open_trades)} | {time.strftime('%H:%M:%S')}")
-
-    except Exception as e:
-        print(f"❌ Erreur boucle: {e}")
-
-    # --- TEMPS D'ANALYSE : 30 SECONDES ---
+    scanner_et_trader()
+    
+    # Affichage Statut
+    mode = "NORMAL"
+    if calculer_lot() > MISE_BASE: mode = "RICHESSE (+5%)"
+    if calculer_lot() < MISE_BASE: mode = "SÉCURITÉ (-5%)"
+    
+    print(f"💰 Capital: {round(CAPITAL, 2)}$ | Mode: {mode} | Prochaine analyse dans 30s...")
     time.sleep(30)
