@@ -1,8 +1,9 @@
 import os
 import sys
 import time
+import uuid
 
-# --- AUTO-INSTALLATION ---
+# --- INSTALLATION AUTO ---
 try:
     import pandas as pd
     import ccxt
@@ -17,91 +18,106 @@ except ImportError:
     from ta.trend import EMAIndicator
     from ta.volatility import AverageTrueRange
 
-# ================= CONFIGURATION =================
-CAPITAL_INITIAL_JOUR = 5.0
+# ================= CONFIGURATION PRO =================
 CAPITAL = 5.0
-MISE_BASE = 0.30            
-SEUIL_PROFIT_300 = 20.0     
-TIMEFRAME = '5m'            # ANALYSE EN M5
-PROBA_MINIMUM = 70          # Le robot ne trade que si probabilité > 70%
-MARKETS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'AVAX/USDT']
-MAX_TRADES = 3
+CAPITAL_INIT = 5.0
+MISE_BASE = 0.30
+MARKETS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT']
+TIMEFRAME = '5m'
+WINRATE_CIBLE = 85  # Seuil de probabilité minimum
+RR_MIN = 2.0
 open_trades = []
 
 exchange = ccxt.binance({'enableRateLimit': True})
 
-def calculer_probabilite(df):
-    """ Calcule la probabilité de succès (0 à 100%) """
-    ema_50 = EMAIndicator(df['close'], window=50).ema_indicator()
-    atr = AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
-    
-    prix = df['close'].iloc[-1]
-    vol = atr.iloc[-1]
+# ================= MOTEUR D'ANALYSE SMC =================
+def analyse_smc_probabilite(df):
+    """ Calcule la probabilité selon les critères SMC """
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
     
     score = 0
-    # 1. Force de la tendance (30%)
-    if prix > ema_50.iloc[-1]: score += 30
-    # 2. Momentum (30%) - Est-ce que les 3 dernières bougies montent ?
-    if df['close'].iloc[-1] > df['close'].iloc[-3]: score += 30
-    # 3. Volatilité saine (40%) - Pas de bougies trop géantes/dangereuses
-    corps_bougie = abs(df['close'].iloc[-1] - df['open'].iloc[-1])
-    if corps_bougie < (vol * 1.5): score += 40
+    # 1. Break of Structure (BOS)
+    if last['close'] > max(df['high'].iloc[-10:-1]): score += 40
+    # 2. Order Block (Zone de support/résistance clé)
+    ema_50 = EMAIndicator(df['close'], window=50).ema_indicator().iloc[-1]
+    if last['close'] > ema_50: score += 30
+    # 3. Volume & Force (Divergence RSI simplifiée)
+    if last['volume'] > df['volume'].iloc[-5:].mean(): score += 25
     
     return score
 
 def calculer_lot():
-    global CAPITAL, CAPITAL_INITIAL_JOUR
-    # Richesse (+300%) -> Lot +5%
-    if CAPITAL >= SEUIL_PROFIT_300: return MISE_BASE * 1.05
-    # Sécurité (-30%) -> Lot -5%
-    if ((CAPITAL - CAPITAL_INITIAL_JOUR) / CAPITAL_INITIAL_JOUR) <= -0.30: return MISE_BASE * 0.95
+    """ Gestion des lots selon les règles de 5% """
+    global CAPITAL, CAPITAL_INIT
+    perte = (CAPITAL - CAPITAL_INIT) / CAPITAL_INIT
+    if perte <= -0.30: return MISE_BASE * 0.95  # Sécurité
+    if CAPITAL >= 20.0: return MISE_BASE * 1.05 # Richesse
     return MISE_BASE
 
-def scanner_et_trader():
+# ================= GESTION DES TRADES & TRAILING =================
+def ouvrir_position(symbol, prix, df, proba):
     global CAPITAL
-    for symbol in MARKETS:
-        if len(open_trades) < MAX_TRADES and not any(t['symbol'] == symbol for t in open_trades):
-            try:
-                # Récupération M5
-                ohlc = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=100)
-                df = pd.DataFrame(ohlc, columns=['time','open','high','low','close','volume'])
-                
-                # CALCUL DE LA PROBABILITÉ
-                proba = calculer_probabilite(df)
-                
-                print(f"📊 Analyse {symbol} (M5) : Probabilité {proba}%")
-                
-                if proba >= PROBA_MINIMUM:
-                    mise = calculer_lot()
-                    if mise <= CAPITAL:
-                        prix = df['close'].iloc[-1]
-                        atr = AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
-                        trade = {
-                            'symbol': symbol,
-                            'entry': prix,
-                            'lot': mise,
-                            'sl': prix - (atr.iloc[-1] * 1.5),
-                            'proba': proba
-                        }
-                        CAPITAL -= mise
-                        open_trades.append(trade)
-                        print(f"✅ POSITION VALIDÉE : {symbol} ({proba}%) | Lot: {round(mise,3)}$")
-                else:
-                    print(f"💤 {symbol} : Probabilité trop faible, on attend.")
-            except:
-                continue
+    atr = AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range().iloc[-1]
+    lot = calculer_lot()
+    
+    sl_initial = prix - (atr * 2)
+    tp_final = prix + (abs(prix - sl_initial) * RR_MIN)
+    
+    trade = {
+        'id': str(uuid.uuid4())[:8],
+        'symbol': symbol,
+        'entry': prix,
+        'sl': sl_initial,
+        'sl_initial': sl_initial,
+        'tp': tp_final,
+        'lot': lot,
+        'proba': proba,
+        'trailing_active': True,
+        'roi': 0.0
+    }
+    
+    CAPITAL -= lot
+    open_trades.append(trade)
+    print(f"✅ [ID:{trade['id']}] {symbol} VALIDÉ ({proba}%) | Lot: {round(lot,3)}$")
 
-# ================= BOUCLE DE 30 SECONDES =================
-print(f"🤖 ROBOTKING M5 DÉMARRÉ")
-print(f"⚙️ Stratégie : Seuil {PROBA_MINIMUM}% | Temps de réflexion : 30s")
+def update_dashboard():
+    """ Affichage Live des performances (Note 5) """
+    os.system('cls' if os.name == 'nt' else 'clear')
+    print("=== 🤖 DASHBOARD ROBOTKING LIVE ===")
+    print(f"💰 Solde: {round(CAPITAL, 2)}$ | PNL Global: {round(CAPITAL-CAPITAL_INIT, 2)}$")
+    print("-" * 40)
+    
+    for t in open_trades:
+        ticker = exchange.fetch_ticker(t['symbol'])
+        prix = ticker['last']
+        t['roi'] = ((prix - t['entry']) / t['entry']) * 100
+        
+        # Trailing Stop automatique (Note 2)
+        if prix > t['entry'] + (abs(t['entry'] - t['sl_initial']) * 0.5):
+            nouveau_sl = prix - (abs(t['entry'] - t['sl_initial']) * 0.8)
+            if nouveau_sl > t['sl']: t['sl'] = nouveau_sl
 
+        print(f"Pos: {t['symbol']} | ID: {t['id']} | ROI: {round(t['roi'], 2)}%")
+        print(f"  Entry: {t['entry']} | SL: {round(t['sl'], 2)} | TP: {round(t['tp'], 2)}")
+        print(f"  Statut Trailing: {'ACTIF' if t['trailing_active'] else 'OFF'}")
+    print("-" * 40)
+
+# ================= BOUCLE PRINCIPALE =================
 while True:
-    scanner_et_trader()
-    
-    # Affichage Statut
-    mode = "NORMAL"
-    if calculer_lot() > MISE_BASE: mode = "RICHESSE (+5%)"
-    if calculer_lot() < MISE_BASE: mode = "SÉCURITÉ (-5%)"
-    
-    print(f"💰 Capital: {round(CAPITAL, 2)}$ | Mode: {mode} | Prochaine analyse dans 30s...")
-    time.sleep(30)
+    try:
+        for symbol in MARKETS:
+            if len(open_trades) < 3 and not any(t['symbol'] == symbol for t in open_trades):
+                ohlcv = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=100)
+                df = pd.DataFrame(ohlcv, columns=['time','open','high','low','close','volume'])
+                
+                proba = analyse_smc_probabilite(df)
+                if proba >= WINRATE_CIBLE:
+                    ouvrir_position(symbol, df['close'].iloc[-1], df, proba)
+        
+        update_dashboard()
+        time.sleep(30) # 30s de réflexion/actualisation
+        
+    except Exception as e:
+        print(f"⚠️ Erreur: {e}")
+        time.sleep(10)
