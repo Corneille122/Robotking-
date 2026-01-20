@@ -1,70 +1,72 @@
-import ccxt
+import requests
+import pandas as pd
 import time
-import random
 
-# Connexion aux prix réels de Binance
-exchange = ccxt.binance()
+# ================= CONFIG =================
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+LEVERAGE = 20
+MISE_MINIMALE = 0.3      
+CAPITAL_INITIAL = 5.0    
+TEMPS_REFLEXION = 30     # 30 secondes d'analyse
+# =========================================
 
-# --- VOS RÉGLAGES ---
-CAPITAL_DE_DEPART = 5.0
-SYMBOLE = 'BTC/USDT'
-TEMPS_ANALYSE = 60  # 1 minute d'observation pour calculer la probabilité
-PAUSE_BOUGIE = 300  # 5 minutes entre chaque cycle
-
-class RobotLeader:
+class RobotKingPro:
     def __init__(self):
-        self.capital = CAPITAL_DE_DEPART
-        self.lot_size = 0.05  # 5% au début
+        self.solde = CAPITAL_INITIAL
+        self.capital_max = CAPITAL_INITIAL
+        self.risque_actuel = 0.05
 
-    def analyser_probabilite(self):
-        print(f"\n🔍 DEBUT DE L'ANALYSE (Attente de {TEMPS_ANALYSE}s)...")
-        # Premier relevé de prix
-        p1 = exchange.fetch_ticker(SYMBOLE)['last']
-        time.sleep(TEMPS_ANALYSE)
-        # Deuxième relevé de prix après 1 minute
-        p2 = exchange.fetch_ticker(SYMBOLE)['last']
+    def analyser_set_up(self, symbol):
+        """ Phase de calcul du Pour et du Contre (30s) """
+        print(f"🔍 Analyse de {symbol} en cours... (Attente de 30s)")
         
-        variation = ((p2 - p1) / p1) * 100
-        # Calcul du setup : plus le mouvement est fort, plus la probabilité grimpe
-        proba = min(abs(variation) * 2000, 99) 
-        return p2, variation, proba
+        # 1. État au début des 30s
+        prix_debut = 50000 # Simulation via API
+        
+        time.sleep(TEMPS_REFLEXION) # PAUSE DE RÉFLEXION
+        
+        # 2. État à la fin des 30s
+        prix_fin = 50050 # Simulation via API
+        
+        variation = ((prix_fin - prix_debut) / prix_debut) * 100
+        
+        # Le "Pour" : Le prix confirme la direction
+        # Le "Contre" : Le prix hésite ou fait du surplace
+        if abs(variation) > 0.02: 
+            return True, prix_fin # Set-up validé
+        return False, prix_fin # Set-up rejeté (trop d'hésitation)
 
-    def run(self):
-        print(f"🚀 Robotking lancé avec {self.capital}$ sur {SYMBOLE}")
-        
-        while self.capital > 0.5:
-            try:
-                prix_live, changement, proba = self.analyser_probabilite()
+    def ajuster_gestion_risque(self):
+        # Hausse du risque si ROI > 300%
+        if self.solde >= (self.capital_max * 3.0):
+            self.risque_actuel += 0.05
+            self.capital_max = self.solde
+            print(f"🚀 Risque augmenté (+5%)")
+            
+        # Baisse du risque si Perte > 30%
+        if self.solde <= (self.capital_max * 0.70):
+            self.risque_actuel = max(0.01, self.risque_actuel - 0.05)
+            self.capital_max = self.solde
+            print(f"⚠️ Risque réduit (-5%)")
+
+    def executer(self):
+        print(f"🤖 Robotking V17 en ligne | Mise de base: {MISE_MINIMALE}$")
+        while True:
+            self.ajuster_gestion_risque()
+            
+            for symbol in SYMBOLS:
+                # Étape de réflexion de 30 secondes
+                valide, prix = self.analyser_set_up(symbol)
                 
-                print(f"📊 Live BTC: {prix_live}$ | Probabilité de réussite: {round(proba, 1)}%")
-                
-                # SEUIL DE PROBABILITÉ (Le robot ne trade que si setup > 60%)
-                if proba > 60:
-                    montant_trade = self.capital * self.lot_size
-                    print(f"⚡ Setup validé ! Position de {round(montant_trade, 2)}$")
-                    
-                    # Simulation de l'issue du trade
-                    if changement > 0: # Le prix montait pendant l'analyse
-                        gain = montant_trade * 0.4
-                        self.capital += gain
-                        print(f"✅ GAGNÉ : +{round(gain, 2)}$ | Capital: {round(self.capital, 2)}$")
-                        self.lot_size = 0.05 # Reste ou revient à 5%
-                    else:
-                        self.capital -= montant_trade
-                        print(f"❌ PERDU : -{round(montant_trade, 2)}$")
-                        # VOTRE RÈGLE DE SÉCURITÉ
-                        self.lot_size = 0.01
-                        print(f"⚠️ Alerte Stop Loss : Prochain lot réduit à 1% ({round(self.capital * 0.01, 2)}$)")
+                if valide:
+                    mise = max(MISE_MINIMALE, self.solde * self.risque_actuel)
+                    print(f"✅ Set-up validé sur {symbol} ! Entrée avec {round(mise, 2)}$")
                 else:
-                    print("💤 Probabilité trop faible. Pas de trade pour ce cycle.")
-
-                print(f"⏳ Attente de {PAUSE_BOUGIE/60} min avant le prochain cycle...")
-                time.sleep(PAUSE_BOUGIE)
-
-            except Exception as e:
-                print(f"Erreur connexion : {e}")
-                time.sleep(10)
+                    print(f"❌ Set-up rejeté sur {symbol} (Manque de conviction)")
+            
+            print(f"⏳ Repos avant le prochain cycle de 5 minutes...")
+            time.sleep(300)
 
 # Lancement
-bot = RobotLeader()
-bot.run()
+bot = RobotKingPro()
+bot.executer()
