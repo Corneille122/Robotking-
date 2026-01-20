@@ -1,72 +1,129 @@
-import requests
+import ccxt
 import pandas as pd
+import numpy as np
 import time
+from ta.trend import EMAIndicator
+from ta.volatility import AverageTrueRange
 
 # ================= CONFIG =================
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-LEVERAGE = 20
-MISE_MINIMALE = 0.3      
-CAPITAL_INITIAL = 5.0    
-TEMPS_REFLEXION = 30     # 30 secondes d'analyse
-# =========================================
+CAPITAL = 5.0
+CAPITAL_MAX = CAPITAL
+RISQUE_PCT = 0.03
+RISQUE_MAX_DOLLAR = 3.0
 
-class RobotKingPro:
-    def __init__(self):
-        self.solde = CAPITAL_INITIAL
-        self.capital_max = CAPITAL_INITIAL
-        self.risque_actuel = 0.05
+TIMEFRAME = '1m'
+MARKETS = [
+    'BTC/USDT', 'ETH/USDT', 'BNB/USDT',
+    'SOL/USDT', 'XRP/USDT', 'AVAX/USDT'
+]
 
-    def analyser_set_up(self, symbol):
-        """ Phase de calcul du Pour et du Contre (30s) """
-        print(f"🔍 Analyse de {symbol} en cours... (Attente de 30s)")
-        
-        # 1. État au début des 30s
-        prix_debut = 50000 # Simulation via API
-        
-        time.sleep(TEMPS_REFLEXION) # PAUSE DE RÉFLEXION
-        
-        # 2. État à la fin des 30s
-        prix_fin = 50050 # Simulation via API
-        
-        variation = ((prix_fin - prix_debut) / prix_debut) * 100
-        
-        # Le "Pour" : Le prix confirme la direction
-        # Le "Contre" : Le prix hésite ou fait du surplace
-        if abs(variation) > 0.02: 
-            return True, prix_fin # Set-up validé
-        return False, prix_fin # Set-up rejeté (trop d'hésitation)
+MAX_TRADES = 3
+open_trades = []
 
-    def ajuster_gestion_risque(self):
-        # Hausse du risque si ROI > 300%
-        if self.solde >= (self.capital_max * 3.0):
-            self.risque_actuel += 0.05
-            self.capital_max = self.solde
-            print(f"🚀 Risque augmenté (+5%)")
-            
-        # Baisse du risque si Perte > 30%
-        if self.solde <= (self.capital_max * 0.70):
-            self.risque_actuel = max(0.01, self.risque_actuel - 0.05)
-            self.capital_max = self.solde
-            print(f"⚠️ Risque réduit (-5%)")
+# ================= BINANCE =================
+exchange = ccxt.binance({
+    'enableRateLimit': True
+})
 
-    def executer(self):
-        print(f"🤖 Robotking V17 en ligne | Mise de base: {MISE_MINIMALE}$")
-        while True:
-            self.ajuster_gestion_risque()
-            
-            for symbol in SYMBOLS:
-                # Étape de réflexion de 30 secondes
-                valide, prix = self.analyser_set_up(symbol)
-                
-                if valide:
-                    mise = max(MISE_MINIMALE, self.solde * self.risque_actuel)
-                    print(f"✅ Set-up validé sur {symbol} ! Entrée avec {round(mise, 2)}$")
-                else:
-                    print(f"❌ Set-up rejeté sur {symbol} (Manque de conviction)")
-            
-            print(f"⏳ Repos avant le prochain cycle de 5 minutes...")
-            time.sleep(300)
+# ================= DATA =================
+def get_ohlc(symbol, limit=100):
+    ohlc = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=limit)
+    df = pd.DataFrame(ohlc, columns=['time','open','high','low','close','volume'])
+    return df
 
-# Lancement
-bot = RobotKingPro()
-bot.executer()
+# ================= SMC ANALYSIS =================
+def smc_analysis(df):
+    ema = EMAIndicator(df['close'], window=50).ema_indicator()
+    atr = AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
+
+    trend = 1 if df['close'].iloc[-1] > ema.iloc[-1] else -1
+    volatility = atr.iloc[-1]
+
+    structure = abs(df['close'].iloc[-1] - df['close'].iloc[-10]) > volatility
+    breaker = df['high'].iloc[-2] < df['high'].iloc[-5]
+    imbalance = (df['high'] - df['low']).iloc[-1] > volatility * 1.2
+
+    score = 0
+    score += 0.25 if trend == 1 else 0
+    score += 0.25 if structure else 0
+    score += 0.25 if breaker else 0
+    score += 0.25 if imbalance else 0
+
+    return score, volatility, trend
+
+# ================= TRADE ENGINE =================
+def open_trade(symbol, price, volatility):
+    global CAPITAL
+
+    risk_dollar = min(CAPITAL * RISQUE_PCT, RISQUE_MAX_DOLLAR)
+    if risk_dollar > CAPITAL:
+        return
+
+    trade = {
+        'symbol': symbol,
+        'entry': price,
+        'risk': risk_dollar,
+        'sl': price - volatility,
+        'rr': 0,
+        'secured': False,
+        'trail': False,
+        'vol': volatility
+    }
+
+    CAPITAL -= risk_dollar
+    open_trades.append(trade)
+
+def manage_trade(trade, price):
+    global CAPITAL
+
+    move = price - trade['entry']
+    trade['rr'] = move / trade['vol']
+
+    # BE à 1R
+    if trade['rr'] >= 1 and not trade['secured']:
+        trade['sl'] = trade['entry']
+        trade['secured'] = True
+
+    # Trailing après 2R
+    if trade['rr'] >= 2:
+        trade['sl'] = price - trade['vol'] * np.random.uniform(0.5, 1.5)
+
+    # Stop loss
+    if price <= trade['sl']:
+        profit = trade['risk'] * trade['rr']
+        CAPITAL += trade['risk'] + profit
+        open_trades.remove(trade)
+
+# ================= MAIN LOOP =================
+while True:
+    setups = []
+
+    for symbol in MARKETS:
+        df = get_ohlc(symbol)
+        score, vol, trend = smc_analysis(df)
+
+        if score >= 0.75:
+            setups.append((score, symbol, df['close'].iloc[-1], vol))
+
+    setups.sort(reverse=True)
+
+    for setup in setups[:MAX_TRADES]:
+        if len(open_trades) < MAX_TRADES:
+            _, symbol, price, vol = setup
+            open_trade(symbol, price, vol)
+
+    for trade in open_trades[:]:
+        price = exchange.fetch_ticker(trade['symbol'])['last']
+        manage_trade(trade, price)
+
+    CAPITAL_MAX = max(CAPITAL_MAX, CAPITAL)
+
+    # Risk adaptation
+    if CAPITAL >= 15:
+        RISQUE_PCT = min(0.05, RISQUE_PCT + 0.01)
+
+    if CAPITAL <= CAPITAL_MAX * 0.7:
+        RISQUE_PCT = max(0.01, RISQUE_PCT - 0.01)
+
+    print(f"Capital virtuel : {round(CAPITAL,2)}$ | Trades ouverts : {len(open_trades)}")
+    time.sleep(60)
