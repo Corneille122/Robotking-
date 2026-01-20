@@ -1,3 +1,11 @@
+robotking/
+├── main.py
+├── requirements.txt
+├── health.py
+├── config.py
+├── logs/
+│   └── robot.log
+└── README.md
 import ccxt
 import pandas as pd
 import numpy as np
