@@ -1,123 +1,78 @@
-import os
-import sys
+import ccxt
+import pandas as pd
 import time
-import uuid
+from ta.trend import EMAIndicator
 
-# --- INSTALLATION AUTO ---
-try:
-    import pandas as pd
-    import ccxt
-    import numpy as np
-    from ta.trend import EMAIndicator
-    from ta.volatility import AverageTrueRange
-except ImportError:
-    os.system(f"{sys.executable} -m pip install pandas ccxt numpy ta")
-    import pandas as pd
-    import ccxt
-    import numpy as np
-    from ta.trend import EMAIndicator
-    from ta.volatility import AverageTrueRange
-
-# ================= CONFIGURATION PRO =================
-CAPITAL = 5.0
-CAPITAL_INIT = 5.0
+# ================= CONFIGURATION =================
+MARKETS = ['BTC/USDT', 'ETH/USDT']
+TIMEFRAME = '1m'
+CAPITAL_INITIAL_JOUR = 5.0
+CAPITAL_ACTUEL = 5.0  # Ce montant doit être mis à jour par tes trades réels
 MISE_BASE = 0.30
-MARKETS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT']
-TIMEFRAME = '5m'
-WINRATE_CIBLE = 85  # Seuil de probabilité minimum
-RR_MIN = 2.0
-open_trades = []
+PROBA_MIN = 50 
+
+# Objectifs RR
+RR_MINIMUM = 2.0
 
 exchange = ccxt.binance({'enableRateLimit': True})
 
-# ================= MOTEUR D'ANALYSE SMC =================
-def analyse_smc_probabilite(df):
-    """ Calcule la probabilité selon les critères SMC """
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
+def calculer_lot_dynamique():
+    """ 
+    Gestion du risque :
+    1. Si perte journalière >= 30% -> Risque réduit de -5%
+    2. Si profit journalière >= 300% (Capital = 20$) -> Risque augmenté de +5%
+    """
+    global CAPITAL_ACTUEL, CAPITAL_INITIAL_JOUR
     
-    score = 0
-    # 1. Break of Structure (BOS)
-    if last['close'] > max(df['high'].iloc[-10:-1]): score += 40
-    # 2. Order Block (Zone de support/résistance clé)
-    ema_50 = EMAIndicator(df['close'], window=50).ema_indicator().iloc[-1]
-    if last['close'] > ema_50: score += 30
-    # 3. Volume & Force (Divergence RSI simplifiée)
-    if last['volume'] > df['volume'].iloc[-5:].mean(): score += 25
+    performance_pct = (CAPITAL_ACTUEL - CAPITAL_INITIAL_JOUR) / CAPITAL_INITIAL_JOUR
     
-    return score
-
-def calculer_lot():
-    """ Gestion des lots selon les règles de 5% """
-    global CAPITAL, CAPITAL_INIT
-    perte = (CAPITAL - CAPITAL_INIT) / CAPITAL_INIT
-    if perte <= -0.30: return MISE_BASE * 0.95  # Sécurité
-    if CAPITAL >= 20.0: return MISE_BASE * 1.05 # Richesse
+    # RÈGLE DE SÉCURITÉ : Perte de 30%
+    if performance_pct <= -0.30:
+        nouveau_lot = MISE_BASE * 0.95
+        print(f"⚠️ SÉCURITÉ (-30%) : Risque réduit -> {round(nouveau_lot, 4)}$")
+        return nouveau_lot
+    
+    # RÈGLE DE CROISSANCE : Profit de 300% (Capital atteint 20$)
+    if CAPITAL_ACTUEL >= 20.0:
+        nouveau_lot = MISE_BASE * 1.05
+        print(f"💰 CROISSANCE (+300%) : Risque augmenté -> {round(nouveau_lot, 4)}$")
+        return nouveau_lot
+        
     return MISE_BASE
 
-# ================= GESTION DES TRADES & TRAILING =================
-def ouvrir_position(symbol, prix, df, proba):
-    global CAPITAL
-    atr = AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range().iloc[-1]
-    lot = calculer_lot()
-    
-    sl_initial = prix - (atr * 2)
-    tp_final = prix + (abs(prix - sl_initial) * RR_MIN)
-    
-    trade = {
-        'id': str(uuid.uuid4())[:8],
-        'symbol': symbol,
-        'entry': prix,
-        'sl': sl_initial,
-        'sl_initial': sl_initial,
-        'tp': tp_final,
-        'lot': lot,
-        'proba': proba,
-        'trailing_active': True,
-        'roi': 0.0
-    }
-    
-    CAPITAL -= lot
-    open_trades.append(trade)
-    print(f"✅ [ID:{trade['id']}] {symbol} VALIDÉ ({proba}%) | Lot: {round(lot,3)}$")
+print(f"🤖 ROBOTKING : GESTION DYNAMIQUE ACTIVÉE")
+print(f"📈 Augmentation à +300% | 📉 Réduction à -30%")
 
-def update_dashboard():
-    """ Affichage Live des performances (Note 5) """
-    os.system('cls' if os.name == 'nt' else 'clear')
-    print("=== 🤖 DASHBOARD ROBOTKING LIVE ===")
-    print(f"💰 Solde: {round(CAPITAL, 2)}$ | PNL Global: {round(CAPITAL-CAPITAL_INIT, 2)}$")
-    print("-" * 40)
-    
-    for t in open_trades:
-        ticker = exchange.fetch_ticker(t['symbol'])
-        prix = ticker['last']
-        t['roi'] = ((prix - t['entry']) / t['entry']) * 100
-        
-        # Trailing Stop automatique (Note 2)
-        if prix > t['entry'] + (abs(t['entry'] - t['sl_initial']) * 0.5):
-            nouveau_sl = prix - (abs(t['entry'] - t['sl_initial']) * 0.8)
-            if nouveau_sl > t['sl']: t['sl'] = nouveau_sl
-
-        print(f"Pos: {t['symbol']} | ID: {t['id']} | ROI: {round(t['roi'], 2)}%")
-        print(f"  Entry: {t['entry']} | SL: {round(t['sl'], 2)} | TP: {round(t['tp'], 2)}")
-        print(f"  Statut Trailing: {'ACTIF' if t['trailing_active'] else 'OFF'}")
-    print("-" * 40)
-
-# ================= BOUCLE PRINCIPALE =================
 while True:
     try:
         for symbol in MARKETS:
-            if len(open_trades) < 3 and not any(t['symbol'] == symbol for t in open_trades):
-                ohlcv = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=100)
-                df = pd.DataFrame(ohlcv, columns=['time','open','high','low','close','volume'])
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=50)
+            df = pd.DataFrame(ohlcv, columns=['time','open','high','low','close','volume'])
+            
+            prix_actuel = df['close'].iloc[-1]
+            ema8 = EMAIndicator(df['close'], window=8).ema_indicator().iloc[-1]
+            
+            # Analyse Probabilité (50%)
+            score = 0
+            if prix_actuel > ema8: score += 40
+            if prix_actuel > df['close'].iloc[-2]: score += 30
+            if df['volume'].iloc[-1] > df['volume'].iloc[-3:].mean(): score += 30
+            
+            if score >= PROBA_MIN:
+                lot = calculer_lot_dynamique()
                 
-                proba = analyse_smc_probabilite(df)
-                if proba >= WINRATE_CIBLE:
-                    ouvrir_position(symbol, df['close'].iloc[-1], df, proba)
+                # Calcul des niveaux RR
+                sl_dist = prix_actuel * 0.003
+                tp_cible = prix_actuel + (sl_dist * RR_MINIMUM)
+                
+                print(f"\n⚡ SIGNAL {symbol} | Score: {score}%")
+                print(f"💵 Mise calculée: {round(lot, 4)}$")
+                print(f"🎯 Objectif Min (RR 2.0): {round(tp_cible, 2)} | Max: R5+")
+            else:
+                print(f"🔍 Scan {symbol} : {score}% ", end='\r')
         
-        update_dashboard()
-        time.sleep(30) # 30s de réflexion/actualisation
+        time.sleep(10)
         
     except Exception as e:
-        print(f"⚠️ Erreur: {e}")
-        time.sleep(10)
+        print(f"⚠️ Erreur : {e}")
+        time.sleep(5)
