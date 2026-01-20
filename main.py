@@ -1,44 +1,70 @@
 import ccxt
-import pandas as pd
 import time
+import random
 
-# --- CONFIGURATION TEST 24H ---
-exchange = ccxt.binance({
-    'apiKey': 'TES_CLES_TESTNET',
-    'secret': 'TES_SECRET_TESTNET',
-    'enableRateLimit': True,
-    'options': {'defaultType': 'future'}
-})
-exchange.set_sandbox_mode(True) # Mode Testnet activé
+# Connexion aux prix réels de Binance
+exchange = ccxt.binance()
 
-SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
-SOLDE_INITIAL = 10.0
-RISQUE_NORMAL = 0.50 # Ton réglage 0.5$
-RISQUE_REDUIT = 0.10 # Ta règle du 1% (0.10$ sur 10$)
-DERNIER_GAIN = True  # Devient False si le robot perd
+# --- VOS RÉGLAGES ---
+CAPITAL_DE_DEPART = 5.0
+SYMBOLE = 'BTC/USDT'
+TEMPS_ANALYSE = 60  # 1 minute d'observation pour calculer la probabilité
+PAUSE_BOUGIE = 300  # 5 minutes entre chaque cycle
 
-def calculate_size(symbol, price, balance):
-    global DERNIER_GAIN
-    # Règle du 13/01 : 1% si perte, sinon 0.5$
-    risk = RISQUE_NORMAL if DERNIER_GAIN else RISQUE_REDUIT
-    # Levier x20 pour permettre les petits montants
-    quantity = (risk * 20) / price
-    return exchange.amount_to_precision(symbol, quantity)
+class RobotLeader:
+    def __init__(self):
+        self.capital = CAPITAL_DE_DEPART
+        self.lot_size = 0.05  # 5% au début
 
-print("🚀 ROBOT SMC V17 - TEST FUTURES DÉMARRÉ")
+    def analyser_probabilite(self):
+        print(f"\n🔍 DEBUT DE L'ANALYSE (Attente de {TEMPS_ANALYSE}s)...")
+        # Premier relevé de prix
+        p1 = exchange.fetch_ticker(SYMBOLE)['last']
+        time.sleep(TEMPS_ANALYSE)
+        # Deuxième relevé de prix après 1 minute
+        p2 = exchange.fetch_ticker(SYMBOLE)['last']
+        
+        variation = ((p2 - p1) / p1) * 100
+        # Calcul du setup : plus le mouvement est fort, plus la probabilité grimpe
+        proba = min(abs(variation) * 2000, 99) 
+        return p2, variation, proba
 
-while True:
-    try:
-        balance = exchange.fetch_balance()['total']['USDT']
-        for symbol in SYMBOLS:
-            ticker = exchange.fetch_ticker(symbol)
-            price = ticker['last']
-            print(f"[{time.strftime('%H:%M')}] Scan {symbol}: {price}$ | Solde: {balance}$")
-            
-            # Ici le robot cherche le signal SMC...
-            # Si signal : qty = calculate_size(symbol, price, balance)
-            
-        time.sleep(300)
-    except Exception as e:
-        print(f"Erreur: {e}")
-        time.sleep(10)
+    def run(self):
+        print(f"🚀 Robotking lancé avec {self.capital}$ sur {SYMBOLE}")
+        
+        while self.capital > 0.5:
+            try:
+                prix_live, changement, proba = self.analyser_probabilite()
+                
+                print(f"📊 Live BTC: {prix_live}$ | Probabilité de réussite: {round(proba, 1)}%")
+                
+                # SEUIL DE PROBABILITÉ (Le robot ne trade que si setup > 60%)
+                if proba > 60:
+                    montant_trade = self.capital * self.lot_size
+                    print(f"⚡ Setup validé ! Position de {round(montant_trade, 2)}$")
+                    
+                    # Simulation de l'issue du trade
+                    if changement > 0: # Le prix montait pendant l'analyse
+                        gain = montant_trade * 0.4
+                        self.capital += gain
+                        print(f"✅ GAGNÉ : +{round(gain, 2)}$ | Capital: {round(self.capital, 2)}$")
+                        self.lot_size = 0.05 # Reste ou revient à 5%
+                    else:
+                        self.capital -= montant_trade
+                        print(f"❌ PERDU : -{round(montant_trade, 2)}$")
+                        # VOTRE RÈGLE DE SÉCURITÉ
+                        self.lot_size = 0.01
+                        print(f"⚠️ Alerte Stop Loss : Prochain lot réduit à 1% ({round(self.capital * 0.01, 2)}$)")
+                else:
+                    print("💤 Probabilité trop faible. Pas de trade pour ce cycle.")
+
+                print(f"⏳ Attente de {PAUSE_BOUGIE/60} min avant le prochain cycle...")
+                time.sleep(PAUSE_BOUGIE)
+
+            except Exception as e:
+                print(f"Erreur connexion : {e}")
+                time.sleep(10)
+
+# Lancement
+bot = RobotLeader()
+bot.run()
