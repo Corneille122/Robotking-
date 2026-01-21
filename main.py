@@ -4,8 +4,12 @@ import time
 import os
 from ta.trend import EMAIndicator
 
-# --- CONFIGURATION DU SIMULATEUR ---
-CAPITAL_SIMULE = 5.00
+# --- CONFIGURATION DU TERMINAL ---
+os.environ['TERM'] = 'xterm'
+
+# --- PARAMÈTRES DU TEST ---
+CAPITAL_INITIAL = 5.00  # Capital de départ simulé
+MISE_BASE = 0.05        # 5% de risque initial
 MAX_TRADES = 3
 SYMBOLS = [
     'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 
@@ -13,88 +17,110 @@ SYMBOLS = [
     'AVAX/USDT', 'MATIC/USDT', 'DOGE/USDT', 'LTC/USDT'
 ]
 
-# On utilise Binance public (sans API) pour lire les prix
-exchange = ccxt.binance()
-positions_simulees = {} 
+# Variables de suivi
+cap_actuel = CAPITAL_INITIAL
+gains_du_jour = 0.0
+perte_recente = 0.0
+positions_simulees = {}
+HISTO_TRADES = []
 
-def is_hot_zone(df, side='LONG'):
-    try:
-        df['c'] = df['close'].astype(float)
-        ema9 = EMAIndicator(df['c'], 9).ema_indicator().iloc[-1]
-        ema50 = EMAIndicator(df['c'], 50).ema_indicator().iloc[-1]
-        trend_ok = (side=='LONG' and ema9 > ema50) or (side=='SHORT' and ema9 < ema50)
-        recent_h, recent_l = df['high'].max(), df['low'].min()
-        prix = df['c'].iloc[-1]
-        sr_ok = (prix - recent_l < (recent_h - recent_l) * 0.3) if side == 'LONG' else (recent_h - prix < (recent_h - recent_l) * 0.3)
-        return trend_ok and sr_ok
-    except: return False
+exchange = ccxt.binance()
+
+# --- 1️⃣ TA LOGIQUE DE RISQUE DYNAMIQUE ---
+def ajuster_risque(cap_init, cap_act, gains_j, perte_r, mise_b):
+    # Augmentation : calcul sur le capital initial
+    perf_cap = (cap_act - cap_init) / cap_init * 100
+    if perf_cap >= 100:
+        risque = mise_b + 0.05
+    elif perf_cap >= 40:
+        # On réduit légèrement le bonus si on n'est pas à 100%
+        risque = mise_b + 0.02 
+    else:
+        risque = mise_b
+
+    # Réduction : calcul sur la perte des gains journaliers
+    if gains_j > 0 and perte_r > 0:
+        reduction = (perte_r / gains_j) * risque
+        risque -= reduction
+    
+    # Sécurité instruction : minimum 1% si SL touché
+    return max(risque, 0.01)
 
 while True:
     try:
-        os.system('cls' if os.name == 'nt' else 'clear')
+        os.system('clear')
         pnl_total_virtuel = 0
+        risque_actuel = ajuster_risque(CAPITAL_INITIAL, cap_actuel, gains_du_jour, perte_recente, MISE_BASE)
+
+        # ================= AFFICHAGE FIXE =================
+        print("="*55)
+        print(f"💰 CAPITAL TEST : {cap_actuel:.2f} $ | 🛡️ RISQUE : {risque_actuel*100:.1f}%")
+        print(f"📈 GAINS JOUR  : +{gains_du_jour:.2f} $ | 📉 PERTES REC. : -{perte_recente:.2f} $")
+        print(f"📊 POSITIONS   : {len(positions_simulees)}/{MAX_TRADES}")
+        print("="*55)
+
+        # 2. GESTION DES POSITIONS OUVERTES
+        print("\n--- 🤖 TRADES EN COURS (SIMULATION) ---")
+        if not positions_simulees:
+            print("        [ RECHERCHE DE SETUPS... ]")
         
-        # 1. ANALYSE DES POSITIONS OUVERTES
-        liste_affichage = []
         for sym in list(positions_simulees.keys()):
             ticker = exchange.fetch_ticker(sym)
-            prix_actuel = ticker['last']
+            prix_live = ticker['last']
             pos = positions_simulees[sym]
             
-            # Calcul du PNL
-            diff = (prix_actuel - pos['entry']) if pos['side'] == 'ACHAT' else (pos['entry'] - prix_actuel)
+            # Calcul PNL
+            diff = (prix_live - pos['entry']) if pos['side'] == 'ACHAT' else (pos['entry'] - prix_live)
             pnl = diff * pos['lot']
             pnl_total_virtuel += pnl
-            
-            # Vérification Stop Loss
-            if (pos['side'] == 'ACHAT' and prix_actuel <= pos['sl']) or (pos['side'] == 'VENTE' and prix_actuel >= pos['sl']):
-                CAPITAL_SIMULE += pnl
+
+            # --- TRAILING STOP (SL SUIVEUR) ---
+            ecart_suivi = prix_live * 0.003 # Suit à 0.3%
+            if pos['side'] == 'ACHAT' and (prix_live - ecart_suivi) > pos['sl']:
+                positions_simulees[sym]['sl'] = prix_live - ecart_suivi
+            elif pos['side'] == 'VENTE' and (prix_live + ecart_suivi) < pos['sl']:
+                positions_simulees[sym]['sl'] = prix_live + ecart_suivi
+
+            # Vérification Sortie (SL touché)
+            if (pos['side'] == 'ACHAT' and prix_live <= pos['sl']) or \
+               (pos['side'] == 'VENTE' and prix_live >= pos['sl']):
+                
+                cap_actuel += pnl
+                if pnl > 0: gains_du_jour += pnl
+                else: perte_recente += abs(pnl)
+                
+                resultat = "✅" if pnl > 0 else "❌"
+                HISTO_TRADES.append(f"{resultat} {sym}: {pnl:.2f}$")
                 del positions_simulees[sym]
             else:
-                icon = "✅" if pnl >= 0 else "❌"
-                liste_affichage.append(f"{icon} {sym} | {pos['side']} | Lot:{pos['lot']} | PNL:{pnl:.2f}$")
+                print(f"📦 {sym} | {pos['side']} | PNL: {pnl:.2f}$ | SL: {pos['sl']:.2f}")
 
-        # 2. RECHERCHE DE NOUVEAUX TRADES (SI < 3)
+        # 3. ANALYSE ET ENTRÉE
         if len(positions_simulees) < MAX_TRADES:
             for s in SYMBOLS:
                 if s in positions_simulees: continue
-                
                 ohlcv = exchange.fetch_ohlcv(s, '1m', limit=50)
                 df = pd.DataFrame(ohlcv, columns=['t','o','h','l','c','v'])
                 prix = df['c'].iloc[-1]
                 
-                side_test = 'LONG' if prix > EMAIndicator(df['c'].astype(float), 9).ema_indicator().iloc[-1] else 'SHORT'
-                
-                if is_hot_zone(df, side_test):
-                    # Simulation d'entrée avec levier pour 5$
-                    dist_sl = prix * 0.003
+                # Signal EMA 9
+                ema9 = EMAIndicator(df['c'].astype(float), 9).ema_indicator().iloc[-1]
+                if (prix > ema9): # Exemple simple d'entrée
+                    dist_sl = prix * 0.005 # SL initial 0.5%
+                    montant_risque = cap_actuel * risque_actuel
+                    
                     positions_simulees[s] = {
-                        'side': 'ACHAT' if side_test == 'LONG' else 'VENTE',
+                        'side': 'ACHAT',
                         'entry': prix,
-                        'lot': 0.001 if 'BTC' in s else 0.1,
-                        'sl': prix - dist_sl if side_test == 'LONG' else prix + dist_sl
+                        'lot': montant_risque / dist_sl,
+                        'sl': prix - dist_sl
                     }
 
-        # ==========================================
-        # AFFICHAGE FIXE DOUBLE PALIER
-        # ==========================================
-        print("="*50)
-        print(f"💰 SOLDE TEST : {CAPITAL_SIMULE:.2f} $")
-        print(f"📈 EQUITY     : {CAPITAL_SIMULE + pnl_total_virtuel:.2f} $")
-        print(f"📡 MODE       : SIMULATION LIVE (SANS API)")
-        print(f"🛠️ ACTIFS     : {len(positions_simulees)}/{MAX_TRADES} POSITIONS")
-        print("="*50)
-        
-        print("\n--- 🤖 MONITORING ROBOTKING ---")
-        if not liste_affichage:
-            print("        [ ANALYSE DES 12 MARCHÉS... ]")
-        else:
-            for ligne in liste_affichage:
-                print(ligne)
-        print("-" * 50)
+        print("\n--- 📜 HISTORIQUE RÉCENT ---")
+        for h in HISTO_TRADES[-3:]: print(h) # Affiche les 3 derniers
+        print("-" * 55)
 
-        time.sleep(2)
+        time.sleep(5)
 
     except Exception as e:
-        print(f"Erreur : {e}")
-        time.sleep(5)
+        time.sleep(10)
