@@ -9,82 +9,87 @@ from ta.momentum import RSIIndicator
 os.environ['TERM'] = 'xterm'
 CAPITAL_INITIAL = 5.00
 MAX_TRADES = 3
-SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'ADA/USDT', 'XRP/USDT', 'DOT/USDT', 'LINK/USDT']
+SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT', 'ADA/USDT']
 
 exchange = ccxt.binance()
 positions_simulees = {}
 cap_actuel = CAPITAL_INITIAL
 
-# --- NOUVEAU SCANNER DE PROBABILITÉ ---
 def evaluer_probabilite(df):
-    score = 0
-    prix = df['c'].iloc[-1]
-    
-    # 1. Tendance (40 points)
-    ema9 = EMAIndicator(df['c'], 9).ema_indicator().iloc[-1]
-    ema50 = EMAIndicator(df['c'], 50).ema_indicator().iloc[-1]
-    if prix > ema9 > ema50: score += 40
-    
-    # 2. Force avec RSI (30 points)
-    rsi = RSIIndicator(df['c'], 14).rsi().iloc[-1]
-    if 50 < rsi < 70: score += 30 # Zone de poussée saine
-    
-    # 3. Confirmation Volume (30 points)
-    vol_moy = df['v'].rolling(10).mean().iloc[-1]
-    if df['v'].iloc[-1] > vol_moy: score += 30
-    
-    return score
+    try:
+        score = 0
+        prix = df['c'].iloc[-1]
+        ema9 = EMAIndicator(df['c'], 9).ema_indicator().iloc[-1]
+        rsi = RSIIndicator(df['c'], 14).rsi().iloc[-1]
+        if prix > ema9: score += 50
+        if 50 < rsi < 70: score += 50
+        return score
+    except: return 0
 
 while True:
     try:
         os.system('clear')
+        pnl_total = 0
+        
         print("="*55)
-        print(f"💰 CAPITAL : {cap_actuel:.2f}$ | 📊 POSITIONS : {len(positions_simulees)}/{MAX_TRADES}")
+        print(f"💰 CAPITAL TEST : {cap_actuel:.2f} $")
+        print(f"📊 TRADES EN COURS : {len(positions_simulees)} / {MAX_TRADES}")
         print("="*55)
 
-        # 1. GESTION DES POSITIONS EXISTANTES
-        for sym in list(positions_simulees.keys()):
-            ticker = exchange.fetch_ticker(sym)
-            prix_live = ticker['last']
-            pos = positions_simulees[sym]
-            pnl = (prix_live - pos['entry']) * pos['lot'] if pos['side'] == 'ACHAT' else (pos['entry'] - prix_live) * pos['lot']
+        # --- AFFICHAGE DES TRADES ACTIFS ---
+        if positions_simulees:
+            print(f"{'SYMBOLE':<10} | {'PNL ($)':<10} | {'SL':<10} | {'PROBA':<6}")
+            print("-" * 55)
+            for sym in list(positions_simulees.keys()):
+                ticker = exchange.fetch_ticker(sym)
+                prix_live = ticker['last']
+                pos = positions_simulees[sym]
+                
+                # Calcul PNL
+                pnl = (prix_live - pos['entry']) * pos['lot']
+                pnl_total += pnl
+                
+                # SL Suiveur
+                ecart = prix_live * 0.003
+                if (prix_live - ecart) > pos['sl']:
+                    positions_simulees[sym]['sl'] = prix_live - ecart
+
+                # Sortie SL
+                if prix_live <= pos['sl']:
+                    cap_actuel += pnl
+                    del positions_simulees[sym]
+                else:
+                    color = "+" if pnl >= 0 else ""
+                    print(f"{sym:<10} | {color}{pnl:.2f}$    | {pos['sl']:.2f} | {pos['proba']}%")
             
-            # Sortie SL
-            if (pos['side'] == 'ACHAT' and prix_live <= pos['sl']) or (pos['side'] == 'VENTE' and prix_live >= pos['sl']):
-                cap_actuel += pnl
-                del positions_simulees[sym]
-                print(f"❌ Sortie {sym} | PNL: {pnl:.2f}$")
+            print("-" * 55)
+            print(f"📈 TOTAL PNL NON RÉALISÉ : {pnl_total:.2f} $")
+        else:
+            print("\n        [ AUCUN TRADE EN COURS ]")
 
-        # 2. SCANNER DE PROBABILITÉ POUR NOUVEAUX TRADES
+        # --- SCANNER (Seulement si place disponible) ---
         if len(positions_simulees) < MAX_TRADES:
+            print("\n🔍 RECHERCHE DE HAUTE PROBABILITÉ (>70%)...")
             for s in SYMBOLS:
-                if len(positions_simulees) >= MAX_TRADES: break
-                if s in positions_simulees: continue
+                if s in positions_simulees or len(positions_simulees) >= MAX_TRADES: continue
                 
-                ohlcv = exchange.fetch_ohlcv(s, '1m', limit=50)
+                ohlcv = exchange.fetch_ohlcv(s, '1m', limit=30)
                 df = pd.DataFrame(ohlcv, columns=['t','o','h','l','c','v'])
+                proba = evaluer_probabilite(df)
                 
-                probabilite = evaluer_probabilite(df)
-                
-                # ON NE PREND QUE SI PROBA > 70%
-                if probabilite >= 70:
+                if proba >= 100: # Signal fort (EMA + RSI)
                     prix = df['c'].iloc[-1]
-                    dist_sl = prix * 0.005
-                    # Utilisation de ton risque instruction (min 1%)
-                    montant_risque = cap_actuel * 0.05 
+                    # Lot calculé sur 5% de risque (ou 1% si tu préfères)
+                    lot = (cap_actuel * 0.05) / (prix * 0.005)
                     
                     positions_simulees[s] = {
-                        'side': 'ACHAT',
                         'entry': prix,
-                        'lot': montant_risque / dist_sl,
-                        'sl': prix - dist_sl,
-                        'proba': probabilite
+                        'lot': lot,
+                        'sl': prix * 0.995,
+                        'proba': proba
                     }
-                    print(f"🚀 {s} ACHAT | Probabilité: {probabilite}% | CONFIRMÉ")
-                else:
-                    if probabilite > 0:
-                        print(f"🔍 {s} | Proba: {probabilite}% | (Attente > 70%)")
+        
+        time.sleep(4)
 
-        time.sleep(5)
     except Exception as e:
         time.sleep(5)
