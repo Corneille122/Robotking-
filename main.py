@@ -3,85 +3,71 @@ import pandas as pd
 import time
 from ta.trend import EMAIndicator
 
-# ================= CONFIGURATION =================
-MARKETS = ['BTC/USDT', 'ETH/USDT']
-TIMEFRAME = '1m'
-CAPITAL_INITIAL_JOUR = 5.0
-CAPITAL_ACTUEL = 5.0 
-MISE_BASE = 0.30
-PROBA_MIN = 50 
+# CONFIGURATION
+MARKETS = {
+    'BTC/USDT': {'active': False, 'entry': 0, 'sl': 0, 'risk_p': 0, 'lot': 0, 'side': ''}, 
+    'ETH/USDT': {'active': False, 'entry': 0, 'sl': 0, 'risk_p': 0, 'lot': 0, 'side': ''}
+}
+RISQUE_FIXE = 0.30  # Ce que tu perds au SL
+CAPITAL_DEPART = 5.0
 
+# Connexion Binance
 exchange = ccxt.binance({'enableRateLimit': True})
 
-# --- FONCTION GESTION DU RISQUE (TON ANCIENNE SÉCURITÉ) ---
-def calculer_lot_dynamique():
-    global CAPITAL_ACTUEL, CAPITAL_INITIAL_JOUR
-    performance_pct = (CAPITAL_ACTUEL - CAPITAL_INITIAL_JOUR) / CAPITAL_INITIAL_JOUR
-    
-    if performance_pct <= -0.30:
-        return MISE_BASE * 0.95 # Réduction -5% du risque
-    if CAPITAL_ACTUEL >= 20.0:
-        return MISE_BASE * 1.05 # Augmentation +5% du risque
-    return MISE_BASE
-
-# --- LOGIQUE TRAILING STOP PAR RR ---
-def get_trailing_sl(entry, price, current_sl, direction, risk):
-    rr_actuel = abs(price - entry) / risk
-    new_sl = current_sl
-    
-    if direction == "LONG":
-        if rr_actuel >= 4: new_sl = entry + (2 * risk)
-        elif rr_actuel >= 3: new_sl = entry + risk
-        elif rr_actuel >= 2: new_sl = entry + (0.5 * risk)
-        elif rr_actuel >= 1: new_sl = entry
-        return max(current_sl, new_sl) # Ne recule jamais
-    else: # SHORT
-        if rr_actuel >= 4: new_sl = entry - (2 * risk)
-        elif rr_actuel >= 3: new_sl = entry - risk
-        elif rr_actuel >= 2: new_sl = entry - (0.5 * risk)
-        elif rr_actuel >= 1: new_sl = entry
-        return min(current_sl, new_sl) # Ne recule jamais
-
-
-
-# --- BOUCLE PRINCIPALE ---
-print("🔧 ROBOTKING : LOGIQUE RR & TRAILING CHARGÉE")
+print("⚡ ROBOTKING 1S : DÉMARRAGE")
 
 while True:
     try:
-        for symbol in MARKETS:
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=50)
+        pnl_global = 0.0
+        
+        for sym, data in MARKETS.items():
+            # Récupération rapide
+            ohlcv = exchange.fetch_ohlcv(sym, timeframe='1m', limit=15)
             df = pd.DataFrame(ohlcv, columns=['time','open','high','low','close','volume'])
+            prix = df['close'].iloc[-1]
+            ema = EMAIndicator(df['close'], window=9).ema_indicator().iloc[-1]
+
+            if data['active']:
+                # Calcul PNL / RR selon sens
+                diff = (prix - data['entry']) if data['side'] == '📈' else (data['entry'] - prix)
+                pnl = diff * data['lot']
+                rr = diff / data['risk_p']
+                pnl_global += pnl
+                
+                # SL SUIVEUR (Trailing)
+                if rr >= 1: # Break-even
+                    data['sl'] = max(data['sl'], data['entry']) if data['side'] == '📈' else min(data['sl'], data['entry'])
+                if rr >= 3: # Verrouillage Profit R1
+                    lock = data['entry'] + data['risk_p'] if data['side'] == '📈' else data['entry'] - data['risk_p']
+                    data['sl'] = max(data['sl'], lock) if data['side'] == '📈' else min(data['sl'], lock)
+
+                # AFFICHAGE 1 SECONDE
+                icon = "🔥" if rr >= 3 else "✅" if pnl > 0 else "❌"
+                print(f"{icon} {sym} {data['side']} | 📦Lot:{round(data['lot'],4)} | 💰{round(pnl,2)}$ | 🎯R:{round(rr,1)}")
+                
+                # SORTIE
+                if (data['side'] == '📈' and prix <= data['sl']) or (data['side'] == '📉' and prix >= data['sl']):
+                    print(f"🏁 SORTIE {sym} | PNL: {round(pnl,2)}$")
+                    data['active'] = False
             
-            price = df['close'].iloc[-1]
-            ema8 = EMAIndicator(df['close'], window=8).ema_indicator().iloc[-1]
-            
-            # Score de probabilité 50%
-            score = 0
-            if price > ema8: score += 40
-            if price > df['close'].iloc[-2]: score += 30
-            if df['volume'].iloc[-1] > df['volume'].iloc[-3:].mean(): score += 30
-            
-            if score >= PROBA_MIN:
-                lot = calculer_lot_dynamique()
-                risk_val = price * 0.005 # Risque 0.5% par trade
-                
-                # Setup LONG (Exemple)
-                sl_initial = price - risk_val
-                tp_initial = price + (risk_val * 2) # RR2 Min
-                
-                print(f"\n🚀 POSITION {symbol} OUVERTE")
-                print(f"Entry: {price} | Lot: {round(lot, 4)}$")
-                print(f"SL Init: {round(sl_initial, 4)} | TP Init: {round(tp_initial, 4)}")
-                
-                # Boucle de suivi Trailing (Simulée ici)
-                # new_sl = get_trailing_sl(price, price_actuel, sl_initial, "LONG", risk_val)
-                
             else:
-                print(f"🔍 Scan {symbol} : {score}% ", end='\r')
+                # CALCUL DU LOT ET ENTRÉE TENDANCE
+                dist_sl = prix * 0.005 # SL à 0.5%
+                lot_unites = RISQUE_FIXE / dist_sl
                 
-        time.sleep(10)
+                # Sécurité précision Binance
+                lot_unites = float(exchange.amount_to_precision(sym, lot_unites))
+                
+                if prix > ema: # Tendance LONG
+                    data.update({'active':True, 'entry':prix, 'sl':prix-dist_sl, 'risk_p':dist_sl, 'lot':lot_unites, 'side':'📈'})
+                else: # Tendance SHORT
+                    data.update({'active':True, 'entry':prix, 'sl':prix+dist_sl, 'risk_p':dist_sl, 'lot':lot_unites, 'side':'📉'})
+                
+                print(f"🚀 IN {sym} {data['side']} | Lot:{lot_unites}")
+
+        # DASHBOARD BASIQUE
+        print(f"💰 COMPTE: {round(CAPITAL_DEPART + pnl_global, 2)}$")
+        time.sleep(1) # Vitesse 1s
         
     except Exception as e:
-        print(f"⚠️ Erreur : {e}")
-        time.sleep(5)
+        time.sleep(1)
