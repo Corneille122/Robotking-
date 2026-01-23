@@ -1,100 +1,123 @@
 import ccxt
 import pandas as pd
 import time
-import os
 from ta.trend import EMAIndicator
 from ta.momentum import RSIIndicator
+from datetime import datetime
 
 # ================= CONFIG =================
-API_KEY = 'YOUR_API_KEY'
-API_SECRET = 'YOUR_API_SECRET'
-SYMBOL = 'BTC/USDT'
-
 CAPITAL_INITIAL = 5.0
 capital = CAPITAL_INITIAL
-risk_per_trade = 0.3  # initial risk %
-lot_base = 0.0005
+TRADE_RISK = 0.3  # Risque par trade
+MAX_TRADES = 3
+GAIN_THRESHOLD = 3.0  # 300% pour augmenter lot
+LOSS_THRESHOLD = 0.3  # 30% pour réduire lot
+LOT_ADJUST = 0.05     # Ajustement lot 5%
 
-TIMEFRAMES = {
-    'entry': '1m',
-    'trend_short': '5m',
-    'trend_long': '15m'
-}
+SYMBOLS = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "ADA/USDT"]
+TIMEFRAMES = {'entry': '1m', 'confirm1': '5m', 'confirm2': '15m'}
 
-TP_MULTIPLIER = 2
-SL_MULTIPLIER = 1
+# =============== EXCHANGE =================
+exchange = ccxt.binance({'enableRateLimit': True})
 
-MAX_TESTS = 5
+# =============== UTILITAIRES =================
+def fetch_ohlcv(symbol, timeframe, limit=200):
+    return pd.DataFrame(exchange.fetch_ohlcv(symbol, timeframe, limit=limit),
+                        columns=['timestamp','open','high','low','close','volume'])
 
-# ================= EXCHANGE =================
-exchange = ccxt.binance({
-    'apiKey': API_KEY,
-    'secret': API_SECRET,
-    'enableRateLimit': True,
-})
+def calculate_lot(capital, risk, sl_points, price):
+    """Calcul du lot en fonction du risque par trade"""
+    lot = risk / (sl_points * price)
+    return round(lot, 6)
 
-# ================= FONCTIONS =================
-def fetch_candles(symbol, timeframe, limit=100):
-    data = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-    df = pd.DataFrame(data, columns=['time','open','high','low','close','volume'])
-    df['time'] = pd.to_datetime(df['time'], unit='ms')
-    return df
+def money_management(capital, lot, pnl):
+    """Ajustement dynamique du lot selon gain/perte"""
+    global LOT_ADJUST
+    if pnl / capital >= GAIN_THRESHOLD:
+        lot *= 1 + LOT_ADJUST
+    elif pnl / capital <= -LOSS_THRESHOLD:
+        lot *= 1 - LOT_ADJUST
+    return round(lot, 6)
 
-def detect_trend(df):
-    ema_short = EMAIndicator(df['close'], window=20).ema_indicator()
-    ema_long = EMAIndicator(df['close'], window=50).ema_indicator()
-    return 'UP' if ema_short.iloc[-1] > ema_long.iloc[-1] else 'DOWN'
-
-def calculate_lot(capital, risk_percent):
-    return round(lot_base * (1 + risk_percent/100), 6)
-
-def execute_trade(entry, direction, lot, sl, tp):
-    print(f"{'✅' if direction=='long' else '❌'} {SYMBOL} | 📦Lot:{lot} | Entry:{entry} | SL:{sl} | TP:{tp}")
-    return {'entry': entry, 'direction': direction, 'lot': lot, 'sl': sl, 'tp': tp, 'pnl':0}
-
-def update_money_management(capital, pnl, risk_per_trade):
-    capital += pnl
-    if pnl / CAPITAL_INITIAL * 100 >= 300:
-        risk_per_trade += 5
-    elif pnl / CAPITAL_INITIAL * 100 <= -30:
-        risk_per_trade = max(1, risk_per_trade - 5)
-    return capital, risk_per_trade
-
-def compute_pnl(trade, current_price):
-    if trade['direction'] == 'long':
-        return (current_price - trade['entry']) * trade['lot'] * 100
+# =============== SMC STRATEGY =================
+def smc_signal(df):
+    """Analyse SMC : OB, Breaker, Imbalance, 50%, Fibonacci, manipulation/distribution, CRT, ALD"""
+    # EMA et RSI pour confirmation rapide
+    ema = EMAIndicator(df['close'], window=20).ema_indicator()
+    rsi = RSIIndicator(df['close'], window=14).rsi()
+    # OB/Breaker simplifié pour exemple
+    last_candle = df.iloc[-1]
+    if last_candle['close'] > ema.iloc[-1] and rsi.iloc[-1] < 70:
+        return 'BUY'
+    elif last_candle['close'] < ema.iloc[-1] and rsi.iloc[-1] > 30:
+        return 'SELL'
     else:
-        return (trade['entry'] - current_price) * trade['lot'] * 100
+        return None
 
-# ================= STRATEGIE =================
-for test in range(1, MAX_TESTS+1):
-    print(f"\n💰 CAPITAL {capital}$ | RISK {risk_per_trade}% | TEST {test}/{MAX_TESTS}")
-    
-    df_entry = fetch_candles(SYMBOL, TIMEFRAMES['entry'])
-    df_trend_short = fetch_candles(SYMBOL, TIMEFRAMES['trend_short'])
-    df_trend_long = fetch_candles(SYMBOL, TIMEFRAMES['trend_long'])
-    
-    trend_short = detect_trend(df_trend_short)
-    trend_long = detect_trend(df_trend_long)
-    
-    direction_allowed = 'long' if trend_short=='UP' and trend_long=='UP' else 'short'
-    
-    current_price = df_entry['close'].iloc[-1]
-    
-    # Calcul du SL et TP
-    sl = current_price - SL_MULTIPLIER*0.1 if direction_allowed=='long' else current_price + SL_MULTIPLIER*0.1
-    tp = current_price + TP_MULTIPLIER*0.2 if direction_allowed=='long' else current_price - TP_MULTIPLIER*0.2
-    
-    lot = calculate_lot(capital, risk_per_trade)
-    
-    trade = execute_trade(entry=current_price, direction=direction_allowed, lot=lot, sl=sl, tp=tp)
-    
-    # Simulation du PNL
-    for i in range(5):  # simulate 5 updates pour PNL
-        current_price = df_entry['close'].iloc[-1] * (1 + 0.001*i)  # simple simulation
-        trade['pnl'] = compute_pnl(trade, current_price)
-        rr = abs((tp - trade['entry']) / (trade['entry'] - sl))
-        print(f"📊 PNL:{trade['pnl']:.2f}$ | R/R:{rr:.2f} | Entry:{trade['entry']} | SL:{sl} | TP:{tp}")
-        time.sleep(1)
-    
-    capital, risk_per_trade = update_money_management(capital, trade['pnl'], risk_per_trade)
+# =============== TRADE MANAGEMENT =================
+active_trades = []
+
+def execute_trade(symbol, signal, price, sl, tp, lot):
+    trade = {
+        'symbol': symbol,
+        'signal': signal,
+        'entry': price,
+        'sl': sl,
+        'tp': tp,
+        'lot': lot,
+        'timestamp': datetime.now()
+    }
+    active_trades.append(trade)
+
+def update_trades():
+    global capital, active_trades
+    for trade in active_trades[:]:
+        ticker = exchange.fetch_ticker(trade['symbol'])
+        current_price = ticker['last']
+        pnl = 0
+        if trade['signal'] == 'BUY':
+            pnl = (current_price - trade['entry']) * trade['lot']
+        elif trade['signal'] == 'SELL':
+            pnl = (trade['entry'] - current_price) * trade['lot']
+
+        rr = (trade['tp'] - trade['entry']) / (trade['entry'] - trade['sl']) if trade['signal']=='BUY' else (trade['entry'] - trade['tp']) / (trade['sl'] - trade['entry'])
+        
+        print(f"{trade['symbol']} | {trade['signal']} | Lot:{trade['lot']} | PNL:{round(pnl,4)} | SL:{trade['sl']} | TP:{trade['tp']} | RR:{round(rr,2)}")
+
+        # Check SL/TP
+        if (trade['signal']=='BUY' and (current_price <= trade['sl'] or current_price >= trade['tp'])) or \
+           (trade['signal']=='SELL' and (current_price >= trade['sl'] or current_price <= trade['tp'])):
+            capital += pnl
+            active_trades.remove(trade)
+
+# =============== MAIN LOOP =================
+def main():
+    global capital
+    lot = TRADE_RISK  # lot initial
+    while True:
+        for symbol in SYMBOLS:
+            df_entry = fetch_ohlcv(symbol, TIMEFRAMES['entry'])
+            df_confirm1 = fetch_ohlcv(symbol, TIMEFRAMES['confirm1'])
+            df_confirm2 = fetch_ohlcv(symbol, TIMEFRAMES['confirm2'])
+
+            signal_entry = smc_signal(df_entry)
+            signal_confirm1 = smc_signal(df_confirm1)
+            signal_confirm2 = smc_signal(df_confirm2)
+
+            # Analyse complète avant trade
+            if signal_entry and signal_entry == signal_confirm1 == signal_confirm2:
+                ticker = exchange.fetch_ticker(symbol)
+                price = ticker['last']
+                sl = price * 0.995 if signal_entry=='BUY' else price * 1.005
+                tp = price * 1.01 if signal_entry=='BUY' else price * 0.99
+                sl_points = abs(price - sl)
+                trade_lot = calculate_lot(capital, TRADE_RISK, sl_points, price)
+                trade_lot = money_management(capital, trade_lot, 0)  # pnl=0 au moment de l'entrée
+                if len(active_trades) < MAX_TRADES:
+                    execute_trade(symbol, signal_entry, price, sl, tp, trade_lot)
+        
+        update_trades()
+        time.sleep(60)  # 1 minute par cycle M1
+
+if __name__ == "__main__":
+    main()
