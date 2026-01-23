@@ -1,124 +1,223 @@
-import ccxt, pandas as pd, time, os
+import ccxt
+import pandas as pd
+import numpy as np
+import time, os
 from ta.trend import EMAIndicator
 from ta.momentum import RSIIndicator
 
 # ================= CONFIG =================
-os.environ['TERM'] = 'xterm'
-
 CAPITAL_INITIAL = 5.0
 capital = CAPITAL_INITIAL
 
-TIMEFRAME = '1m'
+RISK_DOLLAR = 0.3
 MAX_TRADES = 3
-SYMBOLS = ['BTC/USDT','ETH/USDT','SOL/USDT','BNB/USDT','XRP/USDT','ADA/USDT']
+LEVERAGE = 3  # utilisé uniquement pour le calcul RR
 
-RR_ENTRY_MIN = 3
-RR_TP_MIN = 2
+SYMBOLS = [
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT",
+    "BNB/USDT",
+    "XRP/USDT",
+    "ADA/USDT"
+]
 
-RISK = 0.05
+TIMEFRAME = "1m"
+LOOP_DELAY = 1  # ~1 seconde
 
-exchange = ccxt.binance({'enableRateLimit': True})
+# ================= EXCHANGE (PUBLIC ONLY) =================
+exchange = ccxt.binance({
+    "enableRateLimit": True,
+    "options": {"defaultType": "future"}
+})
 
+# ================= STATE =================
 positions = {}
-stats = {'win':0,'loss':0,'be':0}
-history = []
+stats = {"tp": 0, "sl": 0, "be": 0}
+daily_pnl = 0.0
+recovery_mode = False
+risk_multiplier = 1.0
 
-# ================= FONCTIONS =================
+# ================= UTILS =================
 
-def proba(df, strict=False):
-    score = 0
-    ema9 = EMAIndicator(df['c'],9).ema_indicator().iloc[-1]
-    ema21 = EMAIndicator(df['c'],21).ema_indicator().iloc[-1]
-    rsi = RSIIndicator(df['c'],14).rsi().iloc[-1]
-    vol_ok = df['v'].iloc[-1] > df['v'].mean()
+def clear():
+    os.system("clear" if os.name != "nt" else "cls")
 
-    if df['c'].iloc[-1] > ema9 > ema21: score += 40
-    if 55 < rsi < 70: score += 30
-    if vol_ok: score += 30
+def fetch_ohlc(symbol, limit=120):
+    ohlc = exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=limit)
+    return pd.DataFrame(ohlc, columns=["t","o","h","l","c","v"])
 
-    return score * (3 if strict else 1)
+def aggregate_9m(df):
+    df = df.copy()
+    df["grp"] = np.arange(len(df)) // 9
+    return df.groupby("grp").agg({
+        "o":"first","h":"max","l":"min","c":"last","v":"sum"
+    }).dropna()
 
 def rr(entry, sl, price):
-    return (price-entry)/(entry-sl)
+    risk = abs(entry - sl)
+    return 0 if risk == 0 else (price - entry) / risk
 
-def recovery_mode():
-    return (capital - CAPITAL_INITIAL)/CAPITAL_INITIAL <= -0.30
+# ================= ORDER BOOK SENTIMENT =================
 
-# ================= BOUCLE =================
+def orderbook_sentiment(symbol):
+    ob = exchange.fetch_order_book(symbol, limit=50)
+    bid_vol = sum(b[1] for b in ob["bids"])
+    ask_vol = sum(a[1] for a in ob["asks"])
+    if bid_vol + ask_vol == 0:
+        return 0
+    return (bid_vol - ask_vol) / (bid_vol + ask_vol)
+
+# ================= SMC ENGINE =================
+
+def detect_bos(df):
+    return df["h"].iloc[-1] > df["h"].iloc[-2]
+
+def detect_fvg(df):
+    return df["l"].iloc[-1] > df["h"].iloc[-3]
+
+def detect_order_block(df):
+    body = abs(df["c"].iloc[-2] - df["o"].iloc[-2])
+    rng = df["h"].iloc[-2] - df["l"].iloc[-2]
+    return rng > 0 and body / rng > 0.6
+
+def fib_50(df):
+    hi = df["h"].max()
+    lo = df["l"].min()
+    level = lo + 0.5 * (hi - lo)
+    return abs(df["c"].iloc[-1] - level) / level < 0.002
+
+def structure_score(df):
+    score = 0
+    if detect_bos(df): score += 20
+    if detect_fvg(df): score += 20
+    if detect_order_block(df): score += 20
+    if fib_50(df): score += 20
+    return score
+
+# ================= PROBABILITY ENGINE =================
+
+def trade_probability(df9, df1, sentiment):
+    score = structure_score(df9)
+
+    ema9 = EMAIndicator(df1["c"], 9).ema_indicator().iloc[-1]
+    ema21 = EMAIndicator(df1["c"], 21).ema_indicator().iloc[-1]
+    rsi = RSIIndicator(df1["c"], 14).rsi().iloc[-1]
+
+    if df1["c"].iloc[-1] > ema9 > ema21:
+        score += 20
+    if 50 < rsi < 70:
+        score += 10
+    if sentiment > 0:
+        score += 10
+
+    if recovery_mode:
+        score *= 0.8
+
+    return min(score, 100)
+
+# ================= RISK MANAGER =================
+
+def calc_lot(entry, sl):
+    risk = abs(entry - sl)
+    if risk == 0:
+        return 0
+    return (RISK_DOLLAR * risk_multiplier * LEVERAGE) / risk
+
+# ================= DASHBOARD =================
+
+def dashboard():
+    clear()
+    roi = (capital - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100
+    print("="*110)
+    print(f"💰 CAPITAL: {capital:.2f}$ | ROI: {roi:.2f}% | DAILY PNL: {daily_pnl:.2f}$")
+    print(f"📊 TP {stats['tp']} | SL {stats['sl']} | BE {stats['be']} | RECOVERY {'ON' if recovery_mode else 'OFF'}")
+    print("="*110)
+    for s,p in positions.items():
+        print(
+            f"{s} | ENTRY {p['entry']:.4f} | SL {p['sl']:.4f} | "
+            f"RR {p['rr']:.2f} | LOT {p['lot']:.4f}"
+        )
+
+# ================= MAIN LOOP =================
 
 while True:
     try:
-        os.system('clear')
-        perf = (capital - CAPITAL_INITIAL)/CAPITAL_INITIAL
+        dashboard()
 
-        # === RISK DYNAMIQUE ===
-        if perf <= -0.30:
-            RISK = max(0.01, RISK - 0.05)
-        elif perf >= 3:
-            RISK = min(0.10, RISK + 0.05)
-
-        # === DASHBOARD ===
-        print("="*90)
-        print(f"💰 CAPITAL {capital:.2f}$ | RISK {RISK*100:.1f}% | RECOVERY {'ON' if recovery_mode() else 'OFF'}")
-        print(f"📊 WIN {stats['win']} | LOSS {stats['loss']} | BE {stats['be']} | TOTAL {sum(stats.values())}")
-        print("="*90)
-
-        # === TRADES ACTIFS ===
+        # ===== UPDATE POSITIONS =====
         for s in list(positions.keys()):
-            t = exchange.fetch_ticker(s)
-            price = t['last']
+            price = exchange.fetch_ticker(s)["last"]
             pos = positions[s]
 
-            pnl = (price-pos['entry'])*pos['lot']
-            rr_live = rr(pos['entry'],pos['sl'],price)
-
-            ohlcv = exchange.fetch_ohlcv(s,TIMEFRAME,limit=30)
-            df = pd.DataFrame(ohlcv,columns=['t','o','h','l','c','v'])
-            p_live = proba(df,recovery_mode())
+            pos["rr"] = rr(pos["entry"], pos["sl"], price)
 
             # BE
-            if rr_live >= 1 and pos['sl'] < pos['entry']:
-                pos['sl'] = pos['entry']
+            if pos["rr"] >= 1 and not pos["be"]:
+                pos["sl"] = pos["entry"]
+                pos["be"] = True
 
-            # TP6
-            if price >= pos['tp']:
+            # TRAILING AFTER R2
+            if pos["rr"] >= 2:
+                trail = pos["entry"] + (price - pos["entry"]) * 0.5
+                if trail > pos["sl"]:
+                    pos["sl"] = trail
+
+            # TP RR3
+            if pos["rr"] >= 3:
+                pnl = (price - pos["entry"]) * pos["lot"]
                 capital += pnl
-                stats['win']+=1
+                daily_pnl += pnl
+                stats["tp"] += 1
                 del positions[s]
+                recovery_mode = False
                 continue
 
-            # SL
-            if price <= pos['sl']:
+            # SL / BE
+            if price <= pos["sl"]:
+                pnl = (price - pos["entry"]) * pos["lot"]
                 capital += pnl
-                stats['loss' if pnl<0 else 'be']+=1
+                daily_pnl += pnl
+                stats["sl" if pnl < 0 else "be"] += 1
                 del positions[s]
+                recovery_mode = True
                 continue
 
-            print(f"{s} | PNL {pnl:.2f}$ | RR {rr_live:.2f} | LOW {df['l'].min():.4f} | SL {pos['sl']:.4f} | PROBA {p_live}")
-
-        # === ENTRÉES ===
+        # ===== ENTRIES =====
         if len(positions) < MAX_TRADES:
             for s in SYMBOLS:
-                if s in positions: continue
-                ohlcv = exchange.fetch_ohlcv(s,TIMEFRAME,limit=30)
-                df = pd.DataFrame(ohlcv,columns=['t','o','h','l','c','v'])
+                if s in positions:
+                    continue
 
-                p = proba(df,recovery_mode())
-                if p < 70: continue
+                df1 = fetch_ohlc(s, 120)
+                df9 = aggregate_9m(df1)
 
-                price = df['c'].iloc[-1]
-                sl = price*0.995
-                rr_test = rr(price,sl,price+(price-sl)*RR_ENTRY_MIN)
+                sentiment = orderbook_sentiment(s)
+                prob = trade_probability(df9, df1, sentiment)
 
-                if rr_test >= RR_ENTRY_MIN:
-                    lot = (capital*RISK)/(price-sl)
-                    positions[s] = {
-                        'entry':price,'sl':sl,
-                        'tp':price+(price-sl)*6,
-                        'lot':lot
-                    }
+                if prob < 75:
+                    continue
 
-        time.sleep(4)
+                price = df1["c"].iloc[-1]
+                sl = df9["l"].iloc[-1]
 
-    except:
-        time.sleep(5)
+                lot = calc_lot(price, sl)
+                if lot <= 0:
+                    continue
+
+                positions[s] = {
+                    "entry": price,
+                    "sl": sl,
+                    "lot": lot,
+                    "be": False,
+                    "rr": 0
+                }
+
+                if len(positions) >= MAX_TRADES:
+                    break
+
+        time.sleep(LOOP_DELAY)
+
+    except Exception as e:
+        print("ERROR:", e)
+        time.sleep(2)
