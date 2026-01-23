@@ -1,112 +1,113 @@
-import ccxt
+import requests
 import time
-from math import floor
+import os
 
-# ================= CONFIG =================
-API_KEY = 'TA_CLE_API'
-API_SECRET = 'TA_SECRET_API'
-EXCHANGE = ccxt.binance({
-    'apiKey': API_KEY,
-    'secret': API_SECRET,
-    'enableRateLimit': True,
-})
-
+# ================== CONFIGURATION STRATÉGIQUE ==================
 CAPITAL_INITIAL = 5.0
-capital = CAPITAL_INITIAL
-RISK_PER_TRADE = 0.3
-MAX_TRADES = 3
-SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'ADA/USDT']
+RISQUE_BTC = 0.6             # Risque 0.6$ spécifié pour BTC
+RISQUE_ALTS = 0.3            # Risque 0.3$ pour les Alts
+MAX_TRADES = 3               # 3 trades simultanés max
+MIN_LOT_BTC = 0.003          # Lot minimum BTC
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT"]
+RR_TARGET = 2.0
 
-# ================= UTILITAIRES =================
-def round_lot(symbol, lot):
-    """Arrondir lot selon Binance"""
-    market = EXCHANGE.fetch_markets()
-    for m in market:
-        if m['symbol'] == symbol:
-            step = m['precision']['amount']
-            return floor(lot / step) * step
-    return lot
+def get_live_data(symbol):
+    """Analyse M1 avec exécution 1s"""
+    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=20"
+    try:
+        data = requests.get(url, timeout=1).json()
+        current_price = float(data[-1][4])
+        highs = [float(k[2]) for k in data]
+        lows = [float(k[3]) for k in data]
+        
+        # Volatilité ATR M1
+        vol = sum([highs[i] - lows[i] for i in range(-5, 0)]) / 5
+        
+        # Détection SMC : FVG & Liquidité
+        fvg_up = float(data[-3][2]) < float(data[-1][3])
+        fvg_down = float(data[-3][3]) > float(data[-1][2])
+        sweep_low = current_price < min(lows[-15:-1]) # A balayé les bas
+        sweep_high = current_price > max(highs[-15:-1]) # A balayé les hauts
+        
+        is_bullish = current_price > float(data[-1][1])
+        return current_price, vol, fvg_up, fvg_down, is_bullish, sweep_low, sweep_high
+    except: return None, 0, False, False, False, False, False
 
-def calculate_lot(price, sl, risk=RISK_PER_TRADE):
-    diff = abs(price - sl)
-    if diff == 0:
-        return 0
-    lot = risk / diff
-    return round_lot(symbol, lot)
+class ActiveTrade:
+    def __init__(self, symbol, direction, price, vol, risk):
+        self.symbol, self.direction, self.entry_price = symbol, direction, price
+        self.risk_usd = risk
+        self.sl_dist = max(vol * 1.5, price * 0.0008)
+        self.sl = price - self.sl_dist if direction == "BUY" else price + self.sl_dist
+        self.tp = price + (self.sl_dist * RR_TARGET) if direction == "BUY" else price - (self.sl_dist * RR_TARGET)
+        
+        calc_lot = risk / self.sl_dist
+        self.lot = max(calc_lot, MIN_LOT_BTC) if symbol == "BTCUSDT" else round(calc_lot, 4)
+        self.pnl, self.rr_dyn, self.active = 0.0, 0.0, True
 
-def fetch_price(symbol):
-    ticker = EXCHANGE.fetch_ticker(symbol)
-    return ticker['last']
+    def refresh(self, price, vol):
+        self.pnl = (price - self.entry_price) * self.lot if self.direction == "BUY" else (self.entry_price - price) * self.lot
+        self.rr_dyn = self.pnl / self.risk_usd if self.risk_usd > 0 else 0
+        # Trailing Stop serré
+        if self.direction == "BUY":
+            if price - (vol * 1.2) > self.sl: self.sl = price - (vol * 1.2)
+            if price <= self.sl or price >= self.tp: self.active = False
+        else:
+            if price + (vol * 1.2) < self.sl: self.sl = price + (vol * 1.2)
+            if price >= self.sl or price <= self.tp: self.active = False
 
-def fetch_orderbook(symbol):
-    return EXCHANGE.fetch_order_book(symbol)
+class SoroRobot:
+    def __init__(self):
+        self.capital = CAPITAL_INITIAL
+        self.trades, self.history = [], {"W": 0, "L": 0}
+        self.btc_state = "SCAN"
 
-def pm_adjustment(capital, gain_loss):
-    """Ajuste le risque par lot selon PM"""
-    global RISK_PER_TRADE
-    if gain_loss >= 3 * capital:
-        RISK_PER_TRADE *= 1.05
-    elif gain_loss <= -0.3 * capital:
-        RISK_PER_TRADE *= 0.95
+    def apply_money_management(self):
+        """Règles : +300% / -30%"""
+        if self.capital >= CAPITAL_INITIAL * 4: return 1.05
+        if self.capital <= CAPITAL_INITIAL * 0.7: return 0.95
+        return 1.0
 
-# ================= STRATEGIE =================
-def analyze(symbol):
-    """Analyse invisible avec SMC, order block, imbalance etc."""
-    price = fetch_price(symbol)
-    orderbook = fetch_orderbook(symbol)
-    # Ici, calcul interne pour probabilité de trade
-    # 1 = bon, 0 = pas bon
-    probability = 1  # Placeholder pour stratégie
-    # Calcule SL/TP basé sur stratégie
-    sl = price * 0.99
-    tp = price * 0.995
-    rr = abs(price - tp) / abs(price - sl)
-    return {'ok': probability >= 1, 'price': price, 'sl': sl, 'tp': tp, 'rr': rr}
+    def render(self):
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print(f"--- 💠 ALPHA-TERMINAL M1 | BTC MODE: {self.btc_state} ---")
+        print(f"💰 CAPITAL: {self.capital:.2f}$ | SCORE: {self.history['W']}W - {self.history['L']}L")
+        print("=" * 125)
+        print(f"{'SYMBOLE':<10} | {'DIR':<5} | {'LOT':<8} | {'RR DYN':<7} | {'ENTRÉE':<10} | {'LIVE':<10} | {'SL':<10} | {'TP':<10} | {'PNL'}")
+        print("-" * 125)
+        for t in self.trades:
+            c = "\033[92m" if t.pnl > 0 else "\033[91m"
+            print(f"{t.symbol:<10} | {t.direction:<5} | {t.lot:<8.4f} | {t.rr_dyn:>5.2f}x | {t.entry_price:<10.2f} | {t.entry_price+t.pnl/t.lot:<10.2f} | {t.sl:<10.2f} | {t.tp:<10.2f} | {c}{t.pnl:>8.2f}$\033[0m")
+        print("=" * 125)
 
-# ================= TRADE =================
-active_trades = []
+    def start(self):
+        while True:
+            mod = self.apply_money_management()
+            # 1. Analyse Maître BTC
+            bp, bv, bf_u, bf_d, b_bull, b_sw_l, b_sw_h = get_live_data("BTCUSDT")
+            self.btc_state = "BULL" if b_bull else "BEAR"
 
-def open_trade(symbol, side, lot, price, sl, tp, rr):
-    active_trades.append({
-        'symbol': symbol,
-        'side': side,
-        'lot': lot,
-        'price': price,
-        'sl': sl,
-        'tp': tp,
-        'rr': rr,
-        'pnl': 0.0
-    })
-    print(f"{symbol} | {side} | Lot:{lot} | PNL:0.0 | SL:{sl} | TP:{tp} | RR:{rr}")
+            for sym in SYMBOLS:
+                if not any(tr.symbol == sym for tr in self.trades) and len(self.trades) < MAX_TRADES:
+                    p, v, f_u, f_d, bull, sw_l, sw_h = get_live_data(sym)
+                    if p:
+                        risk = (RISQUE_BTC if sym == "BTCUSDT" else RISQUE_ALTS) * mod
+                        # LOGIQUE M1 OPTIMISÉE
+                        if f_u and b_bull: # FVG + Corrélation BTC
+                            self.trades.append(ActiveTrade(sym, "BUY", p, v, risk))
+                        elif f_d and not b_bull:
+                            self.trades.append(ActiveTrade(sym, "SELL", p, v, risk))
 
-# ================= BOUCLE PRINCIPALE =================
-while True:
-    for symbol in SYMBOLS:
-        if len(active_trades) >= MAX_TRADES:
-            break
+            for t in self.trades[:]:
+                p, v, _, _, _, _, _ = get_live_data(t.symbol)
+                if p:
+                    t.refresh(p, v)
+                    if not t.active:
+                        self.capital += t.pnl
+                        self.history["W" if t.pnl > 0 else "L"] += 1
+                        self.trades.remove(t)
+            self.render()
+            time.sleep(1)
 
-        analysis = analyze(symbol)
-        if not analysis['ok']:
-            continue
-
-        price = analysis['price']
-        sl = analysis['sl']
-        tp = analysis['tp']
-        rr = analysis['rr']
-
-        lot = calculate_lot(price, sl)
-        if lot <= 0:
-            continue
-
-        # Entrée SELL ou BUY selon analyse (ici placeholder SELL)
-        side = 'SELL'
-        open_trade(symbol, side, lot, price, sl, tp, rr)
-
-    # Affiche fiche PM
-    print(f"CAPITAL: {capital:.2f}$ | RISK: {RISK_PER_TRADE:.2f}$ | ACTIVE TRADES: {len(active_trades)}")
-    
-    # Simulation PNL pour ajustement PM (placeholder)
-    gain_loss = sum([t['pnl'] for t in active_trades])
-    pm_adjustment(capital, gain_loss)
-
-    time.sleep(60)  # M1
+if __name__ == "__main__":
+    SoroRobot().start()
