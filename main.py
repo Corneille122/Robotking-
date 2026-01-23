@@ -1,7 +1,4 @@
-import ccxt
-import pandas as pd
-import numpy as np
-import time, os
+import ccxt, pandas as pd, numpy as np, time, os, csv
 from ta.trend import EMAIndicator
 from ta.momentum import RSIIndicator
 
@@ -9,215 +6,158 @@ from ta.momentum import RSIIndicator
 CAPITAL_INITIAL = 5.0
 capital = CAPITAL_INITIAL
 
-RISK_DOLLAR = 0.3
+TIMEFRAME = '9m'
+SYMBOLS = ['BTC/USDT','ETH/USDT','SOL/USDT','BNB/USDT','XRP/USDT','ADA/USDT']
 MAX_TRADES = 3
-LEVERAGE = 3  # utilisé uniquement pour le calcul RR
+RISK_DOLLAR = 0.30
+RR_MAX = 3
 
-SYMBOLS = [
-    "BTC/USDT",
-    "ETH/USDT",
-    "SOL/USDT",
-    "BNB/USDT",
-    "XRP/USDT",
-    "ADA/USDT"
-]
+exchange = ccxt.binance({'enableRateLimit': True})
 
-TIMEFRAME = "1m"
-LOOP_DELAY = 1  # ~1 seconde
-
-# ================= EXCHANGE (PUBLIC ONLY) =================
-exchange = ccxt.binance({
-    "enableRateLimit": True,
-    "options": {"defaultType": "future"}
-})
-
-# ================= STATE =================
 positions = {}
-stats = {"tp": 0, "sl": 0, "be": 0}
-daily_pnl = 0.0
-recovery_mode = False
-risk_multiplier = 1.0
+stats = {'win':0,'loss':0,'be':0}
+trade_id = 0
 
-# ================= UTILS =================
+LOG_FILE = 'dry_run_log.csv'
+if not os.path.exists(LOG_FILE):
+    with open(LOG_FILE,'w',newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            'id','symbol','side','entry','sl','tp',
+            'rr_target','rr_real','pnl','prob','corr','mode'
+        ])
 
-def clear():
-    os.system("clear" if os.name != "nt" else "cls")
+# ================= INDICATORS =================
 
-def fetch_ohlc(symbol, limit=120):
-    ohlc = exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=limit)
-    return pd.DataFrame(ohlc, columns=["t","o","h","l","c","v"])
+def fetch_df(symbol, limit=60):
+    ohlcv = exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=limit)
+    return pd.DataFrame(ohlcv, columns=['t','o','h','l','c','v'])
 
-def aggregate_9m(df):
-    df = df.copy()
-    df["grp"] = np.arange(len(df)) // 9
-    return df.groupby("grp").agg({
-        "o":"first","h":"max","l":"min","c":"last","v":"sum"
-    }).dropna()
+def bos(df, side):
+    if side == 'long':
+        return df['h'].iloc[-1] > df['h'].rolling(10).max().iloc[-2]
+    else:
+        return df['l'].iloc[-1] < df['l'].rolling(10).min().iloc[-2]
 
-def rr(entry, sl, price):
-    risk = abs(entry - sl)
-    return 0 if risk == 0 else (price - entry) / risk
+def imbalance(df):
+    return abs(df['c'].iloc[-2] - df['o'].iloc[-1]) > df['c'].std()
 
-# ================= ORDER BOOK SENTIMENT =================
+def fib_retrace(df, side):
+    high, low = df['h'].max(), df['l'].min()
+    fib50 = low + 0.5*(high-low)
+    price = df['c'].iloc[-1]
+    return abs(price - fib50)/price < 0.003
 
-def orderbook_sentiment(symbol):
-    ob = exchange.fetch_order_book(symbol, limit=50)
-    bid_vol = sum(b[1] for b in ob["bids"])
-    ask_vol = sum(a[1] for a in ob["asks"])
-    if bid_vol + ask_vol == 0:
-        return 0
-    return (bid_vol - ask_vol) / (bid_vol + ask_vol)
+def correlation_btc(df_alt, df_btc):
+    return df_alt['c'].pct_change().corr(df_btc['c'].pct_change())
 
-# ================= SMC ENGINE =================
-
-def detect_bos(df):
-    return df["h"].iloc[-1] > df["h"].iloc[-2]
-
-def detect_fvg(df):
-    return df["l"].iloc[-1] > df["h"].iloc[-3]
-
-def detect_order_block(df):
-    body = abs(df["c"].iloc[-2] - df["o"].iloc[-2])
-    rng = df["h"].iloc[-2] - df["l"].iloc[-2]
-    return rng > 0 and body / rng > 0.6
-
-def fib_50(df):
-    hi = df["h"].max()
-    lo = df["l"].min()
-    level = lo + 0.5 * (hi - lo)
-    return abs(df["c"].iloc[-1] - level) / level < 0.002
-
-def structure_score(df):
+def probability(df, side, corr):
     score = 0
-    if detect_bos(df): score += 20
-    if detect_fvg(df): score += 20
-    if detect_order_block(df): score += 20
-    if fib_50(df): score += 20
+    ema9 = EMAIndicator(df['c'],9).ema_indicator().iloc[-1]
+    ema21 = EMAIndicator(df['c'],21).ema_indicator().iloc[-1]
+    rsi = RSIIndicator(df['c'],14).rsi().iloc[-1]
+
+    if side == 'long' and df['c'].iloc[-1] > ema9 > ema21: score += 25
+    if side == 'short' and df['c'].iloc[-1] < ema9 < ema21: score += 25
+    if 45 < rsi < 70: score += 20
+    if imbalance(df): score += 20
+    if fib_retrace(df, side): score += 20
+    if abs(corr) < 0.5: score += 15
+
     return score
 
-# ================= PROBABILITY ENGINE =================
+# ================= TRADE MANAGEMENT =================
 
-def trade_probability(df9, df1, sentiment):
-    score = structure_score(df9)
+def rr(entry, sl, price, side):
+    if side == 'long':
+        return (price-entry)/(entry-sl)
+    else:
+        return (entry-price)/(sl-entry)
 
-    ema9 = EMAIndicator(df1["c"], 9).ema_indicator().iloc[-1]
-    ema21 = EMAIndicator(df1["c"], 21).ema_indicator().iloc[-1]
-    rsi = RSIIndicator(df1["c"], 14).rsi().iloc[-1]
-
-    if df1["c"].iloc[-1] > ema9 > ema21:
-        score += 20
-    if 50 < rsi < 70:
-        score += 10
-    if sentiment > 0:
-        score += 10
-
-    if recovery_mode:
-        score *= 0.8
-
-    return min(score, 100)
-
-# ================= RISK MANAGER =================
-
-def calc_lot(entry, sl):
-    risk = abs(entry - sl)
-    if risk == 0:
-        return 0
-    return (RISK_DOLLAR * risk_multiplier * LEVERAGE) / risk
-
-# ================= DASHBOARD =================
-
-def dashboard():
-    clear()
-    roi = (capital - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100
-    print("="*110)
-    print(f"💰 CAPITAL: {capital:.2f}$ | ROI: {roi:.2f}% | DAILY PNL: {daily_pnl:.2f}$")
-    print(f"📊 TP {stats['tp']} | SL {stats['sl']} | BE {stats['be']} | RECOVERY {'ON' if recovery_mode else 'OFF'}")
-    print("="*110)
-    for s,p in positions.items():
-        print(
-            f"{s} | ENTRY {p['entry']:.4f} | SL {p['sl']:.4f} | "
-            f"RR {p['rr']:.2f} | LOT {p['lot']:.4f}"
-        )
+def trailing_sl(pos, price):
+    if pos['rr_live'] >= 2:
+        if pos['side'] == 'long':
+            pos['sl'] = max(pos['sl'], price - pos['risk'])
+        else:
+            pos['sl'] = min(pos['sl'], price + pos['risk'])
 
 # ================= MAIN LOOP =================
 
 while True:
-    try:
-        dashboard()
+    os.system('clear')
+    perf = (capital - CAPITAL_INITIAL)/CAPITAL_INITIAL
+    recovery = perf <= -0.10
 
-        # ===== UPDATE POSITIONS =====
-        for s in list(positions.keys()):
-            price = exchange.fetch_ticker(s)["last"]
-            pos = positions[s]
+    print("="*100)
+    print(f"💰 CAPITAL {capital:.2f}$ | ROI {perf*100:.1f}% | RECOVERY {'ON' if recovery else 'OFF'}")
+    print(f"📊 WIN {stats['win']} | LOSS {stats['loss']} | BE {stats['be']}")
+    print("="*100)
 
-            pos["rr"] = rr(pos["entry"], pos["sl"], price)
+    btc_df = fetch_df('BTC/USDT')
 
-            # BE
-            if pos["rr"] >= 1 and not pos["be"]:
-                pos["sl"] = pos["entry"]
-                pos["be"] = True
+    # === MANAGE POSITIONS ===
+    for s in list(positions.keys()):
+        pos = positions[s]
+        price = fetch_df(s,10)['c'].iloc[-1]
 
-            # TRAILING AFTER R2
-            if pos["rr"] >= 2:
-                trail = pos["entry"] + (price - pos["entry"]) * 0.5
-                if trail > pos["sl"]:
-                    pos["sl"] = trail
+        pos['rr_live'] = rr(pos['entry'], pos['sl'], price, pos['side'])
+        pnl = pos['rr_live'] * pos['risk']
 
-            # TP RR3
-            if pos["rr"] >= 3:
-                pnl = (price - pos["entry"]) * pos["lot"]
-                capital += pnl
-                daily_pnl += pnl
-                stats["tp"] += 1
-                del positions[s]
-                recovery_mode = False
-                continue
+        # Trailing SL
+        trailing_sl(pos, price)
 
-            # SL / BE
-            if price <= pos["sl"]:
-                pnl = (price - pos["entry"]) * pos["lot"]
-                capital += pnl
-                daily_pnl += pnl
-                stats["sl" if pnl < 0 else "be"] += 1
-                del positions[s]
-                recovery_mode = True
-                continue
+        # TP
+        if pos['rr_live'] >= pos['rr_target']:
+            capital += pnl
+            stats['win'] += 1
+            with open(LOG_FILE,'a',newline='') as f:
+                csv.writer(f).writerow([
+                    pos['id'],s,pos['side'],pos['entry'],pos['sl'],pos['tp'],
+                    pos['rr_target'],pos['rr_live'],pnl,pos['prob'],pos['corr'],'WIN'
+                ])
+            del positions[s]
+            continue
 
-        # ===== ENTRIES =====
-        if len(positions) < MAX_TRADES:
-            for s in SYMBOLS:
-                if s in positions:
-                    continue
+        # SL
+        if (pos['side']=='long' and price<=pos['sl']) or (pos['side']=='short' and price>=pos['sl']):
+            capital += pnl
+            stats['loss' if pnl<0 else 'be'] += 1
+            del positions[s]
+            continue
 
-                df1 = fetch_ohlc(s, 120)
-                df9 = aggregate_9m(df1)
+        print(f"{s} {pos['side']} | PNL {pnl:.2f}$ | RR {pos['rr_live']:.2f} | SL {pos['sl']:.4f}")
 
-                sentiment = orderbook_sentiment(s)
-                prob = trade_probability(df9, df1, sentiment)
+    # === ENTRIES ===
+    if len(positions) < MAX_TRADES:
+        for s in SYMBOLS:
+            if s in positions: continue
 
-                if prob < 75:
-                    continue
+            df = fetch_df(s)
+            corr = correlation_btc(df, btc_df)
 
-                price = df1["c"].iloc[-1]
-                sl = df9["l"].iloc[-1]
+            for side in ['long','short']:
+                if not bos(df, side): continue
+                prob = probability(df, side, corr)
+                if prob < (85 if recovery else 70): continue
 
-                lot = calc_lot(price, sl)
-                if lot <= 0:
-                    continue
+                price = df['c'].iloc[-1]
+                risk = RISK_DOLLAR
+                sl = price - risk if side=='long' else price + risk
+                rr_target = min(3, 2.5)
 
+                trade_id += 1
                 positions[s] = {
-                    "entry": price,
-                    "sl": sl,
-                    "lot": lot,
-                    "be": False,
-                    "rr": 0
+                    'id':trade_id,
+                    'side':side,
+                    'entry':price,
+                    'sl':sl,
+                    'tp':price + rr_target*risk if side=='long' else price - rr_target*risk,
+                    'risk':risk,
+                    'rr_target':rr_target,
+                    'rr_live':0,
+                    'prob':prob,
+                    'corr':corr
                 }
+                break
 
-                if len(positions) >= MAX_TRADES:
-                    break
-
-        time.sleep(LOOP_DELAY)
-
-    except Exception as e:
-        print("ERROR:", e)
-        time.sleep(2)
+    time.sleep(1)
