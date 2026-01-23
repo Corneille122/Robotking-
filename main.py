@@ -1,123 +1,112 @@
 import ccxt
-import pandas as pd
 import time
-from ta.trend import EMAIndicator
-from ta.momentum import RSIIndicator
-from datetime import datetime
+from math import floor
 
 # ================= CONFIG =================
+API_KEY = 'TA_CLE_API'
+API_SECRET = 'TA_SECRET_API'
+EXCHANGE = ccxt.binance({
+    'apiKey': API_KEY,
+    'secret': API_SECRET,
+    'enableRateLimit': True,
+})
+
 CAPITAL_INITIAL = 5.0
 capital = CAPITAL_INITIAL
-TRADE_RISK = 0.3  # Risque par trade
+RISK_PER_TRADE = 0.3
 MAX_TRADES = 3
-GAIN_THRESHOLD = 3.0  # 300% pour augmenter lot
-LOSS_THRESHOLD = 0.3  # 30% pour réduire lot
-LOT_ADJUST = 0.05     # Ajustement lot 5%
+SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'ADA/USDT']
 
-SYMBOLS = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "ADA/USDT"]
-TIMEFRAMES = {'entry': '1m', 'confirm1': '5m', 'confirm2': '15m'}
+# ================= UTILITAIRES =================
+def round_lot(symbol, lot):
+    """Arrondir lot selon Binance"""
+    market = EXCHANGE.fetch_markets()
+    for m in market:
+        if m['symbol'] == symbol:
+            step = m['precision']['amount']
+            return floor(lot / step) * step
+    return lot
 
-# =============== EXCHANGE =================
-exchange = ccxt.binance({'enableRateLimit': True})
+def calculate_lot(price, sl, risk=RISK_PER_TRADE):
+    diff = abs(price - sl)
+    if diff == 0:
+        return 0
+    lot = risk / diff
+    return round_lot(symbol, lot)
 
-# =============== UTILITAIRES =================
-def fetch_ohlcv(symbol, timeframe, limit=200):
-    return pd.DataFrame(exchange.fetch_ohlcv(symbol, timeframe, limit=limit),
-                        columns=['timestamp','open','high','low','close','volume'])
+def fetch_price(symbol):
+    ticker = EXCHANGE.fetch_ticker(symbol)
+    return ticker['last']
 
-def calculate_lot(capital, risk, sl_points, price):
-    """Calcul du lot en fonction du risque par trade"""
-    lot = risk / (sl_points * price)
-    return round(lot, 6)
+def fetch_orderbook(symbol):
+    return EXCHANGE.fetch_order_book(symbol)
 
-def money_management(capital, lot, pnl):
-    """Ajustement dynamique du lot selon gain/perte"""
-    global LOT_ADJUST
-    if pnl / capital >= GAIN_THRESHOLD:
-        lot *= 1 + LOT_ADJUST
-    elif pnl / capital <= -LOSS_THRESHOLD:
-        lot *= 1 - LOT_ADJUST
-    return round(lot, 6)
+def pm_adjustment(capital, gain_loss):
+    """Ajuste le risque par lot selon PM"""
+    global RISK_PER_TRADE
+    if gain_loss >= 3 * capital:
+        RISK_PER_TRADE *= 1.05
+    elif gain_loss <= -0.3 * capital:
+        RISK_PER_TRADE *= 0.95
 
-# =============== SMC STRATEGY =================
-def smc_signal(df):
-    """Analyse SMC : OB, Breaker, Imbalance, 50%, Fibonacci, manipulation/distribution, CRT, ALD"""
-    # EMA et RSI pour confirmation rapide
-    ema = EMAIndicator(df['close'], window=20).ema_indicator()
-    rsi = RSIIndicator(df['close'], window=14).rsi()
-    # OB/Breaker simplifié pour exemple
-    last_candle = df.iloc[-1]
-    if last_candle['close'] > ema.iloc[-1] and rsi.iloc[-1] < 70:
-        return 'BUY'
-    elif last_candle['close'] < ema.iloc[-1] and rsi.iloc[-1] > 30:
-        return 'SELL'
-    else:
-        return None
+# ================= STRATEGIE =================
+def analyze(symbol):
+    """Analyse invisible avec SMC, order block, imbalance etc."""
+    price = fetch_price(symbol)
+    orderbook = fetch_orderbook(symbol)
+    # Ici, calcul interne pour probabilité de trade
+    # 1 = bon, 0 = pas bon
+    probability = 1  # Placeholder pour stratégie
+    # Calcule SL/TP basé sur stratégie
+    sl = price * 0.99
+    tp = price * 0.995
+    rr = abs(price - tp) / abs(price - sl)
+    return {'ok': probability >= 1, 'price': price, 'sl': sl, 'tp': tp, 'rr': rr}
 
-# =============== TRADE MANAGEMENT =================
+# ================= TRADE =================
 active_trades = []
 
-def execute_trade(symbol, signal, price, sl, tp, lot):
-    trade = {
+def open_trade(symbol, side, lot, price, sl, tp, rr):
+    active_trades.append({
         'symbol': symbol,
-        'signal': signal,
-        'entry': price,
+        'side': side,
+        'lot': lot,
+        'price': price,
         'sl': sl,
         'tp': tp,
-        'lot': lot,
-        'timestamp': datetime.now()
-    }
-    active_trades.append(trade)
+        'rr': rr,
+        'pnl': 0.0
+    })
+    print(f"{symbol} | {side} | Lot:{lot} | PNL:0.0 | SL:{sl} | TP:{tp} | RR:{rr}")
 
-def update_trades():
-    global capital, active_trades
-    for trade in active_trades[:]:
-        ticker = exchange.fetch_ticker(trade['symbol'])
-        current_price = ticker['last']
-        pnl = 0
-        if trade['signal'] == 'BUY':
-            pnl = (current_price - trade['entry']) * trade['lot']
-        elif trade['signal'] == 'SELL':
-            pnl = (trade['entry'] - current_price) * trade['lot']
+# ================= BOUCLE PRINCIPALE =================
+while True:
+    for symbol in SYMBOLS:
+        if len(active_trades) >= MAX_TRADES:
+            break
 
-        rr = (trade['tp'] - trade['entry']) / (trade['entry'] - trade['sl']) if trade['signal']=='BUY' else (trade['entry'] - trade['tp']) / (trade['sl'] - trade['entry'])
-        
-        print(f"{trade['symbol']} | {trade['signal']} | Lot:{trade['lot']} | PNL:{round(pnl,4)} | SL:{trade['sl']} | TP:{trade['tp']} | RR:{round(rr,2)}")
+        analysis = analyze(symbol)
+        if not analysis['ok']:
+            continue
 
-        # Check SL/TP
-        if (trade['signal']=='BUY' and (current_price <= trade['sl'] or current_price >= trade['tp'])) or \
-           (trade['signal']=='SELL' and (current_price >= trade['sl'] or current_price <= trade['tp'])):
-            capital += pnl
-            active_trades.remove(trade)
+        price = analysis['price']
+        sl = analysis['sl']
+        tp = analysis['tp']
+        rr = analysis['rr']
 
-# =============== MAIN LOOP =================
-def main():
-    global capital
-    lot = TRADE_RISK  # lot initial
-    while True:
-        for symbol in SYMBOLS:
-            df_entry = fetch_ohlcv(symbol, TIMEFRAMES['entry'])
-            df_confirm1 = fetch_ohlcv(symbol, TIMEFRAMES['confirm1'])
-            df_confirm2 = fetch_ohlcv(symbol, TIMEFRAMES['confirm2'])
+        lot = calculate_lot(price, sl)
+        if lot <= 0:
+            continue
 
-            signal_entry = smc_signal(df_entry)
-            signal_confirm1 = smc_signal(df_confirm1)
-            signal_confirm2 = smc_signal(df_confirm2)
+        # Entrée SELL ou BUY selon analyse (ici placeholder SELL)
+        side = 'SELL'
+        open_trade(symbol, side, lot, price, sl, tp, rr)
 
-            # Analyse complète avant trade
-            if signal_entry and signal_entry == signal_confirm1 == signal_confirm2:
-                ticker = exchange.fetch_ticker(symbol)
-                price = ticker['last']
-                sl = price * 0.995 if signal_entry=='BUY' else price * 1.005
-                tp = price * 1.01 if signal_entry=='BUY' else price * 0.99
-                sl_points = abs(price - sl)
-                trade_lot = calculate_lot(capital, TRADE_RISK, sl_points, price)
-                trade_lot = money_management(capital, trade_lot, 0)  # pnl=0 au moment de l'entrée
-                if len(active_trades) < MAX_TRADES:
-                    execute_trade(symbol, signal_entry, price, sl, tp, trade_lot)
-        
-        update_trades()
-        time.sleep(60)  # 1 minute par cycle M1
+    # Affiche fiche PM
+    print(f"CAPITAL: {capital:.2f}$ | RISK: {RISK_PER_TRADE:.2f}$ | ACTIVE TRADES: {len(active_trades)}")
+    
+    # Simulation PNL pour ajustement PM (placeholder)
+    gain_loss = sum([t['pnl'] for t in active_trades])
+    pm_adjustment(capital, gain_loss)
 
-if __name__ == "__main__":
-    main()
+    time.sleep(60)  # M1
