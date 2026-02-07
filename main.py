@@ -1,113 +1,144 @@
-import requests
-import time
-import os
+import requests, time, hmac, hashlib, os, sys
+from datetime import datetime
 
-# ================== CONFIGURATION STRATÉGIQUE ==================
-CAPITAL_INITIAL = 5.0
-RISQUE_BTC = 0.6             # Risque 0.6$ spécifié pour BTC
-RISQUE_ALTS = 0.3            # Risque 0.3$ pour les Alts
-MAX_TRADES = 3               # 3 trades simultanés max
-MIN_LOT_BTC = 0.003          # Lot minimum BTC
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT"]
-RR_TARGET = 2.0
+# ================== CONFIG ==================
+API_KEY = 'YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af'
+API_SECRET = 'si08ii320XMByW4VY1VRt5zRJNnB3QrYBJc3QkDOdKHLZGKxyTo5CHxz7nd4CuQ0'
+URL = "https://fapi.binance.com"
 
-def get_live_data(symbol):
-    """Analyse M1 avec exécution 1s"""
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=20"
+MARKETS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT']
+RISK_USDT = 0.50
+STRAT_IMPULSE = 0.003
+SEUIL_PNL = 0.30
+CALLBACK_TRAIL = 0.12
+
+# ================== API UTILS ==================
+def api_call(method, endpoint, params={}):
+    params['timestamp'] = int(time.time()*1000)
+    query = '&'.join([f"{k}={v}" for k,v in params.items()])
+    signature = hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
+    url = f"{URL}{endpoint}?{query}&signature={signature}"
+    headers = {'X-MBX-APIKEY': API_KEY}
     try:
-        data = requests.get(url, timeout=1).json()
-        current_price = float(data[-1][4])
-        highs = [float(k[2]) for k in data]
-        lows = [float(k[3]) for k in data]
-        
-        # Volatilité ATR M1
-        vol = sum([highs[i] - lows[i] for i in range(-5, 0)]) / 5
-        
-        # Détection SMC : FVG & Liquidité
-        fvg_up = float(data[-3][2]) < float(data[-1][3])
-        fvg_down = float(data[-3][3]) > float(data[-1][2])
-        sweep_low = current_price < min(lows[-15:-1]) # A balayé les bas
-        sweep_high = current_price > max(highs[-15:-1]) # A balayé les hauts
-        
-        is_bullish = current_price > float(data[-1][1])
-        return current_price, vol, fvg_up, fvg_down, is_bullish, sweep_low, sweep_high
-    except: return None, 0, False, False, False, False, False
+        r = requests.request(method, url, headers=headers, timeout=3)
+        return r.json()
+    except Exception as e:
+        print(f"⚠️ API Erreur: {e}")
+        return None
 
-class ActiveTrade:
-    def __init__(self, symbol, direction, price, vol, risk):
-        self.symbol, self.direction, self.entry_price = symbol, direction, price
-        self.risk_usd = risk
-        self.sl_dist = max(vol * 1.5, price * 0.0008)
-        self.sl = price - self.sl_dist if direction == "BUY" else price + self.sl_dist
-        self.tp = price + (self.sl_dist * RR_TARGET) if direction == "BUY" else price - (self.sl_dist * RR_TARGET)
-        
-        calc_lot = risk / self.sl_dist
-        self.lot = max(calc_lot, MIN_LOT_BTC) if symbol == "BTCUSDT" else round(calc_lot, 4)
-        self.pnl, self.rr_dyn, self.active = 0.0, 0.0, True
+def get_precisions(symbol):
+    info = requests.get(f"{URL}/fapi/v1/exchangeInfo").json()
+    for s in info['symbols']:
+        if s['symbol'] == symbol:
+            return s['quantityPrecision'], s['pricePrecision'], float(s['filters'][2]['stepSize'])
+    return 2,2,0.01
 
-    def refresh(self, price, vol):
-        self.pnl = (price - self.entry_price) * self.lot if self.direction == "BUY" else (self.entry_price - price) * self.lot
-        self.rr_dyn = self.pnl / self.risk_usd if self.risk_usd > 0 else 0
-        # Trailing Stop serré
-        if self.direction == "BUY":
-            if price - (vol * 1.2) > self.sl: self.sl = price - (vol * 1.2)
-            if price <= self.sl or price >= self.tp: self.active = False
-        else:
-            if price + (vol * 1.2) < self.sl: self.sl = price + (vol * 1.2)
-            if price >= self.sl or price <= self.tp: self.active = False
+def get_klines(symbol, interval='1m', limit=15):
+    try:
+        return requests.get(f"{URL}/fapi/v1/klines", params={'symbol':symbol,'interval':interval,'limit':limit}).json()
+    except:
+        return []
 
-class SoroRobot:
-    def __init__(self):
-        self.capital = CAPITAL_INITIAL
-        self.trades, self.history = [], {"W": 0, "L": 0}
-        self.btc_state = "SCAN"
+# ================== RISK ENGINE ==================
+class RiskEngine:
+    def __init__(self, capital):
+        self.capital_ref = capital
+        self.risk = RISK_USDT
 
-    def apply_money_management(self):
-        """Règles : +300% / -30%"""
-        if self.capital >= CAPITAL_INITIAL * 4: return 1.05
-        if self.capital <= CAPITAL_INITIAL * 0.7: return 0.95
-        return 1.0
+    def update_risk(self, balance):
+        if balance >= self.capital_ref*6:  # +500%
+            self.risk *= 1.5
+            self.capital_ref = balance
+            print(f"🔥 COMPOUNDING | Nouveau risque : {self.risk:.2f} USDT")
+        return self.risk
 
-    def render(self):
-        os.system('cls' if os.name == 'nt' else 'clear')
-        print(f"--- 💠 ALPHA-TERMINAL M1 | BTC MODE: {self.btc_state} ---")
-        print(f"💰 CAPITAL: {self.capital:.2f}$ | SCORE: {self.history['W']}W - {self.history['L']}L")
-        print("=" * 125)
-        print(f"{'SYMBOLE':<10} | {'DIR':<5} | {'LOT':<8} | {'RR DYN':<7} | {'ENTRÉE':<10} | {'LIVE':<10} | {'SL':<10} | {'TP':<10} | {'PNL'}")
-        print("-" * 125)
-        for t in self.trades:
-            c = "\033[92m" if t.pnl > 0 else "\033[91m"
-            print(f"{t.symbol:<10} | {t.direction:<5} | {t.lot:<8.4f} | {t.rr_dyn:>5.2f}x | {t.entry_price:<10.2f} | {t.entry_price+t.pnl/t.lot:<10.2f} | {t.sl:<10.2f} | {t.tp:<10.2f} | {c}{t.pnl:>8.2f}$\033[0m")
-        print("=" * 125)
+# ================== LOT ADJUST ==================
+def adjust_lot(symbol, lot):
+    q_prec, _, step = get_precisions(symbol)
+    # Ajustement du lot pour respecter le stepSize
+    lot = max(lot, step)
+    lot = (lot // step) * step
+    lot = round(lot, q_prec)
+    return lot
 
-    def start(self):
-        while True:
-            mod = self.apply_money_management()
-            # 1. Analyse Maître BTC
-            bp, bv, bf_u, bf_d, b_bull, b_sw_l, b_sw_h = get_live_data("BTCUSDT")
-            self.btc_state = "BULL" if b_bull else "BEAR"
+# ================== LIVE ROBOT ==================
+def live_robot():
+    os.system('cls' if os.name=='nt' else 'clear')
+    risk_engine = RiskEngine(5.0)
 
-            for sym in SYMBOLS:
-                if not any(tr.symbol == sym for tr in self.trades) and len(self.trades) < MAX_TRADES:
-                    p, v, f_u, f_d, bull, sw_l, sw_h = get_live_data(sym)
-                    if p:
-                        risk = (RISQUE_BTC if sym == "BTCUSDT" else RISQUE_ALTS) * mod
-                        # LOGIQUE M1 OPTIMISÉE
-                        if f_u and b_bull: # FVG + Corrélation BTC
-                            self.trades.append(ActiveTrade(sym, "BUY", p, v, risk))
-                        elif f_d and not b_bull:
-                            self.trades.append(ActiveTrade(sym, "SELL", p, v, risk))
+    while True:
+        try:
+            acc = api_call('GET','/fapi/v2/account')
+            pos_data = api_call('GET','/fapi/v2/positionRisk')
+            if not acc or not pos_data:
+                time.sleep(1)
+                continue
 
-            for t in self.trades[:]:
-                p, v, _, _, _, _, _ = get_live_data(t.symbol)
-                if p:
-                    t.refresh(p, v)
-                    if not t.active:
-                        self.capital += t.pnl
-                        self.history["W" if t.pnl > 0 else "L"] += 1
-                        self.trades.remove(t)
-            self.render()
-            time.sleep(1)
+            balance = float(acc['totalWalletBalance'])
+            active_pos = [p for p in pos_data if float(p['positionAmt'])!=0]
 
-if __name__ == "__main__":
-    SoroRobot().start()
+            sys.stdout.write("\033[H")
+            print(f"💳 Solde : {balance:.2f} USDT | {datetime.now().strftime('%H:%M:%S')}")
+
+            # ------------------------- SCAN -------------------------
+            if not active_pos:
+                print(f"🔎 SCAN BREAKER + FVG sur {len(MARKETS)} marchés")
+                for sym in MARKETS:
+                    kl = get_klines(sym)
+                    if not kl: continue
+                    cp, op = float(kl[-1][4]), float(kl[-1][1])
+                    h_prev = max(float(x[2]) for x in kl[:-1])
+                    l_prev = min(float(x[3]) for x in kl[:-1])
+                    change = (cp-op)/op
+
+                    side = None
+                    if change >= STRAT_IMPULSE and cp>h_prev:
+                        side = "BUY"
+                    elif change <= -STRAT_IMPULSE and cp<l_prev:
+                        side = "SELL"
+
+                    if side:
+                        lot = risk_engine.update_risk(balance)/(cp*0.007)
+                        lot = adjust_lot(sym, lot)
+                        if lot<=0: continue
+
+                        api_call('POST','/fapi/v1/leverage',{'symbol':sym,'leverage':20})
+                        resp = api_call('POST','/fapi/v1/order',{
+                            'symbol':sym,'side':side,'type':'MARKET','quantity':lot})
+                        if resp and 'orderId' in resp:
+                            print(f"🚀 {sym} | {side} | ENTRY {cp:.2f} | LOT {lot}")
+
+                            # STOP LOSS
+                            _, p_prec, _ = get_precisions(sym)
+                            sl = round(cp*0.993 if side=="BUY" else cp*1.007,p_prec)
+                            api_call('POST','/fapi/v1/order',{
+                                'symbol':sym,'side':'SELL' if side=="BUY" else 'BUY',
+                                'type':'STOP_MARKET','stopPrice':sl,
+                                'quantity':lot,'reduceOnly':'true'})
+                            print(f"🛡️ SL placé à {sl:.2f}")
+
+            # ------------------- POSITION ACTIVE -------------------
+            else:
+                p = active_pos[0]
+                sym, qty, pnl = p['symbol'], float(p['positionAmt']), float(p['unRealizedProfit'])
+                orders = api_call('GET','/fapi/v1/openOrders',{'symbol':sym})
+                is_trail = any(o['type']=='TRAILING_STOP_MARKET' for o in orders)
+
+                print(f"🎯 POSITION ACTIVE {sym} | QTY {qty} | PnL {pnl:+.2f} USDT")
+
+                if pnl >= SEUIL_PNL and not is_trail:
+                    print("🛡️ Activation Trailing Stop")
+                    api_call('DELETE','/fapi/v1/allOpenOrders',{'symbol':sym})
+                    api_call('POST','/fapi/v1/order',{
+                        'symbol':sym,'side':'SELL' if qty>0 else 'BUY',
+                        'type':'TRAILING_STOP_MARKET','quantity':abs(qty),
+                        'callbackRate':CALLBACK_TRAIL,'reduceOnly':'true'
+                    })
+
+            time.sleep(1.5)
+        except Exception as e:
+            print(f"⚠️ Erreur : {e}")
+            time.sleep(2)
+
+if __name__=="__main__":
+    live_robot()
