@@ -3,3 +3,6 @@ numpy
 ccxt
 ta
 flask
+requests
+flask
+gunicorn
