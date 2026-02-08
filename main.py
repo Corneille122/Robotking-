@@ -1,175 +1,124 @@
-import time, math, hmac, hashlib, requests, sys
-from datetime import datetime
+import time, hmac, hashlib, requests, threading, os
+from datetime import datetime, timezone
+from flask import Flask
 
-# ================== API ==================
+# --- CONFIGURATION SERVEUR ---
+app = Flask(__name__)
+@app.route('/')
+def home(): return "ROBOTKING V10 ACTIVE", 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# --- CONFIGURATION API ---
 API_KEY    = "YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af"
 API_SECRET = "si08ii320XMByW4VY1VRt5zRJNnB3QrYBJc3QkDOdKHLZGKxyTo5CHxz7nd4CuQ0"
-
 BASE_URL = "https://fapi.binance.com"
 
-# ================== SETTINGS ==================
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
-
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
 LEVERAGE = 20
-INITIAL_BALANCE = 5.0
-BASE_RISK_USDT = 1.0
+RISK_USDT = 0.65  # 12% de marge sur ton capital de ~5.40$
 
-TIMEFRAME_TREND = "15m"
-TIMEFRAME_ENTRY = "5m"
-
-# Modes
-in_position = False
-mode_after_sl = False  # True = strict mode après SL
-last_sl_time = 0
-
-# ================== UTILS ==================
+# ================== FONCTIONS API ==================
 def sign(params):
     query = "&".join([f"{k}={v}" for k,v in params.items()])
     return hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
 
 def request(method, path, params=None):
-    if params is None:
-        params = {}
+    if params is None: params = {}
     params["timestamp"] = int(time.time()*1000)
     params["signature"] = sign(params)
     headers = {"X-MBX-APIKEY": API_KEY}
-    url = BASE_URL + path
-
-    if method == "GET":
-        return requests.get(url, params=params, headers=headers).json()
-    if method == "POST":
-        return requests.post(url, params=params, headers=headers).json()
-
-def keep_alive():
     try:
-        requests.get("https://fapi.binance.com/fapi/v1/time", timeout=3)
-    except:
-        pass
+        if method == "GET": return requests.get(BASE_URL + path, params=params, headers=headers).json()
+        return requests.post(BASE_URL + path, params=params, headers=headers).json()
+    except: return None
 
-# ================== ACCOUNT ==================
-def get_balance():
+# ================== STRATÉGIE SMC (REJET + BOS) ==================
+def get_signal(symbol):
+    """Analyse la stratégie SMC : Tendance 15m + Rejet 5m"""
+    # 1. Tendance (BOS)
+    k15 = requests.get(f"{BASE_URL}/fapi/v1/klines?symbol={symbol}&interval=15m&limit=10").json()
+    trend_up = float(k15[-1][4]) > float(k15[-5][4])
+    
+    # 2. Rejet (Pin Bar) sur 5m
+    k5 = requests.get(f"{BASE_URL}/fapi/v1/klines?symbol={symbol}&interval=5m&limit=2").json()
+    c = k5[-1]
+    o, h, l, cl = map(float, [c[1], c[2], c[3], c[4]])
+    body = abs(cl - o)
+    wick = max(h - max(o, cl), min(o, cl) - l)
+    
+    if trend_up and (wick > body * 1.5) and (cl > o):
+        return "BUY", cl, l # Signal d'achat, prix entrée, prix SL (bas de mèche)
+    return None, None, None
+
+# ================== GESTIONNAIRE DE COMPTE ==================
+def get_account_status():
+    bal = 0.0
     r = request("GET", "/fapi/v2/balance")
-    for a in r:
-        if a["asset"] == "USDT":
-            return float(a["balance"])
-    return 0.0
+    if isinstance(r, list):
+        for a in r:
+            if a["asset"] == "USDT": bal = float(a["balance"])
+    
+    positions = request("GET", "/fapi/v2/positionRisk")
+    active_pos = []
+    if isinstance(positions, list):
+        for p in positions:
+            if float(p["positionAmt"]) != 0:
+                active_pos.append(p)
+    return round(bal, 2), active_pos
 
-def set_leverage(symbol):
-    request("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": LEVERAGE})
+def protect_current_trades(active_positions):
+    """Exige un Stop Loss sur chaque position ouverte"""
+    orders = request("GET", "/fapi/v1/openOrders")
+    for p in active_positions:
+        sym = p["symbol"]
+        amt = float(p["positionAmt"])
+        entry = float(p["entryPrice"])
+        side = "LONG" if amt > 0 else "SHORT"
+        
+        # Vérifier si un SL existe
+        has_sl = any(o['symbol'] == sym and o['type'] == 'STOP_MARKET' for o in orders)
+        if not has_sl:
+            print(f"⚠️ PROTECTION : Placement SL exigé pour {sym}")
+            sl_price = entry * 0.985 if side == "LONG" else entry * 1.015
+            opp_side = "SELL" if side == "LONG" else "BUY"
+            request("POST", "/fapi/v1/order", {
+                "symbol": sym, "side": opp_side, "type": "STOP_MARKET",
+                "stopPrice": round(sl_price, 4), "quantity": abs(amt), "reduceOnly": "true"
+            })
 
-# ================== MARKET DATA ==================
-def klines(symbol, tf, limit):
-    return requests.get(
-        BASE_URL + "/fapi/v1/klines",
-        params={"symbol": symbol, "interval": tf, "limit": limit}
-    ).json()
+# ================== BOUCLE PRINCIPALE ==================
+def main():
+    print("🤖 ROBOTKING V10 DÉMARRÉ")
+    while True:
+        try:
+            solde, positions = get_account_status()
+            now = datetime.now(timezone.utc).strftime('%H:%M:%S')
+            
+            print(f"\n--- {now} | SOLDE: {solde}$ ---")
+            
+            if len(positions) > 0:
+                print(f"📌 {len(positions)} position(s) active(s). Mode surveillance...")
+                protect_current_trades(positions)
+            else:
+                print("🔍 Aucune position. Scan de nouvelles opportunités SMC...")
+                for sym in SYMBOLS:
+                    signal, price, sl = get_signal(sym)
+                    if signal == "BUY":
+                        qty = round((RISK_USDT * LEVERAGE) / price, 3)
+                        print(f"🔥 SIGNAL SMC DÉTECTÉ : {sym} | ACHAT à {price}")
+                        request("POST", "/fapi/v1/leverage", {"symbol": sym, "leverage": LEVERAGE})
+                        request("POST", "/fapi/v1/order", {"symbol": sym, "side": "BUY", "type": "MARKET", "quantity": qty})
+                        request("POST", "/fapi/v1/order", {"symbol": sym, "side": "SELL", "type": "STOP_MARKET", "stopPrice": round(sl, 4), "quantity": qty, "reduceOnly": "true"})
+                        break # Un seul trade à la fois
 
-# ================== STRATEGY ==================
-def trend_ok(symbol):
-    k = klines(symbol, TIMEFRAME_TREND, 20)
-    return float(k[-1][4]) > float(k[-10][4])
-
-def rejection(c):
-    o,h,l,cl = map(float,[c[1],c[2],c[3],c[4]])
-    body = abs(cl-o)
-    wick = max(h-max(o,cl), min(o,cl)-l)
-    return wick > body * 1.5
-
-# ================== RISK ==================
-def calc_risk(balance):
-    # Augmentation du risque si +500% du compte initial
-    multiplier = 1 + (math.floor((balance / INITIAL_BALANCE) / 5) * 0.5)
-    return BASE_RISK_USDT * multiplier
-
-def calc_qty(symbol, risk, price):
-    qty = (risk * LEVERAGE) / price
-    return round(qty, 3)
-
-# ================== ORDERS ==================
-def market_order(symbol, side, qty):
-    return request("POST", "/fapi/v1/order", {
-        "symbol": symbol,
-        "side": side,
-        "type": "MARKET",
-        "quantity": qty
-    })
-
-def stop_loss(symbol, side, qty, price):
-    return request("POST", "/fapi/v1/order", {
-        "symbol": symbol,
-        "side": side,
-        "type": "STOP_MARKET",
-        "stopPrice": round(price, 2),
-        "quantity": qty,
-        "reduceOnly": "true"
-    })
-
-def trailing_stop(symbol, side, qty, callback=1.0):
-    return request("POST", "/fapi/v1/order", {
-        "symbol": symbol,
-        "side": side,
-        "type": "TRAILING_STOP_MARKET",
-        "quantity": qty,
-        "callbackRate": callback,
-        "reduceOnly": "true"
-    })
-
-# ================== MAIN ==================
-print("🚀 BINANCE FUTURES LIVE BOT DÉMARRÉ")
-while True:
-    try:
-        print(f"⏱️ {datetime.utcnow().strftime('%H:%M:%S')} SCANNING")
-        sys.stdout.flush()
-        keep_alive()  # anti-sleep VPS
-
-        balance = get_balance()
-        risk = calc_risk(balance)
-
-        if in_position:
-            print("⏹️ Position en cours… attente de clôture")
+            time.sleep(30)
+        except Exception as e:
+            print(f"❌ Erreur: {e}")
             time.sleep(10)
-            continue
 
-        for sym in SYMBOLS:
-            set_leverage(sym)
-
-            # MODE strict après SL
-            if mode_after_sl:
-                if not trend_ok(sym):
-                    continue  # ignore setup faibles
-                k = klines(sym, TIMEFRAME_ENTRY, 5)
-                if not rejection(k[-1]):
-                    continue
-                # ici seulement setup premium
-                entry = float(k[-1][4])
-                sl = float(k[-2][3])
-                qty = calc_qty(sym, risk*0.7, entry)  # risque réduit après SL
-                print(f"🔥 TRADE PREMIUM {sym} | QTY {qty}")
-                market_order(sym, "BUY", qty)
-                stop_loss(sym, "SELL", qty, sl)
-                trailing_stop(sym, "SELL", qty, callback=1.2)
-                in_position = True
-                mode_after_sl = False
-                break
-
-            # MODE normal
-            if not trend_ok(sym):
-                continue
-            k = klines(sym, TIMEFRAME_ENTRY, 5)
-            if not rejection(k[-1]):
-                continue
-            entry = float(k[-1][4])
-            sl = float(k[-2][3])
-            qty = calc_qty(sym, risk, entry)
-            print(f"🔥 TRADE {sym} | QTY {qty}")
-            market_order(sym, "BUY", qty)
-            stop_loss(sym, "SELL", qty, sl)
-            trailing_stop(sym, "SELL", qty, callback=1.2)
-            in_position = True
-            break
-
-        time.sleep(30)
-
-    except Exception as e:
-        print("⚠️ ERROR:", e)
-        time.sleep(5)
+if __name__ == "__main__":
+    threading.Thread(target=run_flask, daemon=True).start()
+    main()
