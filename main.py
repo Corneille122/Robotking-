@@ -1,111 +1,175 @@
-import requests, time, hmac, hashlib, os, sys, threading
+import time, math, hmac, hashlib, requests, sys
 from datetime import datetime
-from flask import Flask
 
-# ================== SYSTÈME ANTI-SOMMEIL RENDER ==================
-app = Flask(__name__)
-@app.route('/')
-def home():
-    return f"🤖 Robotking- en ligne | Statut : SCANNING | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+# ================== API ==================
+API_KEY    = "YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af"
+API_SECRET = "si08ii320XMByW4VY1VRt5zRJNnB3QrYBJc3QkDOdKHLZGKxyTo5CHxz7nd4CuQ0"
 
-def run_web_server():
-    # Render utilise le port 10000. Cela répond aux "pings" de Render pour rester éveillé.
-    app.run(host='0.0.0.0', port=10000)
+BASE_URL = "https://fapi.binance.com"
 
-# ================== TA CONFIGURATION (SOURCE) ==================
-API_KEY = 'YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af'
-API_SECRET = 'si08ii320XMByW4VY1VRt5zRJNnB3QrYBJc3QkDOdKHLZGKxyTo5CHxz7nd4CuQ0'
-URL = "https://fapi.binance.com"
+# ================== SETTINGS ==================
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
 
-MARKETS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT']
-RISK_USDT = 0.50
-STRAT_IMPULSE = 0.003
-SEUIL_PNL = 0.30
-CALLBACK_TRAIL = 0.12
+LEVERAGE = 20
+INITIAL_BALANCE = 5.0
+BASE_RISK_USDT = 1.0
 
-# ================== TES FONCTIONS API (SOURCE) ==================
-def api_call(method, endpoint, params={}):
-    params['timestamp'] = int(time.time()*1000)
-    query = '&'.join([f"{k}={v}" for k,v in params.items()])
-    signature = hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
-    url = f"{URL}{endpoint}?{query}&signature={signature}"
-    headers = {'X-MBX-APIKEY': API_KEY}
+TIMEFRAME_TREND = "15m"
+TIMEFRAME_ENTRY = "5m"
+
+# Modes
+in_position = False
+mode_after_sl = False  # True = strict mode après SL
+last_sl_time = 0
+
+# ================== UTILS ==================
+def sign(params):
+    query = "&".join([f"{k}={v}" for k,v in params.items()])
+    return hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
+
+def request(method, path, params=None):
+    if params is None:
+        params = {}
+    params["timestamp"] = int(time.time()*1000)
+    params["signature"] = sign(params)
+    headers = {"X-MBX-APIKEY": API_KEY}
+    url = BASE_URL + path
+
+    if method == "GET":
+        return requests.get(url, params=params, headers=headers).json()
+    if method == "POST":
+        return requests.post(url, params=params, headers=headers).json()
+
+def keep_alive():
     try:
-        r = requests.request(method, url, headers=headers, timeout=3)
-        return r.json()
-    except Exception as e:
-        print(f"⚠️ API Erreur: {e}")
-        return None
+        requests.get("https://fapi.binance.com/fapi/v1/time", timeout=3)
+    except:
+        pass
 
-def get_precisions(symbol):
-    info = requests.get(f"{URL}/fapi/v1/exchangeInfo").json()
-    for s in info['symbols']:
-        if s['symbol'] == symbol:
-            return s['quantityPrecision'], s['pricePrecision'], float(s['filters'][2]['stepSize'])
-    return 2,2,0.01
+# ================== ACCOUNT ==================
+def get_balance():
+    r = request("GET", "/fapi/v2/balance")
+    for a in r:
+        if a["asset"] == "USDT":
+            return float(a["balance"])
+    return 0.0
 
-def adjust_lot(symbol, lot):
-    q_prec, _, step = get_precisions(symbol)
-    lot = max(lot, step)
-    lot = (lot // step) * step
-    return round(lot, q_prec)
+def set_leverage(symbol):
+    request("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": LEVERAGE})
 
-# ================== TA LOGIQUE DE TRADING (SOURCE) ==================
-def live_robot_logic():
-    print("💎 STRATÉGIE SMC LANCÉE SUR LE VPS...")
-    while True:
-        try:
-            acc = api_call('GET','/fapi/v2/account')
-            pos_data = api_call('GET','/fapi/v2/positionRisk')
-            if not acc or not pos_data:
-                time.sleep(2)
-                continue
+# ================== MARKET DATA ==================
+def klines(symbol, tf, limit):
+    return requests.get(
+        BASE_URL + "/fapi/v1/klines",
+        params={"symbol": symbol, "interval": tf, "limit": limit}
+    ).json()
 
-            balance = float(acc['totalWalletBalance'])
-            active_pos = [p for p in pos_data if float(p['positionAmt'])!=0]
+# ================== STRATEGY ==================
+def trend_ok(symbol):
+    k = klines(symbol, TIMEFRAME_TREND, 20)
+    return float(k[-1][4]) > float(k[-10][4])
 
-            # --- SCAN DES MARCHÉS ---
-            if not active_pos:
-                for sym in MARKETS:
-                    kl = requests.get(f"{URL}/fapi/v1/klines", params={'symbol':sym,'interval':'1m','limit':15}).json()
-                    cp, op = float(kl[-1][4]), float(kl[-1][1])
-                    h_prev = max(float(x[2]) for x in kl[:-1])
-                    l_prev = min(float(x[3]) for x in kl[:-1])
-                    change = (cp-op)/op
+def rejection(c):
+    o,h,l,cl = map(float,[c[1],c[2],c[3],c[4]])
+    body = abs(cl-o)
+    wick = max(h-max(o,cl), min(o,cl)-l)
+    return wick > body * 1.5
 
-                    side = None
-                    if change >= STRAT_IMPULSE and cp > h_prev: side = "BUY"
-                    elif change <= -STRAT_IMPULSE and cp < l_prev: side = "SELL"
+# ================== RISK ==================
+def calc_risk(balance):
+    # Augmentation du risque si +500% du compte initial
+    multiplier = 1 + (math.floor((balance / INITIAL_BALANCE) / 5) * 0.5)
+    return BASE_RISK_USDT * multiplier
 
-                    if side:
-                        lot = RISK_USDT / (cp * 0.007)
-                        lot = adjust_lot(sym, lot)
-                        api_call('POST','/fapi/v1/leverage',{'symbol':sym,'leverage':20})
-                        resp = api_call('POST','/fapi/v1/order',{'symbol':sym,'side':side,'type':'MARKET','quantity':lot})
-                        if resp and 'orderId' in resp:
-                            _, p_prec, _ = get_precisions(sym)
-                            sl = round(cp*0.993 if side=="BUY" else cp*1.007, p_prec)
-                            api_call('POST','/fapi/v1/order',{'symbol':sym,'side':'SELL' if side=="BUY" else 'BUY', 'type':'STOP_MARKET','stopPrice':sl,'quantity':lot,'reduceOnly':'true'})
-                            print(f"🚀 {sym} | {side} | ENTRY {cp}")
+def calc_qty(symbol, risk, price):
+    qty = (risk * LEVERAGE) / price
+    return round(qty, 3)
 
-            # --- GESTION DES POSITIONS ---
-            else:
-                p = active_pos[0]
-                sym, qty, pnl = p['symbol'], float(p['positionAmt']), float(p['unRealizedProfit'])
-                if pnl >= SEUIL_PNL:
-                    api_call('DELETE','/fapi/v1/allOpenOrders',{'symbol':sym})
-                    api_call('POST','/fapi/v1/order',{'symbol':sym,'side':'SELL' if qty>0 else 'BUY','type':'TRAILING_STOP_MARKET','quantity':abs(qty),'callbackRate':CALLBACK_TRAIL,'reduceOnly':'true'})
-                    print(f"🛡️ Trailing activé sur {sym}")
+# ================== ORDERS ==================
+def market_order(symbol, side, qty):
+    return request("POST", "/fapi/v1/order", {
+        "symbol": symbol,
+        "side": side,
+        "type": "MARKET",
+        "quantity": qty
+    })
 
+def stop_loss(symbol, side, qty, price):
+    return request("POST", "/fapi/v1/order", {
+        "symbol": symbol,
+        "side": side,
+        "type": "STOP_MARKET",
+        "stopPrice": round(price, 2),
+        "quantity": qty,
+        "reduceOnly": "true"
+    })
+
+def trailing_stop(symbol, side, qty, callback=1.0):
+    return request("POST", "/fapi/v1/order", {
+        "symbol": symbol,
+        "side": side,
+        "type": "TRAILING_STOP_MARKET",
+        "quantity": qty,
+        "callbackRate": callback,
+        "reduceOnly": "true"
+    })
+
+# ================== MAIN ==================
+print("🚀 BINANCE FUTURES LIVE BOT DÉMARRÉ")
+while True:
+    try:
+        print(f"⏱️ {datetime.utcnow().strftime('%H:%M:%S')} SCANNING")
+        sys.stdout.flush()
+        keep_alive()  # anti-sleep VPS
+
+        balance = get_balance()
+        risk = calc_risk(balance)
+
+        if in_position:
+            print("⏹️ Position en cours… attente de clôture")
             time.sleep(10)
-        except Exception as e:
-            print(f"⚠️ Erreur : {e}")
-            time.sleep(5)
+            continue
 
-# ================== DÉMARRAGE GLOBAL ==================
-if __name__ == "__main__":
-    # 1. On lance le serveur Flask en arrière-plan (Anti-Dodo)
-    threading.Thread(target=run_web_server, daemon=True).start()
-    
-    # 2. On lance ta logique principale
-    live_robot_logic()
+        for sym in SYMBOLS:
+            set_leverage(sym)
+
+            # MODE strict après SL
+            if mode_after_sl:
+                if not trend_ok(sym):
+                    continue  # ignore setup faibles
+                k = klines(sym, TIMEFRAME_ENTRY, 5)
+                if not rejection(k[-1]):
+                    continue
+                # ici seulement setup premium
+                entry = float(k[-1][4])
+                sl = float(k[-2][3])
+                qty = calc_qty(sym, risk*0.7, entry)  # risque réduit après SL
+                print(f"🔥 TRADE PREMIUM {sym} | QTY {qty}")
+                market_order(sym, "BUY", qty)
+                stop_loss(sym, "SELL", qty, sl)
+                trailing_stop(sym, "SELL", qty, callback=1.2)
+                in_position = True
+                mode_after_sl = False
+                break
+
+            # MODE normal
+            if not trend_ok(sym):
+                continue
+            k = klines(sym, TIMEFRAME_ENTRY, 5)
+            if not rejection(k[-1]):
+                continue
+            entry = float(k[-1][4])
+            sl = float(k[-2][3])
+            qty = calc_qty(sym, risk, entry)
+            print(f"🔥 TRADE {sym} | QTY {qty}")
+            market_order(sym, "BUY", qty)
+            stop_loss(sym, "SELL", qty, sl)
+            trailing_stop(sym, "SELL", qty, callback=1.2)
+            in_position = True
+            break
+
+        time.sleep(30)
+
+    except Exception as e:
+        print("⚠️ ERROR:", e)
+        time.sleep(5)
