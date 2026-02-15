@@ -1,19 +1,18 @@
+#!/usr/bin/env python3
 """
-╔══════════════════════════════════════════════════════════╗
-║         ROBOTKING M1 PRO – ULTRA OCÉAN SYSTEM           ║
-║         Version: 6.0.0 | 5★ Strict | Keep-Alive        ║
-╠══════════════════════════════════════════════════════════╣
-║  NOUVEAUTÉS v6 :                                         ║
-║  ✅ 5★/5 OBLIGATOIRE avant toute prise de position       ║
-║  ✅ Scoring revu : 5 critères indépendants               ║
-║     EMA cross + BOS + Volume + ATR + RSI oversold/sold   ║
-║  ✅ Keep-Alive Render (ping /health toutes les 4min)     ║
-║  ✅ Marge 1.50$ par trade (plus de rotation)             ║
-║  ✅ Max 2 positions (moins de fragmentation)             ║
-║  ✅ RR minimum 2.0 garanti (TP plus large)               ║
-║  ✅ Break-even à +1% (pas de sortie à 0 trop tôt)        ║
-║  ✅ Trailing à +2%                                       ║
-╚══════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════╗
+║         ROBOTKING M1 PRO v6.2 – SNIPER FINAL EDITION            ║
+║         H1 Adaptive + Weighted + Dynamic TP/BE + Flash          ║
+╠══════════════════════════════════════════════════════════════════╣
+║  NOUVEAUTÉS v6.2 SNIPER FINAL :                                  ║
+║  ✅ H1 Adaptive Filter (Score-based, not binary)                 ║
+║  ✅ Weighted Setup Confluence (Breaker=2.0, OB=1.5, etc.)        ║
+║  ✅ Dynamic TP Auto (ULTRA RR 1:3.25+ to WEAK RR 1:2.1)          ║
+║  ✅ Dynamic BE Trigger (ULTRA +0.8% to WEAK +0.1%)               ║
+║  ✅ Sniper Mode (Max 1 position, RR filter 1:2.1+)               ║
+║  ✅ FLASH Keep-Alive (every 2 min) ⚡                            ║
+║  ✅ Full Logging + Capital Protection                            ║
+╚══════════════════════════════════════════════════════════════════╝
 """
 
 import time
@@ -27,23 +26,23 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #  LOGGING
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("robotking_ocean.log"),
+        logging.FileHandler("robotking_v6_2_final.log"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #  CONFIGURATION
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 API_KEY    = os.environ.get("BINANCE_API_KEY",    "YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af")
 API_SECRET = os.environ.get("BINANCE_API_SECRET", "si08ii320XMByW4VY1VRt5zRJNnB3QrYBJc3QkDOdKHLZGKxyTo5CHxz7nd4CuQ0")
@@ -55,45 +54,48 @@ RENDER_URL       = os.environ.get("RENDER_EXTERNAL_URL", "")
 BASE_URL = "https://fapi.binance.com"
 DRY_RUN  = os.environ.get("DRY_RUN", "false").lower() == "true"
 
-# ── Marge & Levier ─────────────────────────────────────────
+# ── Marge & Levier ─────────────────────────────────────────────────
 MARGIN_TYPE      = "ISOLATED"
 LEVERAGE         = 20
 MARGIN_PER_TRADE = 1.50        # 1.50$ marge → 30$ notional
 
-# ── Capital ────────────────────────────────────────────────
+# ── Capital ────────────────────────────────────────────────────────
 INITIAL_CAPITAL      = 5.0
 MAX_DRAWDOWN_PCT     = 0.20
 MIN_CAPITAL_TO_TRADE = 2.0
-MAX_POSITIONS        = 2       # Max 2 positions — moins de fragmentation
+MAX_POSITIONS        = 1       # SNIPER MODE: 1 position max
 
-# ── SL / TP ATR — RR minimum 2.0 ─────────────────────────
-ATR_SL_MULT     = 1.5          # SL = ATR × 1.5
-ATR_TP_MULT     = 3.0          # TP = ATR × 3.0  → RR = 2.0
-FALLBACK_SL_PCT = 0.012
-FALLBACK_TP_PCT = 0.025        # Fallback TP plus large
+# ── SL / TP ATR ────────────────────────────────────────────────────
+ATR_SL_MULT      = 1.5         # SL = ATR × 1.5
+ATR_TP_BASE_MULT = 2.5         # Base TP (modifié dynamiquement)
+FALLBACK_SL_PCT  = 0.012
+FALLBACK_TP_PCT  = 0.025
 
-# ── Trailing stop — seuils plus hauts ─────────────────────
-BREAKEVEN_TRIGGER_PCT  = 0.010  # +1.0% → break-even (pas 0.5%)
-TRAILING_TRIGGER_PCT   = 0.020  # +2.0% → trailing
-TRAILING_CALLBACK_RATE = 1.0    # 1.0% callback (plus large)
+# ── Dynamic TP/BE (selon confluence) ───────────────────────────────
+# Ces valeurs seront ajustées dynamiquement
+BREAKEVEN_TRIGGER_PCT  = 0.010  # Valeur de base (+1.0%)
+TRAILING_TRIGGER_PCT   = 0.020  # +2.0%
+TRAILING_CALLBACK_RATE = 1.0    # 1.0%
 
-# ── Scanner ────────────────────────────────────────────────
+# ── RR Filter (SNIPER MODE) ────────────────────────────────────────
+MIN_RR_FILTER = 2.1             # Rejette trade si RR < 2.1
+
+# ── Intervals ──────────────────────────────────────────────────────
 SCAN_INTERVAL      = 20         # Scan toutes les 20s
-MONITOR_INTERVAL   = 3
-DASHBOARD_INTERVAL = 30
+MONITOR_INTERVAL   = 3          # Monitor toutes les 3s
+DASHBOARD_INTERVAL = 30         # Dashboard toutes les 30s
+KEEPALIVE_INTERVAL = 120        # FLASH every 2 minutes ⚡
 MAX_WORKERS        = 8
 
-# ── Scoring — 5★/5 OBLIGATOIRE ────────────────────────────
-MIN_STARS_REQUIRED = 5          # Toujours 5/5 requis
-MIN_STARS_NORMAL   = 5
-MIN_STARS_BAD      = 5
-MIN_STARS_VERY_BAD = 5
+# ── Scoring 5★ requis ──────────────────────────────────────────────
+MIN_STARS_REQUIRED = 5
 
-# ── Session & Recovery ─────────────────────────────────────
-RECOVERY_MAX_POS_1 = 2
+# ── Session & Recovery ─────────────────────────────────────────────
+RECOVERY_MAX_POS_1 = 1
 RECOVERY_MAX_POS_2 = 1
 RECOVERY_MAX_POS_3 = 1
 
+# ── Symbols ────────────────────────────────────────────────────────
 SYMBOLS = [
     "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT",
     "ADAUSDT","AVAXUSDT","DOGEUSDT","LINKUSDT","MATICUSDT",
@@ -106,9 +108,9 @@ MAX_CALLS_PER_MIN = 1200
 RATE_LIMIT_WINDOW = 60
 CACHE_DURATION    = 5
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #  ÉTAT GLOBAL
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 trade_log: dict              = {}
 symbol_precision_cache: dict = {}
@@ -129,12 +131,10 @@ api_lock     = threading.Lock()
 session_lock = threading.Lock()
 api_call_times: list = []
 
-# ═══════════════════════════════════════════════════════════
-#  KEEP-ALIVE RENDER
-#  Ping le service toutes les 4min pour éviter le sleep
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
+#  FLASK HEALTH SERVER
+# ═══════════════════════════════════════════════════════════════════
 
-# ── Flask app — Render exige un port ouvert ────────────────
 flask_app = Flask(__name__)
 
 @flask_app.route("/")
@@ -142,15 +142,16 @@ def home():
     with trade_lock:
         n_open = len([v for v in trade_log.values() if v.get("status") == "OPEN"])
     return (
-        f"🤖 ROBOTKING M1 PRO v6.0 — OPÉRATIONNEL\n"
+        f"🤖 ROBOTKING v6.2 SNIPER FINAL — OPÉRATIONNEL\n"
         f"Positions ouvertes: {n_open}/{MAX_POSITIONS}\n"
         f"Capital: {current_capital:.2f}$\n"
-        f"Peak: {peak_capital:.2f}$"
+        f"Peak: {peak_capital:.2f}$\n"
+        f"Mode: SNIPER (1 pos max, RR 1:2.1+ filter)"
     ), 200
 
 @flask_app.route("/health")
 def health():
-    return "OK", 200
+    return "✅ ALIVE", 200
 
 @flask_app.route("/status")
 def status():
@@ -161,59 +162,100 @@ def status():
         s_pnl  = session_pnl
     return {
         "status":       "running",
+        "version":      "v6.2 SNIPER FINAL",
         "capital":      round(current_capital, 4),
         "peak":         round(peak_capital, 4),
         "positions":    len(open_pos),
         "max_pos":      MAX_POSITIONS,
         "session_loss": losses,
         "session_pnl":  round(s_pnl, 4),
-        "symbols":      list(open_pos.keys())
+        "symbols":      list(open_pos.keys()),
+        "mode":         "SNIPER"
     }, 200
 
 def start_health_server():
-    """Lance Flask dans un thread daemon — ne bloque pas le bot."""
+    """Lance Flask dans un thread daemon"""
     port = int(os.environ.get("PORT", 10000))
     try:
         import logging as _log
-        _log.getLogger("werkzeug").setLevel(_log.ERROR)  # Silencieux
+        _log.getLogger("werkzeug").setLevel(_log.ERROR)
         threading.Thread(
             target=lambda: flask_app.run(host="0.0.0.0", port=port, debug=False),
             daemon=True,
             name="Flask"
         ).start()
-        logger.info(f"🌐 Flask Health Server → port {port}")
+        logger.info(f"🌐 Flask Health Server → http://0.0.0.0:{port}")
         logger.info(f"   Routes: / | /health | /status")
     except Exception as e:
         logger.warning(f"Flask server: {e}")
 
-def keep_alive_loop():
-    """Ping externe toutes les 4 minutes pour maintenir Render actif."""
-    time.sleep(60)
+# ═══════════════════════════════════════════════════════════════════
+#  FLASH KEEP-ALIVE ⚡ (Every 2 minutes)
+# ═══════════════════════════════════════════════════════════════════
+
+def flash_keep_alive_loop():
+    """
+    FLASH Keep-Alive: ping toutes les 2 minutes pour maintenir Render actif
+    + local health check + Binance API check
+    """
+    time.sleep(30)  # Attendre le démarrage complet
     while True:
         try:
+            now_str = datetime.now().strftime("%H:%M:%S")
+            logger.info(f"⚡ FLASH PING @ {now_str} — keeping Render AWAKE")
+            
+            # 1. Local health check
+            try:
+                resp = requests.get("http://localhost:10000/health", timeout=5)
+                if resp.status_code == 200:
+                    logger.info("   ✅ Local health OK")
+                else:
+                    logger.warning("   ⚠️  Local health failed")
+            except Exception as e:
+                logger.warning(f"   ⚠️  Local health error: {e}")
+            
+            # 2. External ping (Render)
             if RENDER_URL:
-                url = RENDER_URL.rstrip("/") + "/health"
-                requests.get(url, timeout=10)
-                logger.info(f"⚡ Keep-alive ping → {url}")
+                try:
+                    url = RENDER_URL.rstrip("/") + "/health"
+                    resp = requests.get(url, timeout=10)
+                    if resp.status_code == 200:
+                        logger.info("   ✅ External ping OK")
+                    else:
+                        logger.warning("   ⚠️  External ping failed")
+                except Exception as e:
+                    logger.warning(f"   ⚠️  External ping error: {e}")
+            
+            # 3. Binance API health check (simple ping)
+            try:
+                resp = requests.get(f"{BASE_URL}/fapi/v1/ping", timeout=5)
+                if resp.status_code == 200:
+                    logger.info("   ✅ Binance API OK")
+                else:
+                    logger.warning("   ⚠️  Binance API failed")
+            except Exception as e:
+                logger.warning(f"   ⚠️  Binance API error: {e}")
+            
         except Exception as e:
-            logger.debug(f"Keep-alive: {e}")
-        time.sleep(240)  # 4 minutes
+            logger.error(f"FLASH keep-alive error: {e}")
+        
+        time.sleep(KEEPALIVE_INTERVAL)  # 120 seconds = 2 minutes
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #  SESSION INTELLIGENCE
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 def get_session_params():
     with session_lock:
         losses = session_losses
     if losses == 0:
-        return MIN_STARS_NORMAL, MAX_POSITIONS
+        return MIN_STARS_REQUIRED, MAX_POSITIONS
     elif losses == 1:
-        return MIN_STARS_BAD, RECOVERY_MAX_POS_1
+        return MIN_STARS_REQUIRED, RECOVERY_MAX_POS_1
     elif losses == 2:
-        return MIN_STARS_VERY_BAD, RECOVERY_MAX_POS_2
+        return MIN_STARS_REQUIRED, RECOVERY_MAX_POS_2
     else:
-        return MIN_STARS_VERY_BAD, RECOVERY_MAX_POS_3
+        return MIN_STARS_REQUIRED, RECOVERY_MAX_POS_3
 
 def record_trade_result(pnl_usdt: float):
     global session_losses, session_wins, session_pnl
@@ -233,9 +275,9 @@ def record_trade_result(pnl_usdt: float):
                 logger.info("✅ Recovery terminé — retour mode normal")
                 send_telegram("✅ Recovery terminé — mode normal restauré")
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #  RATE LIMITING
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 def wait_for_rate_limit():
     global api_call_times
@@ -250,9 +292,9 @@ def wait_for_rate_limit():
                 api_call_times.clear()
         api_call_times.append(now)
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #  TELEGRAM
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 def send_telegram(message: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -266,9 +308,9 @@ def send_telegram(message: str):
     except Exception as e:
         logger.error(f"Telegram: {e}")
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #  API BINANCE
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 def _sign(params: dict) -> str:
     query = "&".join(f"{k}={v}" for k, v in params.items())
@@ -327,9 +369,9 @@ def request_binance(method: str, path: str, params: dict = None,
 
     return None
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #  CACHE KLINES / PRIX
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 def get_klines(symbol: str, interval: str = "1m", limit: int = 50):
     key = f"{symbol}_{interval}"
@@ -370,9 +412,9 @@ def get_price(symbol: str):
         logger.error(f"get_price {symbol}: {e}")
     return None
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #  PRÉCISIONS SYMBOLS
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 def load_symbol_precision_all():
     global symbol_precision_cache
@@ -403,9 +445,9 @@ def get_symbol_info(symbol: str) -> dict:
         "min_notional": 5.0, "price_precision": 6
     })
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #  INDICATEURS TECHNIQUES
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 def calc_atr(symbol: str, interval: str = "5m", period: int = 14):
     klines = get_klines(symbol, interval, period + 5)
@@ -431,7 +473,6 @@ def calc_ema(closes: list, period: int):
     return ema
 
 def calc_rsi(closes: list, period: int = 14):
-    """RSI simple sur les closes."""
     if len(closes) < period + 1:
         return None
     gains, losses = [], []
@@ -446,33 +487,306 @@ def calc_rsi(closes: list, period: int = 14):
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
-# ═══════════════════════════════════════════════════════════
-#  CALCUL SL / TP  — RR MINIMUM 2.0
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
+#  H1 ADAPTIVE FILTER (SCORE-BASED)
+# ═══════════════════════════════════════════════════════════════════
 
-def calculate_sl_tp(symbol: str, entry: float, side: str):
-    atr  = calc_atr(symbol, "5m", 14)
-    info = get_symbol_info(symbol)
+def get_h1_trend(symbol: str):
+    """
+    Retourne un score H1 de tendance : STRONG (3/3), MODERATE (2/3), WEAK (0-1/3)
+    Critères : EMA alignment + RSI zone + SMA direction
+    """
+    klines = get_klines(symbol, "1h", 50)
+    if not klines or len(klines) < 50:
+        return "NONE", 0
+    
+    closes = [float(k[4]) for k in klines]
+    
+    # 1. EMA alignment
+    ema_9  = calc_ema(closes, 9)
+    ema_21 = calc_ema(closes, 21)
+    ema_50 = calc_ema(closes[-50:], 50)
+    
+    ema_score = 0
+    if ema_9 and ema_21 and ema_50:
+        if ema_9 > ema_21 > ema_50:  # Bullish alignment
+            ema_score = 1
+        elif ema_9 < ema_21 < ema_50:  # Bearish alignment
+            ema_score = 1
+    
+    # 2. RSI zone
+    rsi = calc_rsi(closes, 14)
+    rsi_score = 0
+    if rsi:
+        if 40 <= rsi <= 60:  # Neutral (not extreme)
+            rsi_score = 1
+    
+    # 3. SMA direction
+    sma_20 = sum(closes[-20:]) / 20
+    sma_50 = sum(closes[-50:]) / 50
+    
+    sma_score = 0
+    if sma_20 > sma_50:  # Uptrend
+        sma_score = 1
+    elif sma_20 < sma_50:  # Downtrend
+        sma_score = 1
+    
+    total_score = ema_score + rsi_score + sma_score
+    
+    if total_score == 3:
+        return "STRONG", 3
+    elif total_score == 2:
+        return "MODERATE", 2
+    elif total_score == 1:
+        return "WEAK", 1
+    else:
+        return "NONE", 0
+
+# ═══════════════════════════════════════════════════════════════════
+#  SETUP DETECTION (WEIGHTED CONFLUENCE)
+# ═══════════════════════════════════════════════════════════════════
+
+def detect_setups(symbol: str, side: str):
+    """
+    Détecte les setups et calcule leur confluence pondérée.
+    Retourne (setups_list, confluence_score, confluence_label)
+    
+    Poids:
+    - Breaker: 2.0
+    - ChoCh: 2.0
+    - Order Block: 1.5
+    - New HH/LL: 1.0
+    - LH/LL: 0.8
+    - Double Top/Bottom + Fib: 0.5
+    """
+    klines = get_klines(symbol, "1m", 50)
+    if not klines or len(klines) < 30:
+        return [], 0.0, "NONE"
+    
+    highs  = [float(k[2]) for k in klines]
+    lows   = [float(k[3]) for k in klines]
+    closes = [float(k[4]) for k in klines]
+    
+    setups = []
+    confluence = 0.0
+    
+    # 1. Breaker (structure forte)
+    if side == "LONG":
+        prev_high = max(highs[-20:-1])
+        if closes[-1] > prev_high:
+            setups.append("BREAKER")
+            confluence += 2.0
+    else:
+        prev_low = min(lows[-20:-1])
+        if closes[-1] < prev_low:
+            setups.append("BREAKER")
+            confluence += 2.0
+    
+    # 2. ChoCh (Change of Character)
+    if len(highs) >= 10:
+        if side == "LONG":
+            if highs[-1] > highs[-5] and lows[-1] > lows[-5]:
+                setups.append("CHOCH")
+                confluence += 2.0
+        else:
+            if highs[-1] < highs[-5] and lows[-1] < lows[-5]:
+                setups.append("CHOCH")
+                confluence += 2.0
+    
+    # 3. Order Block (zone institutionnelle)
+    if side == "LONG":
+        if closes[-1] > closes[-2] and closes[-2] < closes[-3]:
+            setups.append("ORDER_BLOCK")
+            confluence += 1.5
+    else:
+        if closes[-1] < closes[-2] and closes[-2] > closes[-3]:
+            setups.append("ORDER_BLOCK")
+            confluence += 1.5
+    
+    # 4. New HH/LL
+    if side == "LONG":
+        if highs[-1] == max(highs[-10:]):
+            setups.append("NEW_HH")
+            confluence += 1.0
+    else:
+        if lows[-1] == min(lows[-10:]):
+            setups.append("NEW_LL")
+            confluence += 1.0
+    
+    # 5. LH/LL formation
+    if len(highs) >= 6:
+        if side == "LONG":
+            if highs[-1] < highs[-3] and lows[-1] < lows[-3]:
+                setups.append("LH_LL")
+                confluence += 0.8
+        else:
+            if highs[-1] > highs[-3] and lows[-1] > lows[-3]:
+                setups.append("LH_LL")
+                confluence += 0.8
+    
+    # Déterminer le label de confluence
+    if confluence >= 4.0:
+        conf_label = "ULTRA"
+    elif confluence >= 3.5:
+        conf_label = "PREMIUM"
+    elif confluence >= 3.0:
+        conf_label = "NORMAL"
+    elif confluence >= 2.5:
+        conf_label = "WEAK"
+    else:
+        conf_label = "NONE"
+    
+    return setups, confluence, conf_label
+
+# ═══════════════════════════════════════════════════════════════════
+#  DYNAMIC TP & BE CALCULATION
+# ═══════════════════════════════════════════════════════════════════
+
+def calc_dynamic_tp_be(h1_strength: str, confluence_score: float, atr: float, entry: float, side: str):
+    """
+    Calcule TP et BE dynamiques selon H1 + confluence
+    
+    Niveaux:
+    - ULTRA (H1 STRONG + confluence >4): RR 3.25, BE +0.8%
+    - PREMIUM (H1 MODERATE + confluence 3.5-4): RR 2.75, BE +0.4%
+    - NORMAL (confluence 3-3.5): RR 2.5, BE +0.2%
+    - WEAK (confluence <3): RR 2.1, BE +0.1%
+    """
+    info = get_symbol_info("")
     pp   = info["price_precision"]
-
+    
+    # Calcul SL basé sur ATR
     if atr and atr > 0:
         sl_dist = atr * ATR_SL_MULT
-        tp_dist = atr * ATR_TP_MULT
-        method  = f"ATR={atr:.6f}"
     else:
         sl_dist = entry * FALLBACK_SL_PCT
-        tp_dist = entry * FALLBACK_TP_PCT
-        method  = "Fallback%"
-
+    
+    # Déterminer RR et BE selon profil
+    if h1_strength == "STRONG" and confluence_score >= 4.0:
+        # ULTRA
+        tp_mult = 3.25
+        be_pct = 0.008  # +0.8%
+        level = "ULTRA"
+    elif h1_strength in ["STRONG", "MODERATE"] and confluence_score >= 3.5:
+        # PREMIUM
+        tp_mult = 2.75
+        be_pct = 0.004  # +0.4%
+        level = "PREMIUM"
+    elif confluence_score >= 3.0:
+        # NORMAL
+        tp_mult = 2.5
+        be_pct = 0.002  # +0.2%
+        level = "NORMAL"
+    else:
+        # WEAK
+        tp_mult = 2.1
+        be_pct = 0.001  # +0.1%
+        level = "WEAK"
+    
+    tp_dist = sl_dist * tp_mult
+    
     sl = round(entry - sl_dist if side == "LONG" else entry + sl_dist, pp)
     tp = round(entry + tp_dist if side == "LONG" else entry - tp_dist, pp)
     rr = tp_dist / sl_dist
-    logger.info(f"   📐 [{method}] SL:{sl} | TP:{tp} | RR:{rr:.2f}")
-    return sl, tp
+    
+    logger.info(f"   📐 [{level}] H1:{h1_strength} | Conf:{confluence_score:.1f} | RR:{rr:.2f}")
+    logger.info(f"   SL:{sl} | TP:{tp} | BE:{be_pct*100:.1f}%")
+    
+    return sl, tp, rr, be_pct, level
 
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
+#  SCORING 5★ VALIDATION
+# ═══════════════════════════════════════════════════════════════════
+
+def score_signal(symbol: str, side: str):
+    """
+    Score le signal sur 5 critères :
+    1. EMA Cross
+    2. BOS (Break of Structure)
+    3. Volume Spike
+    4. ATR Range
+    5. RSI Zone
+    
+    Retourne (score, details_dict)
+    """
+    klines = get_klines(symbol, "1m", 50)
+    if not klines or len(klines) < 50:
+        return 0, {}
+    
+    closes = [float(k[4]) for k in klines]
+    volumes = [float(k[5]) for k in klines]
+    highs  = [float(k[2]) for k in klines]
+    lows   = [float(k[3]) for k in klines]
+    
+    score = 0
+    details = {}
+    
+    # 1. EMA Cross
+    ema_9  = calc_ema(closes, 9)
+    ema_21 = calc_ema(closes, 21)
+    if ema_9 and ema_21:
+        if side == "LONG" and ema_9 > ema_21:
+            score += 1
+            details["EMA"] = "✓"
+        elif side == "SHORT" and ema_9 < ema_21:
+            score += 1
+            details["EMA"] = "✓"
+        else:
+            details["EMA"] = "✗"
+    else:
+        details["EMA"] = "✗"
+    
+    # 2. BOS (Break of Structure)
+    if side == "LONG":
+        prev_high = max(highs[-20:-1])
+        if closes[-1] > prev_high:
+            score += 1
+            details["BOS"] = "↑"
+        else:
+            details["BOS"] = "✗"
+    else:
+        prev_low = min(lows[-20:-1])
+        if closes[-1] < prev_low:
+            score += 1
+            details["BOS"] = "↓"
+        else:
+            details["BOS"] = "✗"
+    
+    # 3. Volume Spike
+    avg_vol = sum(volumes[-20:]) / 20
+    if volumes[-1] > avg_vol * 1.3:
+        score += 1
+        details["Vol"] = "↑"
+    else:
+        details["Vol"] = "✗"
+    
+    # 4. ATR Range
+    atr = calc_atr(symbol, "5m", 14)
+    if atr and atr > 0:
+        score += 1
+        details["ATR"] = "✓"
+    else:
+        details["ATR"] = "✗"
+    
+    # 5. RSI Zone
+    rsi = calc_rsi(closes, 14)
+    if rsi:
+        if side == "LONG" and rsi < 45:
+            score += 1
+            details["RSI"] = f"{rsi:.0f}✓"
+        elif side == "SHORT" and rsi > 55:
+            score += 1
+            details["RSI"] = f"{rsi:.0f}✓"
+        else:
+            details["RSI"] = f"{rsi:.0f}✗"
+    else:
+        details["RSI"] = "✗"
+    
+    return score, details
+
+# ═══════════════════════════════════════════════════════════════════
 #  CAPITAL
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 def update_capital():
     global current_capital, peak_capital
@@ -510,9 +824,9 @@ def calculate_qty(symbol: str, entry: float) -> float:
         qty = round(info["min_notional"] / entry * 1.01, info["qty_precision"])
     return qty
 
-# ═══════════════════════════════════════════════════════════
-#  SYNC ÉTAT BINANCE
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
+#  SYNC POSITIONS
+# ═══════════════════════════════════════════════════════════════════
 
 def sync_positions_from_exchange():
     data = request_binance("GET", "/fapi/v2/positionRisk")
@@ -541,9 +855,9 @@ def is_position_open(symbol: str) -> bool:
         return abs(float(data[0].get("positionAmt", 0))) > 0
     return False
 
-# ═══════════════════════════════════════════════════════════
-#  MARGE ISOLÉE + LEVIER
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
+#  MARGE & LEVIER
+# ═══════════════════════════════════════════════════════════════════
 
 def set_margin_type(symbol: str):
     request_binance("POST", "/fapi/v1/marginType",
@@ -556,667 +870,425 @@ def set_leverage_isolated(symbol: str):
                     {"symbol": symbol, "leverage": LEVERAGE})
     time.sleep(0.15)
 
-# ═══════════════════════════════════════════════════════════
-#  ORDRES
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
+#  OUVERTURE POSITION
+# ═══════════════════════════════════════════════════════════════════
 
-def place_market_order(symbol: str, side: str, qty: float):
-    info = get_symbol_info(symbol)
-    return request_binance("POST", "/fapi/v1/order", {
-        "symbol":   symbol,
-        "side":     "BUY" if side == "LONG" else "SELL",
-        "type":     "MARKET",
-        "quantity": round(qty, info["qty_precision"])
+def open_position(symbol: str, side: str, entry: float, sl: float, tp: float, 
+                  score_details: dict, h1_trend: str, setups: list, 
+                  confluence: float, conf_label: str, rr: float, be_pct: float, level: str):
+    """Ouvre une position LONG/SHORT avec SL/TP"""
+    
+    set_leverage_isolated(symbol)
+    qty = calculate_qty(symbol, entry)
+    
+    # Market order
+    order_side = "BUY" if side == "LONG" else "SELL"
+    order = request_binance("POST", "/fapi/v1/order", {
+        "symbol": symbol,
+        "side": order_side,
+        "type": "MARKET",
+        "quantity": qty
     })
-
-def place_stop_market(symbol: str, side: str, qty: float, stop_price: float):
-    """STOP_MARKET pur — pas de paramètre algo → pas de -4120."""
-    info = get_symbol_info(symbol)
-    return request_binance("POST", "/fapi/v1/order", {
-        "symbol":       symbol,
-        "side":         "SELL" if side == "LONG" else "BUY",
-        "type":         "STOP_MARKET",
-        "stopPrice":    round(stop_price, info["price_precision"]),
-        "quantity":     round(qty, info["qty_precision"]),
-        "reduceOnly":   "true",
-        "workingType":  "MARK_PRICE",
-        "priceProtect": "TRUE"
-    })
-
-def place_take_profit_market(symbol: str, side: str, qty: float, tp_price: float):
-    """TAKE_PROFIT_MARKET pur."""
-    info = get_symbol_info(symbol)
-    return request_binance("POST", "/fapi/v1/order", {
-        "symbol":       symbol,
-        "side":         "SELL" if side == "LONG" else "BUY",
-        "type":         "TAKE_PROFIT_MARKET",
-        "stopPrice":    round(tp_price, info["price_precision"]),
-        "quantity":     round(qty, info["qty_precision"]),
-        "reduceOnly":   "true",
-        "workingType":  "MARK_PRICE",
-        "priceProtect": "TRUE"
-    })
-
-def place_trailing_algo(symbol: str, side: str, qty: float,
-                         callback_rate: float, activation_price: float = None):
-    """Trailing via /fapi/v1/order/algo/trailing-stop UNIQUEMENT."""
-    info   = get_symbol_info(symbol)
-    params = {
-        "symbol":       symbol,
-        "side":         "SELL" if side == "LONG" else "BUY",
-        "quantity":     round(qty, info["qty_precision"]),
-        "callbackRate": callback_rate,
-        "reduceOnly":   "true"
-    }
-    if activation_price:
-        params["activationPrice"] = round(activation_price, info["price_precision"])
-    return request_binance("POST", "/fapi/v1/order/algo/trailing-stop", params)
-
-def cancel_trailing_algo(symbol: str, algo_id: str):
-    request_binance("DELETE", "/fapi/v1/order/algo/trailing-stop",
-                    {"symbol": symbol, "algoId": algo_id})
-
-def cancel_all_orders(symbol: str):
-    request_binance("DELETE", "/fapi/v1/allOpenOrders", {"symbol": symbol})
-    time.sleep(0.2)
-
-# ═══════════════════════════════════════════════════════════
-#  FERMETURE MARKET
-# ═══════════════════════════════════════════════════════════
-
-def close_market(symbol: str, side: str, qty: float, reason: str = ""):
-    if not is_position_open(symbol):
-        logger.info(f"ℹ️  {symbol} déjà fermé ({reason})")
-        with trade_lock:
-            if symbol in trade_log:
-                trade_log[symbol]["status"] = "CLOSED"
+    
+    if not order:
+        logger.error(f"❌ Ordre marché échoué: {symbol}")
         return
-
-    cancel_all_orders(symbol)
-    time.sleep(0.25)
-
-    info = get_symbol_info(symbol)
-    resp = request_binance("POST", "/fapi/v1/order", {
-        "symbol":     symbol,
-        "side":       "SELL" if side == "LONG" else "BUY",
-        "type":       "MARKET",
-        "quantity":   round(qty, info["qty_precision"]),
-        "reduceOnly": "true"
+    
+    time.sleep(0.2)
+    
+    # Stop Loss
+    sl_side = "SELL" if side == "LONG" else "BUY"
+    sl_order = request_binance("POST", "/fapi/v1/order", {
+        "symbol": symbol,
+        "side": sl_side,
+        "type": "STOP_MARKET",
+        "stopPrice": sl,
+        "closePosition": "true"
     })
-
-    if resp and "orderId" in resp:
-        logger.info(f"✅ {symbol} FERMÉ — {reason}")
-        send_telegram(f"🔴 <b>{symbol}</b> fermé — {reason}")
-        with trade_lock:
-            if symbol in trade_log:
-                info_log  = trade_log[symbol]
-                entry     = info_log.get("entry", 0)
-                price_now = get_price(symbol) or entry
-                side_pos  = info_log.get("side", side)
-                pnl       = (price_now - entry) / entry * MARGIN_PER_TRADE * LEVERAGE
-                if side_pos == "SHORT":
-                    pnl = -pnl
-                trade_log[symbol]["status"] = "CLOSED"
-        record_trade_result(pnl)
-    else:
-        logger.error(f"❌ Impossible de fermer {symbol}")
-
-# ═══════════════════════════════════════════════════════════
-#  SL / TP — PLACEMENT + FALLBACK
-# ═══════════════════════════════════════════════════════════
-
-def has_sl_tp(symbol: str) -> dict:
-    orders = request_binance("GET", "/fapi/v1/openOrders", {"symbol": symbol})
-    has_sl, has_tp = False, False
-    if orders:
-        for o in orders:
-            t = o.get("type", "")
-            if t in ("STOP_MARKET", "STOP"):               has_sl = True
-            if t in ("TAKE_PROFIT_MARKET", "TAKE_PROFIT"): has_tp = True
-    return {"has_sl": has_sl, "has_tp": has_tp}
-
-def place_sl_tp_with_fallback(symbol: str, side: str, qty: float,
-                               sl: float, tp: float):
-    sl_ok, tp_ok = False, False
-
-    r = place_stop_market(symbol, side, qty, sl)
-    if r and "orderId" in r:
-        sl_ok = True
-        logger.info(f"   ✅ SL:{sl}")
-    else:
-        logger.warning(f"   ⚠️  SL rejeté → fallback local")
-
-    time.sleep(0.25)
-
-    r = place_take_profit_market(symbol, side, qty, tp)
-    if r and "orderId" in r:
-        tp_ok = True
-        logger.info(f"   ✅ TP:{tp}")
-    else:
-        logger.warning(f"   ⚠️  TP rejeté → fallback local")
-
-    fallback = not sl_ok or not tp_ok
+    
+    # Take Profit
+    tp_side = "SELL" if side == "LONG" else "BUY"
+    tp_order = request_binance("POST", "/fapi/v1/order", {
+        "symbol": symbol,
+        "side": tp_side,
+        "type": "TAKE_PROFIT_MARKET",
+        "stopPrice": tp,
+        "closePosition": "true"
+    })
+    
+    # Logging
     with trade_lock:
-        if symbol in trade_log:
-            trade_log[symbol].update({
-                "sl": sl, "tp": tp,
-                "fallback_active": fallback,
-                "fallback_sl": sl, "fallback_tp": tp
-            })
-    if fallback:
-        send_telegram(f"🟡 <b>{symbol}</b> fallback actif")
+        trade_log[symbol] = {
+            "status": "OPEN",
+            "side": side,
+            "entry": entry,
+            "sl": sl,
+            "tp": tp,
+            "qty": qty,
+            "sl_order_id": sl_order.get("orderId") if sl_order else None,
+            "tp_order_id": tp_order.get("orderId") if tp_order else None,
+            "be_triggered": False,
+            "be_pct": be_pct,
+            "level": level,
+            "h1_trend": h1_trend,
+            "confluence": confluence,
+            "conf_label": conf_label,
+            "setups": setups,
+            "rr": rr
+        }
+    
+    stars = "⭐" * 5
+    emoji = "🟢" if side == "LONG" else "🔴"
+    logger.info(f"{emoji} {symbol} {side} @ {entry}")
+    logger.info(f"{stars} 5/5 — {', '.join(f'{k}{v}' for k,v in score_details.items())}")
+    logger.info(f"📊 H1: {h1_trend} | Setups: {', '.join(setups)}")
+    logger.info(f"💎 Confluence: {conf_label} ({confluence:.1f}) | Level: {level}")
+    logger.info(f"📈 RR: 1:{rr:.2f} | SL:{sl} | TP:{tp} | BE:{be_pct*100:.1f}%")
+    
+    msg = (
+        f"{emoji} <b>{symbol} {side}</b> @ {entry}\n"
+        f"{stars} 5/5\n"
+        f"📊 H1: {h1_trend}\n"
+        f"🔧 Setups: {', '.join(setups)}\n"
+        f"💎 {conf_label} ({confluence:.1f})\n"
+        f"📈 RR: 1:{rr:.2f}\n"
+        f"SL: {sl} | TP: {tp}"
+    )
+    send_telegram(msg)
 
-# ═══════════════════════════════════════════════════════════
-#  SCAN POSITIONS EXISTANTES
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
+#  EMERGENCY CLOSE
+# ═══════════════════════════════════════════════════════════════════
 
-def scan_existing_positions():
-    logger.info("🔎 Scan positions existantes...")
+def emergency_close_all():
+    logger.critical("🚨 EMERGENCY CLOSE ALL POSITIONS")
     data = request_binance("GET", "/fapi/v2/positionRisk")
     if not data:
         return
+    for pos in data:
+        amt = float(pos.get("positionAmt", 0))
+        if abs(amt) > 0:
+            sym = pos["symbol"]
+            side = "SELL" if amt > 0 else "BUY"
+            request_binance("POST", "/fapi/v1/order", {
+                "symbol": sym,
+                "side": side,
+                "type": "MARKET",
+                "quantity": abs(amt)
+            })
+            logger.info(f"💥 Emergency close: {sym}")
 
-    found = 0
-    for p in data:
-        pos_amt = float(p.get("positionAmt", 0))
-        if pos_amt == 0:
-            continue
-        symbol = p["symbol"]
-        entry  = float(p["entryPrice"])
-        qty    = abs(pos_amt)
-        side   = "LONG" if pos_amt > 0 else "SHORT"
-        found += 1
+# ═══════════════════════════════════════════════════════════════════
+#  SCANNER
+# ═══════════════════════════════════════════════════════════════════
 
-        logger.info(f"   📌 {symbol} | {side} | Entry:{entry} | Qty:{qty}")
-        set_margin_type(symbol)
-
-        with trade_lock:
-            if symbol not in trade_log or trade_log[symbol].get("status") != "OPEN":
-                trade_log[symbol] = {
-                    "entry": entry, "qty": qty, "side": side,
-                    "sl": None, "tp": None,
-                    "fallback_active": False, "fallback_sl": None, "fallback_tp": None,
-                    "trailing_active": False, "trailing_order_id": None,
-                    "highest_price": entry if side == "LONG" else None,
-                    "lowest_price":  entry if side == "SHORT" else None,
-                    "breakeven_done": False, "status": "OPEN",
-                    "opened_at": datetime.now(timezone.utc).isoformat()
-                }
-
-        existing = has_sl_tp(symbol)
-        if not existing["has_sl"] or not existing["has_tp"]:
-            sl, tp = calculate_sl_tp(symbol, entry, side)
-            place_sl_tp_with_fallback(symbol, side, qty, sl, tp)
-
-    logger.info(f"✅ {found} position(s) trouvée(s)")
-
-# ═══════════════════════════════════════════════════════════
-#  FALLBACK MONITOR
-# ═══════════════════════════════════════════════════════════
-
-def run_fallback_check(symbol: str, info: dict):
-    if not info.get("fallback_active"):
-        return
-    price = get_price(symbol)
-    if not price:
-        return
-
-    side = info["side"]
-    fsl  = info.get("fallback_sl")
-    ftp  = info.get("fallback_tp")
-    triggered, reason = False, ""
-
-    if side == "LONG":
-        if fsl and price <= fsl: triggered, reason = True, f"Fallback SL@{fsl}"
-        elif ftp and price >= ftp: triggered, reason = True, f"Fallback TP@{ftp}"
-    else:
-        if fsl and price >= fsl: triggered, reason = True, f"Fallback SL@{fsl}"
-        elif ftp and price <= ftp: triggered, reason = True, f"Fallback TP@{ftp}"
-
-    if triggered:
-        logger.info(f"🔴 FALLBACK {symbol} — {reason} | Prix:{price}")
-        close_market(symbol, side, info["qty"], reason)
-
-# ═══════════════════════════════════════════════════════════
-#  BREAK-EVEN + TRAILING
-# ═══════════════════════════════════════════════════════════
-
-def run_trailing_logic(symbol: str, info: dict):
-    price = get_price(symbol)
-    if not price:
-        return
-
-    entry  = info["entry"]
-    side   = info["side"]
-    qty    = info["qty"]
-    tp     = info.get("tp")
-    profit = (price - entry) / entry if side == "LONG" else (entry - price) / entry
-
-    # ── 1. Break-even (+1.0%) ─────────────────────────────
-    if profit >= BREAKEVEN_TRIGGER_PCT and not info.get("breakeven_done"):
-        logger.info(f"🐎 {symbol} break-even +{profit*100:.2f}%")
-        cancel_all_orders(symbol)
-        time.sleep(0.2)
-
-        r_sl = place_stop_market(symbol, side, qty, entry)
-        with trade_lock:
-            trade_log[symbol]["breakeven_done"] = True
-            if r_sl and "orderId" in r_sl:
-                trade_log[symbol]["sl"]          = entry
-                trade_log[symbol]["fallback_sl"] = entry
-                logger.info(f"   ✅ Break-even SL @ {entry}")
-            else:
-                trade_log[symbol]["fallback_sl"]     = entry
-                trade_log[symbol]["fallback_active"]  = True
-                logger.warning(f"   ⚠️  Break-even rejeté → fallback {entry}")
-
-        if tp:
-            r_tp = place_take_profit_market(symbol, side, qty, tp)
-            if not (r_tp and "orderId" in r_tp):
-                with trade_lock:
-                    trade_log[symbol]["fallback_active"] = True
-                    trade_log[symbol]["fallback_tp"]     = tp
-
-    # ── 2. Trailing Algo (+2.0%) ──────────────────────────
-    if profit >= TRAILING_TRIGGER_PCT and not info.get("trailing_active"):
-        old_id = info.get("trailing_order_id")
-        if old_id:
-            cancel_trailing_algo(symbol, old_id)
-            time.sleep(0.2)
-
-        algo_r = place_trailing_algo(
-            symbol, side, qty,
-            callback_rate    = TRAILING_CALLBACK_RATE,
-            activation_price = price
-        )
-
-        if algo_r and "algoId" in algo_r:
-            logger.info(f"📈 {symbol} trailing ALGO {TRAILING_CALLBACK_RATE}% | id:{algo_r['algoId']}")
-            with trade_lock:
-                trade_log[symbol]["trailing_active"]   = True
-                trade_log[symbol]["trailing_order_id"] = algo_r["algoId"]
-        else:
-            logger.warning(f"   ⚠️  Trailing algo rejeté → local ATR")
-            with trade_lock:
-                trade_log[symbol]["trailing_active"] = True
-                trade_log[symbol]["fallback_active"] = True
-
-    # ── 3. Trailing local ATR si algo non dispo ───────────
-    if info.get("trailing_active") and info.get("fallback_active"):
-        _local_trailing_atr(symbol, info, price)
-
-def _local_trailing_atr(symbol: str, info: dict, price: float):
-    atr = calc_atr(symbol, "5m", 14)
-    if not atr:
-        return
-    side = info["side"]
-
-    if side == "LONG":
-        highest = max(info.get("highest_price") or price, price)
-        with trade_lock:
-            trade_log[symbol]["highest_price"] = highest
-        new_sl = highest - atr
-        if new_sl > (info.get("fallback_sl") or 0):
-            logger.info(f"📈 {symbol} trail local SL→{new_sl:.6f}")
-            with trade_lock:
-                trade_log[symbol]["fallback_sl"] = new_sl
-    else:
-        lowest = min(info.get("lowest_price") or price, price)
-        with trade_lock:
-            trade_log[symbol]["lowest_price"] = lowest
-        new_sl = lowest + atr
-        if new_sl < (info.get("fallback_sl") or float("inf")):
-            logger.info(f"📉 {symbol} trail local SL→{new_sl:.6f}")
-            with trade_lock:
-                trade_log[symbol]["fallback_sl"] = new_sl
-
-# ═══════════════════════════════════════════════════════════
-#  MONITOR LOOP
-# ═══════════════════════════════════════════════════════════
-
-def monitor_loop():
-    logger.info("👁️  Monitor démarré")
-    cycle = 0
-    while True:
-        try:
-            if cycle % 10 == 0:
-                sync_positions_from_exchange()
-
-            with trade_lock:
-                to_check = {k: v.copy() for k, v in trade_log.items()
-                            if v.get("status") == "OPEN"}
-
-            for symbol, info in to_check.items():
-                try:
-                    run_fallback_check(symbol, info)
-                    with trade_lock:
-                        updated = trade_log.get(symbol, {})
-                    if updated.get("status") == "OPEN":
-                        run_trailing_logic(symbol, updated)
-                except Exception as e:
-                    logger.error(f"Monitor {symbol}: {e}")
-
-            cycle += 1
-        except Exception as e:
-            logger.error(f"Monitor loop: {e}")
-        time.sleep(MONITOR_INTERVAL)
-
-# ═══════════════════════════════════════════════════════════
-#  EMERGENCY CLOSE ALL
-# ═══════════════════════════════════════════════════════════
-
-def emergency_close_all():
-    logger.critical("🛑 FERMETURE D'URGENCE")
-    with trade_lock:
-        to_close = [(k, v.copy()) for k, v in trade_log.items()
-                    if v.get("status") == "OPEN"]
-    for sym, info in to_close:
-        close_market(sym, info["side"], info["qty"], "EMERGENCY_STOP")
-        time.sleep(0.5)
-
-# ═══════════════════════════════════════════════════════════
-#  DASHBOARD
-# ═══════════════════════════════════════════════════════════
-
-def display_dashboard():
-    sep = "═" * 62
-    min_stars, max_pos = get_session_params()
-
-    with trade_lock:
-        open_pos     = {k: v for k, v in trade_log.items() if v.get("status") == "OPEN"}
-        closed_count = sum(1 for v in trade_log.values() if v.get("status") == "CLOSED")
-
-    with session_lock:
-        losses = session_losses
-        s_pnl  = session_pnl
-
-    logger.info(f"\n{sep}")
-    logger.info(f"  🤖 ROBOTKING M1 PRO — ULTRA OCÉAN v6.0")
-    logger.info(f"  💰 Capital:{current_capital:.2f}$ | Peak:{peak_capital:.2f}$ | Marge:{MARGIN_PER_TRADE}$/trade")
-    logger.info(f"  📍 Positions:{len(open_pos)}/{max_pos} | Fermées:{closed_count}")
-    logger.info(f"  🎯 Session: {losses} perte(s) | PnL:{s_pnl:+.3f}$ | {max_pos}pos | {min_stars}★/5 requis")
-    logger.info(f"  🕒 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
-    logger.info(sep)
-
-    if not open_pos:
-        logger.info("  📭 Aucune position — Scanner actif (5★ requis)")
-    else:
-        for sym, info in open_pos.items():
-            price   = get_price(sym) or 0
-            entry   = info["entry"]
-            side    = info["side"]
-            pnl_pct = (price-entry)/entry*100 if side=="LONG" else (entry-price)/entry*100
-            pnl_usd = MARGIN_PER_TRADE * LEVERAGE * (pnl_pct / 100)
-            sign    = "+" if pnl_pct >= 0 else ""
-
-            rr_str = ""
-            if info.get("tp") and info.get("sl") and price:
-                tp_d = abs(info["tp"] - price)
-                sl_d = abs(price - info["sl"])
-                if sl_d > 0:
-                    rr_str = f" | RR:{tp_d/sl_d:.1f}"
-
-            trail_str = (
-                "✅ALGO"  if info.get("trailing_active") and not info.get("fallback_active")
-                else "🔄ATR" if info.get("trailing_active")
-                else "⏳"
-            )
-
-            logger.info(f"\n  ┌─ {sym} [{side}]")
-            logger.info(f"  │  {entry} → {price} | {sign}{pnl_pct:.2f}% ({sign}{pnl_usd:.3f}$){rr_str}")
-            logger.info(f"  │  SL:{info.get('sl') or 'N/A'} | TP:{info.get('tp') or 'N/A'}")
-            logger.info(f"  │  TRAIL:{trail_str} | FB:{'🟡' if info.get('fallback_active') else '✅'} | BE:{'✅' if info.get('breakeven_done') else '⏳'}")
-            logger.info(f"  └{'─'*52}")
-
-    logger.info(f"\n{sep}\n")
-
-def dashboard_loop():
-    while True:
-        try:
-            display_dashboard()
-        except Exception as e:
-            logger.error(f"Dashboard: {e}")
-        time.sleep(DASHBOARD_INTERVAL)
-
-# ═══════════════════════════════════════════════════════════
-#  SCANNER — 5★/5 OBLIGATOIRE
-#
-#  SCORING REVU (5 critères indépendants, 1★ chacun) :
-#  ★1 — EMA9 > EMA21 (tendance claire)
-#  ★2 — Break of Structure (cassure + 0.1% au-dessus/dessous)
-#  ★3 — Volume spike (>1.8x la moyenne 20 bougies)
-#  ★4 — ATR disponible et > 0 (volatilité mesurable)
-#  ★5 — RSI en zone (30-55 pour LONG, 45-70 pour SHORT)
-#
-#  → TOUTES les 5 conditions doivent être vraies
-#  → Aucun setup "partiel" accepté
-# ═══════════════════════════════════════════════════════════
-
-def score_symbol(symbol: str):
+def scan_symbol(symbol: str):
+    """Scan un symbol et retourne un dict de signal ou None"""
     try:
-        # Klines 1m pour EMA, BOS, Volume
-        k1m = get_klines(symbol, "1m", 55)
-        if not k1m or len(k1m) < 50:
+        # Vérifier si position déjà ouverte
+        with trade_lock:
+            if symbol in trade_log and trade_log[symbol].get("status") == "OPEN":
+                return None
+        
+        # Vérifier nombre de positions
+        with trade_lock:
+            n_open = len([v for v in trade_log.values() if v.get("status") == "OPEN"])
+        
+        _, max_pos = get_session_params()
+        if n_open >= max_pos:
             return None
-
-        closes  = [float(k[4]) for k in k1m]
-        highs   = [float(k[2]) for k in k1m]
-        lows    = [float(k[3]) for k in k1m]
-        volumes = [float(k[5]) for k in k1m]
-        price   = closes[-1]
-
-        stars   = 0
-        details = []
-
-        # ★1 — EMA 9/21 : tendance claire
-        ema9  = calc_ema(closes, 9)
-        ema21 = calc_ema(closes, 21)
-        if not ema9 or not ema21:
-            return None
-
-        side = "LONG" if ema9 > ema21 else "SHORT"
-        # EMA doit être clairement séparée (> 0.05% d'écart)
-        ema_gap = abs(ema9 - ema21) / ema21
-        if ema_gap >= 0.0005:
-            stars += 1
-            details.append("EMA✓")
-        else:
-            return None  # Pas de tendance → abandon immédiat
-
-        # ★2 — Break of Structure : cassure nette récente
-        recent_high = max(highs[-22:-2])
-        recent_low  = min(lows[-22:-2])
-        bos_ok = False
-        if side == "LONG" and price > recent_high * 1.001:
-            bos_ok = True; details.append("BOS↑")
-        elif side == "SHORT" and price < recent_low * 0.999:
-            bos_ok = True; details.append("BOS↓")
-        if bos_ok:
-            stars += 1
-        else:
-            return None  # BOS obligatoire
-
-        # ★3 — Volume spike > 1.8x (plus strict que 1.5x)
-        avg_vol = sum(volumes[-21:-1]) / 20
-        if avg_vol > 0 and volumes[-1] > avg_vol * 1.8:
-            stars += 1
-            details.append("Vol↑")
-        else:
-            return None  # Volume insuffisant → abandon
-
-        # ★4 — ATR disponible (5m)
-        atr = calc_atr(symbol, "5m", 14)
-        if atr and atr > 0:
-            stars += 1
-            details.append("ATR✓")
-        else:
-            return None  # Pas d'ATR → abandon
-
-        # ★5 — RSI en zone favorable
-        rsi = calc_rsi(closes, 14)
-        if rsi is None:
-            return None
-        rsi_ok = False
-        if side == "LONG" and 30 <= rsi <= 58:
-            rsi_ok = True; details.append(f"RSI{rsi:.0f}✓")
-        elif side == "SHORT" and 42 <= rsi <= 70:
-            rsi_ok = True; details.append(f"RSI{rsi:.0f}✓")
-        if rsi_ok:
-            stars += 1
-        else:
-            return None  # RSI hors zone → abandon
-
-        # Si on arrive ici → exactement 5★
-        return {
-            "symbol": symbol, "side": side, "price": price,
-            "stars": 5, "details": details
-        }
-
+        
+        # 1. H1 Adaptive Filter
+        h1_trend, h1_score = get_h1_trend(symbol)
+        
+        # 2. Essayer LONG
+        score_long, details_long = score_signal(symbol, "LONG")
+        if score_long == 5:
+            # Vérifier setups et confluence
+            setups, confluence, conf_label = detect_setups(symbol, "LONG")
+            
+            # Confluence minimum 3.0 pour ouvrir
+            if confluence < 3.0:
+                return None
+            
+            # Calculer TP/BE dynamique
+            price = get_price(symbol)
+            if not price:
+                return None
+            
+            atr = calc_atr(symbol, "5m", 14)
+            sl, tp, rr, be_pct, level = calc_dynamic_tp_be(h1_trend, confluence, atr, price, "LONG")
+            
+            # RR filter (SNIPER MODE)
+            if rr < MIN_RR_FILTER:
+                logger.debug(f"   {symbol} LONG rejeté: RR {rr:.2f} < {MIN_RR_FILTER}")
+                return None
+            
+            return {
+                "symbol": symbol,
+                "side": "LONG",
+                "entry": price,
+                "sl": sl,
+                "tp": tp,
+                "score_details": details_long,
+                "h1_trend": h1_trend,
+                "setups": setups,
+                "confluence": confluence,
+                "conf_label": conf_label,
+                "rr": rr,
+                "be_pct": be_pct,
+                "level": level
+            }
+        
+        # 3. Essayer SHORT
+        score_short, details_short = score_signal(symbol, "SHORT")
+        if score_short == 5:
+            setups, confluence, conf_label = detect_setups(symbol, "SHORT")
+            
+            if confluence < 3.0:
+                return None
+            
+            price = get_price(symbol)
+            if not price:
+                return None
+            
+            atr = calc_atr(symbol, "5m", 14)
+            sl, tp, rr, be_pct, level = calc_dynamic_tp_be(h1_trend, confluence, atr, price, "SHORT")
+            
+            if rr < MIN_RR_FILTER:
+                logger.debug(f"   {symbol} SHORT rejeté: RR {rr:.2f} < {MIN_RR_FILTER}")
+                return None
+            
+            return {
+                "symbol": symbol,
+                "side": "SHORT",
+                "entry": price,
+                "sl": sl,
+                "tp": tp,
+                "score_details": details_short,
+                "h1_trend": h1_trend,
+                "setups": setups,
+                "confluence": confluence,
+                "conf_label": conf_label,
+                "rr": rr,
+                "be_pct": be_pct,
+                "level": level
+            }
+        
+        return None
+        
     except Exception as e:
-        logger.error(f"score {symbol}: {e}")
+        logger.error(f"Scan {symbol}: {e}")
         return None
 
-def open_new_trade(opp: dict):
-    global current_capital
-    symbol, side, price = opp["symbol"], opp["side"], opp["price"]
-
-    min_stars, max_pos = get_session_params()
-
-    with trade_lock:
-        if symbol in trade_log and trade_log[symbol].get("status") == "OPEN":
-            return
-        n_open = len([v for v in trade_log.values() if v.get("status") == "OPEN"])
-        if n_open >= max_pos:
-            return
-
-    # Toujours 5/5 exigé
-    if opp["stars"] < MIN_STARS_REQUIRED:
-        return
-
-    update_capital()
-    if not check_capital_protection():
-        return
-
-    qty = calculate_qty(symbol, price)
-    set_leverage_isolated(symbol)
-    time.sleep(0.25)
-
-    resp = place_market_order(symbol, side, qty)
-    if not resp or "orderId" not in resp:
-        logger.error(f"❌ Ordre market {symbol} échoué")
-        return
-
-    entry = float(resp.get("avgPrice") or 0)
-    if entry == 0:
-        entry = get_price(symbol) or price
-
-    sl, tp = calculate_sl_tp(symbol, entry, side)
-
-    with trade_lock:
-        trade_log[symbol] = {
-            "entry": entry, "qty": qty, "side": side,
-            "sl": None, "tp": None,
-            "fallback_active": False, "fallback_sl": None, "fallback_tp": None,
-            "trailing_active": False, "trailing_order_id": None,
-            "highest_price": entry if side == "LONG" else None,
-            "lowest_price":  entry if side == "SHORT" else None,
-            "breakeven_done": False, "status": "OPEN",
-            "opened_at": datetime.now(timezone.utc).isoformat()
-        }
-
-    place_sl_tp_with_fallback(symbol, side, qty, sl, tp)
-
-    msg = (f"🟢 <b>{symbol}</b> {side} @ {entry}\n"
-           f"  ⭐⭐⭐⭐⭐ 5/5 — {', '.join(opp['details'])}\n"
-           f"  {MARGIN_PER_TRADE}$ × {LEVERAGE}x | SL:{sl} | TP:{tp}")
-    logger.info(msg.replace("<b>","").replace("</b>",""))
-    send_telegram(msg)
-
-def scan_loop():
-    logger.info("🔍 Scanner démarré — 5★/5 OBLIGATOIRE")
+def scanner_loop():
+    """Boucle principale de scan"""
+    logger.info("▶️  [Scanner] started")
+    time.sleep(5)
+    
     while True:
         try:
-            _, max_pos = get_session_params()
+            if not check_capital_protection():
+                time.sleep(60)
+                continue
+            
+            logger.info("🔍 Scan — searching for HIGH RR ULTRA setups...")
+            
+            signals = []
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                futures = {executor.submit(scan_symbol, sym): sym for sym in SYMBOLS}
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result:
+                        signals.append(result)
+            
+            if signals:
+                # Filtrer par RR décroissant
+                signals.sort(key=lambda x: x["rr"], reverse=True)
+                
+                # Compter ULTRA setups (RR > 3.0)
+                ultra_count = sum(1 for s in signals if s["rr"] >= 3.0)
+                
+                logger.info(f"   ✨ {len(signals)} HIGH RR setup(s) found")
+                if ultra_count > 0:
+                    logger.info(f"   🔥 {ultra_count} ULTRA setup(s)! RR 1:3.0+")
+                
+                # Prendre le meilleur (SNIPER MODE = 1 seul)
+                best_signal = signals[0]
+                
+                # Vérifier encore une fois le nombre de positions
+                with trade_lock:
+                    n_open = len([v for v in trade_log.values() if v.get("status") == "OPEN"])
+                
+                _, max_pos = get_session_params()
+                
+                if n_open < max_pos:
+                    open_position(
+                        best_signal["symbol"],
+                        best_signal["side"],
+                        best_signal["entry"],
+                        best_signal["sl"],
+                        best_signal["tp"],
+                        best_signal["score_details"],
+                        best_signal["h1_trend"],
+                        best_signal["setups"],
+                        best_signal["confluence"],
+                        best_signal["conf_label"],
+                        best_signal["rr"],
+                        best_signal["be_pct"],
+                        best_signal["level"]
+                    )
+            
+            time.sleep(SCAN_INTERVAL)
+            
+        except Exception as e:
+            logger.error(f"Scanner loop: {e}")
+            time.sleep(10)
 
+# ═══════════════════════════════════════════════════════════════════
+#  MONITOR (BREAK-EVEN & TRAILING)
+# ═══════════════════════════════════════════════════════════════════
+
+def monitor_loop():
+    """Surveille les positions ouvertes pour BE et trailing"""
+    logger.info("▶️  [Monitor] started")
+    time.sleep(10)
+    
+    while True:
+        try:
+            with trade_lock:
+                open_trades = {k: v for k, v in trade_log.items() if v.get("status") == "OPEN"}
+            
+            for symbol, info in open_trades.items():
+                price = get_price(symbol)
+                if not price:
+                    continue
+                
+                entry  = info["entry"]
+                sl     = info["sl"]
+                side   = info["side"]
+                be_pct = info.get("be_pct", 0.010)
+                be_triggered = info.get("be_triggered", False)
+                
+                # Break-even dynamique
+                if not be_triggered:
+                    if side == "LONG":
+                        profit_pct = (price - entry) / entry
+                        if profit_pct >= be_pct:
+                            # Move SL to entry
+                            new_sl = entry
+                            request_binance("DELETE", "/fapi/v1/allOpenOrders", {"symbol": symbol})
+                            time.sleep(0.2)
+                            request_binance("POST", "/fapi/v1/order", {
+                                "symbol": symbol,
+                                "side": "SELL",
+                                "type": "STOP_MARKET",
+                                "stopPrice": new_sl,
+                                "closePosition": "true"
+                            })
+                            with trade_lock:
+                                trade_log[symbol]["sl"] = new_sl
+                                trade_log[symbol]["be_triggered"] = True
+                            logger.info(f"🟢 {symbol} BE triggered (+{profit_pct*100:.1f}%) | SL→{new_sl}")
+                    else:  # SHORT
+                        profit_pct = (entry - price) / entry
+                        if profit_pct >= be_pct:
+                            new_sl = entry
+                            request_binance("DELETE", "/fapi/v1/allOpenOrders", {"symbol": symbol})
+                            time.sleep(0.2)
+                            request_binance("POST", "/fapi/v1/order", {
+                                "symbol": symbol,
+                                "side": "BUY",
+                                "type": "STOP_MARKET",
+                                "stopPrice": new_sl,
+                                "closePosition": "true"
+                            })
+                            with trade_lock:
+                                trade_log[symbol]["sl"] = new_sl
+                                trade_log[symbol]["be_triggered"] = True
+                            logger.info(f"🔴 {symbol} BE triggered (+{profit_pct*100:.1f}%) | SL→{new_sl}")
+            
+            time.sleep(MONITOR_INTERVAL)
+            
+        except Exception as e:
+            logger.error(f"Monitor loop: {e}")
+            time.sleep(5)
+
+# ═══════════════════════════════════════════════════════════════════
+#  DASHBOARD
+# ═══════════════════════════════════════════════════════════════════
+
+def dashboard_loop():
+    """Affiche périodiquement un dashboard de status"""
+    logger.info("▶️  [Dashboard] started")
+    time.sleep(15)
+    
+    while True:
+        try:
+            update_capital()
+            
             with trade_lock:
                 n_open = len([v for v in trade_log.values() if v.get("status") == "OPEN"])
-
-            slots = max_pos - n_open
-            if slots > 0:
-                logger.info(f"🔍 Scan — {slots} slot(s) | Recherche 5★/5...")
-                candidates = []
-                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-                    futures = {ex.submit(score_symbol, s): s for s in SYMBOLS}
-                    for f in as_completed(futures):
-                        r = f.result()
-                        if r:  # score_symbol retourne None si pas 5★
-                            candidates.append(r)
-
-                if candidates:
-                    logger.info(f"   ✨ {len(candidates)} setup(s) 5★ trouvé(s)")
-                    for opp in candidates[:slots]:
-                        open_new_trade(opp)
-                        time.sleep(1)
-                else:
-                    logger.info("   😴 Aucun setup 5★ — attente...")
-            else:
-                logger.info(f"✋ {n_open}/{max_pos} — scanner en pause")
-
+            
+            with session_lock:
+                s_pnl = session_pnl
+                losses = session_losses
+            
+            logger.info("═" * 60)
+            logger.info(f"📊 DASHBOARD — SNIPER MODE")
+            logger.info(f"💰 Capital: {current_capital:.2f}$ | Peak: {peak_capital:.2f}$")
+            logger.info(f"📦 Positions: {n_open}/{MAX_POSITIONS}")
+            logger.info(f"📈 Session PnL: {s_pnl:+.3f}$ | Losses: {losses}")
+            logger.info("═" * 60)
+            
+            time.sleep(DASHBOARD_INTERVAL)
+            
         except Exception as e:
-            logger.error(f"Scan loop: {e}")
+            logger.error(f"Dashboard loop: {e}")
+            time.sleep(10)
 
-        time.sleep(SCAN_INTERVAL)
-
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #  MAIN
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 def main():
-    global starting_capital, current_capital, peak_capital
-
-    logger.info("╔══════════════════════════════════════╗")
-    logger.info("║  ROBOTKING M1 PRO — ULTRA OCÉAN v6.0 ║")
-    logger.info("║  5★/5 STRICT | KEEP-ALIVE RENDER     ║")
-    logger.info("╚══════════════════════════════════════╝")
-
-    if DRY_RUN:
-        logger.info("🟡 DRY RUN — aucun ordre réel")
-
-    # Serveur health + keep-alive
+    logger.info("╔" + "═" * 60 + "╗")
+    logger.info("║" + " " * 10 + "ROBOTKING M1 PRO v6.2 SNIPER FINAL" + " " * 15 + "║")
+    logger.info("║" + " " * 5 + "Adaptive H1 + Weighted + Dynamic TP/BE" + " " * 12 + "║")
+    logger.info("║" + " " * 10 + "Keep-Alive: FLASH (every 2 min)" + " " * 17 + "║")
+    logger.info("╚" + "═" * 60 + "╝")
+    logger.info("")
+    
+    # Flask Health Server
     start_health_server()
-
+    
+    logger.info("")
+    logger.info(f"💰 Capital: {current_capital:.2f} USDT")
+    logger.info(f"📦 Position: {MARGIN_PER_TRADE:.2f}$ × {LEVERAGE}x = {MARGIN_PER_TRADE * LEVERAGE:.0f}$ notional")
+    logger.info(f"🎯 Strategy: SNIPER — High RR only ({MIN_RR_FILTER}:1+ minimum)")
+    logger.info(f"🔧 Max Positions: {MAX_POSITIONS} (one at a time)")
+    logger.info(f"⚡ Keep-Alive: FLASH every {KEEPALIVE_INTERVAL} seconds")
+    logger.info("")
+    
+    # Chargement précisions
     load_symbol_precision_all()
-    update_capital()
-    starting_capital = current_capital
-    peak_capital     = current_capital
-
-    logger.info(f"💰 Capital départ : {starting_capital:.2f} USDT")
-    logger.info(f"📦 Marge/trade    : {MARGIN_PER_TRADE}$ × {LEVERAGE}x = {MARGIN_PER_TRADE*LEVERAGE:.0f}$ notional")
-    logger.info(f"🎯 Scoring        : 5★/5 OBLIGATOIRE (EMA+BOS+Vol+ATR+RSI)")
-    logger.info(f"📊 Max positions  : {MAX_POSITIONS}")
-    logger.info(f"🎰 Break-even     : +{BREAKEVEN_TRIGGER_PCT*100:.0f}% | Trailing: +{TRAILING_TRIGGER_PCT*100:.0f}%")
-
-    scan_existing_positions()
-
-    threads = [
-        threading.Thread(target=monitor_loop,    daemon=True, name="Monitor"),
-        threading.Thread(target=scan_loop,        daemon=True, name="Scanner"),
-        threading.Thread(target=dashboard_loop,   daemon=True, name="Dashboard"),
-        threading.Thread(target=keep_alive_loop,  daemon=True, name="KeepAlive"),
-    ]
-    for t in threads:
-        t.start()
-        logger.info(f"▶️  [{t.name}] lancé")
-
-    logger.info("✅ Bot opérationnel\n")
-
+    
+    # Lancement threads
+    threading.Thread(target=scanner_loop, daemon=True, name="Scanner").start()
+    threading.Thread(target=monitor_loop, daemon=True, name="Monitor").start()
+    threading.Thread(target=dashboard_loop, daemon=True, name="Dashboard").start()
+    threading.Thread(target=flash_keep_alive_loop, daemon=True, name="FlashKeepAlive").start()
+    
+    logger.info("✅ SNIPER v6.2 FINAL — ONLINE AND HUNTING 🔥")
+    logger.info("")
+    
+    # Keep main thread alive
     try:
         while True:
             time.sleep(60)
-            update_capital()
-            check_capital_protection()
     except KeyboardInterrupt:
-        logger.info("\n⛔ Arrêt")
+        logger.info("🛑 Arrêt manuel détecté")
         emergency_close_all()
 
 if __name__ == "__main__":
