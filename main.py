@@ -1009,77 +1009,74 @@ def scan_symbol(symbol: str):
             setups, confluence, conf_label = detect_setups(symbol, "LONG")
             
             # Confluence minimum 3.0 pour ouvrir
-            if confluence < 3.0:
-                return None
-            
-            # Calculer TP/BE dynamique
-            price = get_price(symbol)
-            if not price:
-                return None
-            
-            atr = calc_atr(symbol, "5m", 14)
-            sl, tp, rr, be_pct, level = calc_dynamic_tp_be(h1_trend, confluence, atr, price, "LONG")
-            
-            # RR filter (SNIPER MODE)
-            if rr < MIN_RR_FILTER:
-                logger.debug(f"   {symbol} LONG rejeté: RR {rr:.2f} < {MIN_RR_FILTER}")
-                return None
-            
-            return {
-                "symbol": symbol,
-                "side": "LONG",
-                "entry": price,
-                "sl": sl,
-                "tp": tp,
-                "score_details": details_long,
-                "h1_trend": h1_trend,
-                "setups": setups,
-                "confluence": confluence,
-                "conf_label": conf_label,
-                "rr": rr,
-                "be_pct": be_pct,
-                "level": level
-            }
+            if confluence >= 3.0:
+                atr = calc_atr(symbol, "5m", 14)
+                entry = get_price(symbol)
+                if not entry:
+                    return None
+                
+                sl, tp, rr, be_pct, level = calc_dynamic_tp_be(h1_trend, confluence, atr, entry, "LONG")
+                
+                # RR filter (SNIPER MODE)
+                if rr < MIN_RR_FILTER:
+                    logger.info(f"⚠️  {symbol} LONG rejected: RR {rr:.2f} < {MIN_RR_FILTER}")
+                    return None
+                
+                return {
+                    "symbol": symbol,
+                    "side": "LONG",
+                    "entry": entry,
+                    "sl": sl,
+                    "tp": tp,
+                    "score_details": details_long,
+                    "h1_trend": h1_trend,
+                    "setups": setups,
+                    "confluence": confluence,
+                    "conf_label": conf_label,
+                    "rr": rr,
+                    "be_pct": be_pct,
+                    "level": level
+                }
         
         # 3. Essayer SHORT
         score_short, details_short = score_signal(symbol, "SHORT")
         if score_short == 5:
             setups, confluence, conf_label = detect_setups(symbol, "SHORT")
             
-            if confluence < 3.0:
-                return None
-            
-            price = get_price(symbol)
-            if not price:
-                return None
-            
-            atr = calc_atr(symbol, "5m", 14)
-            sl, tp, rr, be_pct, level = calc_dynamic_tp_be(h1_trend, confluence, atr, price, "SHORT")
-            
-            if rr < MIN_RR_FILTER:
-                logger.debug(f"   {symbol} SHORT rejeté: RR {rr:.2f} < {MIN_RR_FILTER}")
-                return None
-            
-            return {
-                "symbol": symbol,
-                "side": "SHORT",
-                "entry": price,
-                "sl": sl,
-                "tp": tp,
-                "score_details": details_short,
-                "h1_trend": h1_trend,
-                "setups": setups,
-                "confluence": confluence,
-                "conf_label": conf_label,
-                "rr": rr,
-                "be_pct": be_pct,
-                "level": level
-            }
+            # Confluence minimum 3.0 pour ouvrir
+            if confluence >= 3.0:
+                atr = calc_atr(symbol, "5m", 14)
+                entry = get_price(symbol)
+                if not entry:
+                    return None
+                
+                sl, tp, rr, be_pct, level = calc_dynamic_tp_be(h1_trend, confluence, atr, entry, "SHORT")
+                
+                # RR filter (SNIPER MODE)
+                if rr < MIN_RR_FILTER:
+                    logger.info(f"⚠️  {symbol} SHORT rejected: RR {rr:.2f} < {MIN_RR_FILTER}")
+                    return None
+                
+                return {
+                    "symbol": symbol,
+                    "side": "SHORT",
+                    "entry": entry,
+                    "sl": sl,
+                    "tp": tp,
+                    "score_details": details_short,
+                    "h1_trend": h1_trend,
+                    "setups": setups,
+                    "confluence": confluence,
+                    "conf_label": conf_label,
+                    "rr": rr,
+                    "be_pct": be_pct,
+                    "level": level
+                }
         
         return None
         
     except Exception as e:
-        logger.error(f"Scan {symbol}: {e}")
+        logger.error(f"scan_symbol error {symbol}: {e}")
         return None
 
 def scanner_loop():
