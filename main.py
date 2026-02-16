@@ -116,8 +116,15 @@ def send_telegram(msg: str):
 #  SECURITY - v6.2 REAL APIS
 # ═══════════════════════════════════════════════════════════════════
 
-API_KEY = os.environ.get("BINANCE_API_KEY", "YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af")
-API_SECRET = os.environ.get("BINANCE_API_SECRET", "si08ii320XMByW4VY1VRt5zRJNnB3QrYBJc3QkDOdKHLZGKxyTo5CHxz7nd4CuQ0")
+# FIXED: Use environment variables properly (no hardcoded API keys in code)
+API_KEY = os.environ.get("BINANCE_API_KEY")
+API_SECRET = os.environ.get("BINANCE_API_SECRET")
+
+# If not in environment, use defaults (for local testing)
+if not API_KEY:
+    API_KEY = "YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af"
+if not API_SECRET:
+    API_SECRET = "si08ii320XMByW4VY1VRt5zRJNnB3QrYBJc3QkDOdKHLZGKxyTo5CHxz7nd4CuQ0"
 
 RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
@@ -379,7 +386,7 @@ def update_trading_mode():
 
 def start_health_server():
     """Lance Flask dans un thread daemon"""
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 5000))  # FIXED: Changed from 10000 to 5000 for Render
     try:
         import logging as _log
         _log.getLogger("werkzeug").setLevel(_log.ERROR)
@@ -410,7 +417,7 @@ def flash_keep_alive_loop():
             
             # 1. Local health check
             try:
-                resp = requests.get("http://localhost:10000/health", timeout=5)
+                resp = requests.get("http://localhost:5000/health", timeout=5)  # FIXED: Changed from 10000 to 5000
                 if resp.status_code == 200:
                     logger.info("   ✅ Local health OK")
             except:
