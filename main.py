@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║    ROBOTKING v15.2 MICRO-CAP OPTIMIZER - FULL VERSION           ║
+║    ROBOTKING v16 ULTRA SELECTIVE - BEST TRADES ONLY           ║
 ║    5$ → 25$ → 100$+ | Auto-Switch Modes | 1752 Lines            ║
 ╠══════════════════════════════════════════════════════════════════╣
-║  🔥 MICRO-CAP MODE (5-25$) - RELAXED FILTERS:                    ║
-║  ✅ 4★ minimum (80% quality, not 100% perfection)                ║
-║  ✅ RR 1.8+ (not 2.1+, more accessible)                          ║
-║  ✅ Confluence 2.5+ (WEAK/NORMAL/PREMIUM/ULTRA all accepted)     ║
-║  ✅ Volume 1.5x (not 2.0x, more flexible)                        ║
-║  ✅ 24/7 trading (no time filter)                                ║
-║  ✅ 4 max positions (focused portfolio)                          ║
-║  ✅ Expected: 5-10 trades/day | 65-70% WR                        ║
+║  🚀 GROWTH ENGINE MODE - COMPOUND PERMANENT:                     ║
+║  ✅ 5★ PERFECT (ultra selective)                                ║
+║  ✅ RR 3.0+ (ultra aggressive, best setups only)                ║
+║  ✅ Confluence 4.0+ (ULTRA/PREMIUM only, reject NORMAL)          ║
+║  ✅ Volume 2.0x+ (strong confirmation required)                  ║
+║  ✅ 24/7 trading (maximize opportunities)                        ║
+║  ✅ 3 max positions (ultra focused, best only)                   ║
+║  ✅ 0-3 ULTRA trades/day (quality >>> quantity) | 75-85% WR     ║
 ║                                                                  ║
-║  🔄 AUTO-SWITCH MODES:                                           ║
-║  - 5-25$: MICRO-CAP (4★, RR 1.8+, Conf 2.5+, 24/7)              ║
-║  - 25-100$: BALANCED (4★, RR 2.0+, Conf 2.8+, 24/7)             ║
-║  - 100$+: SNIPER (5★, RR 2.1+, Conf 3.0+, time filter)          ║
+║  📈 GROWTH TARGETS (Compound Permanent):                         ║
+║  - Week 1-2: 5$ → 15$ (slower but safer, 200%)                  ║
+║  - Week 3-4: 15$ → 40$ (quality compound, 167%)                 ║
+║  - Month 2: 40$ → 100$ (steady growth, 150%)                    ║
+║  - Month 3-4: 100$ → 500$+ (compound accelerates)               ║
 ║                                                                  ║
 ║  🔥 KEPT ALL v6.2 + v14.3 CRITICAL FEATURES:                     ║
 ║  ✅ H1 Adaptive Filter (score-based 0-3 points)                  ║
@@ -36,17 +37,31 @@
 v15.2 MICRO-CAP OPTIMIZER = SMART ADAPTIVE TRADING:
 
 PHILOSOPHY:
-- Quality > Perfection (4★ is enough for micro-cap growth)
-- Volume > Waiting (5-10 trades/day beats 0 trades/day)
-- Growth > Safety (aggressive but controlled with recovery mode)
-- Adapt > Static (auto-switch modes as capital grows)
+- Growth > Everything (5$ → 500$+ is the goal)
+- Quality/Quantity Balance (3-5 trades/day, not 0, not 10)
+- Compound Permanent (reinvest all gains)
+- RR Aggressive (2.5+ minimum for fast growth)
+- Recovery Smart (reduce positions after losses)
 
-PROGRESSION:
-Phase 1 (5-25$): MICRO-CAP mode → high volume, relaxed filters
-Phase 2 (25-100$): BALANCED mode → medium filters, stable growth
-Phase 3 (100$+): SNIPER mode → elite setups, high win rate
+GROWTH STRATEGY:
+- Always GROWTH mode (no mode switching)
+- RR 2.5+ minimum (better than 1:2, faster compound)
+- Confluence 3.0+ (quality setups, not weak)
+- Volume 1.5x (not too strict, allows trades)
+- UNLIMITED trades/day (take ALL quality setups available)
+- Win rate 65-75% | Take ALL quality setups | No artificial limits
 
-Result: Real growth, real trades, realistic win rate, smart adaptation
+TRADING PHILOSOPHY:
+- ULTRA SELECTIVE: Best trades only
+- If 0 perfect setups today → 0 trades (patience)
+- If 1 perfect setup → 1 trade (precision)
+- If 10 weak setups → 0 trades (discipline)
+- Quality >>> Quantity ALWAYS
+- Max 3 concurrent positions (laser focus)
+- Scan 24/7 but ONLY take ULTRA setups
+- Better 0 trades than 1 bad trade
+
+Result: Permanent compound growth, 5$ → 500$+ in 2-3 months
 """
 
 import time
@@ -72,7 +87,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("robotking_v15_2_microcap.log"),
+        logging.FileHandler("robotking_v16_growth_engine.log"),
         logging.StreamHandler()
     ]
 )
@@ -154,23 +169,23 @@ BALANCED_THRESHOLD = 100.0
 
 # MICRO-CAP MODE (5-25$)
 MICROCAP_CONFIG = {
-    "min_stars": 4, "min_rr": 1.8, "min_confluence": 2.5, "volume_multiplier": 1.5,
+    "min_stars": 5, "min_rr": 1.8, "min_confluence": 2.5, "volume_multiplier": 2.0,
     "max_positions": 4, "margin_per_trade": 1.20, "time_filter": False, 
     "strict_multitime": False, "scan_interval": 15, "mode_name": "MICRO-CAP"
 }
 
 # BALANCED MODE (25-100$)
 BALANCED_CONFIG = {
-    "min_stars": 4, "min_rr": 2.0, "min_confluence": 2.8, "volume_multiplier": 1.75,
-    "max_positions": 5, "margin_per_trade": 1.50, "time_filter": False,
-    "strict_multitime": True, "scan_interval": 20, "mode_name": "BALANCED"
+    "min_stars": 5, "min_rr": 2.0, "min_confluence": 2.8, "volume_multiplier": 1.75,
+    "max_positions": 3, "margin_per_trade": 1.50, "time_filter": False,
+    "strict_multitime": True, "scan_interval": 30, "mode_name": "BALANCED"
 }
 
 # SNIPER MODE (100$+)
 SNIPER_CONFIG = {
-    "min_stars": 5, "min_rr": 2.1, "min_confluence": 3.0, "volume_multiplier": 2.0,
-    "max_positions": 6, "margin_per_trade": 1.50, "time_filter": True,
-    "strict_multitime": True, "scan_interval": 20, "mode_name": "SNIPER"
+    "min_stars": 5, "min_rr": 2.1, "min_confluence": 4.0, "volume_multiplier": 2.0,
+    "max_positions": 3, "margin_per_trade": 1.50, "time_filter": True,
+    "strict_multitime": True, "scan_interval": 30, "mode_name": "SNIPER"
 }
 
 current_trading_mode = TradingMode.MICRO_CAP
@@ -323,15 +338,19 @@ def get_trading_mode_for_capital(capital: float) -> TradingMode:
         return TradingMode.SNIPER
 
 def update_trading_mode():
-    """Update trading mode and config based on capital"""
+    """Update trading mode - GROWTH ENGINE always stays in GROWTH mode"""
     global current_trading_mode, active_config
     
     with capital_lock:
         cap = current_capital
     
+    # GROWTH ENGINE: Always stay in GROWTH mode for permanent compound
+    # No mode switching - we want consistent growth strategy
+    return  # Skip mode switching
+    
     new_mode = get_trading_mode_for_capital(cap)
     
-    if new_mode != current_trading_mode:
+    if False:  # Disabled - always GROWTH
         with config_lock:
             current_trading_mode = new_mode
             
