@@ -47,7 +47,7 @@ def send_telegram(msg: str):
 # SECURITY - BINANCE
 API_KEY = os.environ.get("YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af")
 API_SECRET = os.environ.get("si08ii320XMByW4VY1VRt5zRJNnB3QrYBJc3QkDOdKHLZGKxyTo5CHxz7nd4CuQ0")
-if not API_KEY or not API_SECRET:
+if not API_KEY or not API_SECRET:("si08ii320XMByW4VY1VRt5zRJNnB3QrYBJc3QkDOdKHLZGKxyTo5CHxz7nd4CuQ0")
     logger.error("❌ BINANCE API keys missing!")
     exit(1)
 
