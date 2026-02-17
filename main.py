@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║    ROBOTKING v21 COMPLETE - FULLY FUNCTIONAL - LIVE TRADING    ║
-║    0.5$ Margin | 20x Leverage | Trailing Stop | SL Surveillance ║
-║    4 Positions | Continuous Trading | Real Binance Futures      ║
+║    ROBOTKING v23 ADVANCED - PROBABILITY & TREND FILTER         ║
+║    0.8$ Margin | M5 Trading | Trend Filter | Probability Score ║
+║    BTC Correlation | Fear & Greed | Breakeven | Auto Recovery  ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-v21 COMPLETE LIVE:
-✅ 0.5$ margin per position
-✅ 12 SMC setups detection (COMPLETE)
-✅ Continuous scanning 24/7
-✅ Trailing stop (activates at RR 1.0)
-✅ Manual SL surveillance (if Binance rejects SL order)
-✅ Robust API error handling
-✅ 4 positions max simultaneous
-✅ Memory learning per setup
-✅ Telegram notifications
-✅ LIVE TRADING on Binance Futures
-✅ Production ready
+v23 NEW FEATURES:
+✅ Probability scoring system (setup + trend + BTC + session + sentiment)
+✅ H1/M15 trend filter (only trade WITH the trend)
+✅ BTC correlation check
+✅ Fear & Greed Index integration
+✅ Automatic breakeven (move SL to entry at small profit)
+✅ LIMIT order fallback if MARKET rejected
+✅ Full position recovery (manage any open position)
+✅ Increased margin to 0.8$ per trade
+✅ M5 timeframe trading
+✅ Enhanced risk management
 """
 
 import time, hmac, hashlib, requests, threading, os, logging, json, numpy as np
@@ -28,7 +27,7 @@ from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO, 
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler("v21_live_ready.log"), logging.StreamHandler()])
+    handlers=[logging.FileHandler("v23_advanced.log"), logging.StreamHandler()])
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
@@ -48,24 +47,49 @@ def send_telegram(msg: str):
 API_KEY = os.environ.get("BINANCE_API_KEY", "YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af")
 API_SECRET = os.environ.get("BINANCE_API_SECRET", "si08ii320XMByW4VY1VRt5zRJNnB3QrYBJc3QkDOdKHLZGKxyTo5CHxz7nd4CuQ0")
 if not API_KEY or not API_SECRET:
-    logger.error("❌ BINANCE API keys missing!")
+    logger.error("❌ BINANCE API keys missing! Set BINANCE_API_KEY and BINANCE_API_SECRET")
     exit(1)
 
 BASE_URL = "https://fapi.binance.com"
 
 # ═══════════════════════════════════════════════════════════════════
-#  CONFIGURATION v21 LIVE READY
+#  CONFIGURATION v23 ADVANCED
 # ═══════════════════════════════════════════════════════════════════
 
 # MARGIN & LEVERAGE
-MARGIN_PER_TRADE = 0.5  # $0.5 margin per position
+MARGIN_PER_TRADE = 0.8  # Increased from 0.5$ to 0.8$
 LEVERAGE = 20
 MARGIN_TYPE = "ISOLATED"
 
 # POSITIONS & TRADING
 MAX_POSITIONS = 4
-MIN_SETUP_SCORE = 3.5
-TRAILING_STOP_START_RR = 1.0  # Activate trailing stop at RR 1.0
+MIN_PROBABILITY_SCORE = 65  # Minimum 65% probability to enter trade
+TRAILING_STOP_START_RR = 1.0
+BREAKEVEN_RR = 0.3  # Move SL to breakeven at RR 0.3
+
+# TREND FILTER (NEW in v23)
+ENABLE_TREND_FILTER = True
+TREND_TIMEFRAME = "15m"  # H1 or 15m for trend detection
+MIN_TREND_STRENGTH = 0.6  # 60% trend strength required
+
+# PROBABILITY WEIGHTS (NEW in v23)
+PROBABILITY_WEIGHTS = {
+    "setup_score": 0.25,      # 25% - Quality of SMC setup
+    "trend_alignment": 0.25,  # 25% - Trend filter alignment
+    "btc_correlation": 0.15,  # 15% - BTC direction correlation
+    "session_quality": 0.15,  # 15% - Trading session quality
+    "sentiment": 0.10,        # 10% - Fear & Greed Index
+    "volatility": 0.10        # 10% - Market volatility
+}
+
+# SESSION-BASED TRADING
+ENABLE_SESSION_FILTER = True
+SESSION_WEIGHTS = {
+    "LONDON": 1.0,       # Best session - 100%
+    "NEW_YORK": 1.0,     # Best session - 100%
+    "ASIA": 0.7,         # Moderate - 70%
+    "OFF_HOURS": 0.4     # Worst - 40%
+}
 
 # SCANNING
 SYMBOLS = [
@@ -89,18 +113,18 @@ CACHE_DURATION = 4
 # ═══════════════════════════════════════════════════════════════════
 
 SETUPS = {
-    "OB_CHOCH_DEMAND": {"score": 3.5},
-    "MSS_BREAKER_BOS": {"score": 3.5},
-    "BOS_BREAKER_MSS": {"score": 3.0},
-    "NEW_HH_CHOCH": {"score": 3.0},
-    "FAKEOUT_TRENDLINE": {"score": 2.5},
-    "DOUBLE_TOP_OB": {"score": 3.0},
-    "BREAKOUT_RETEST": {"score": 2.5},
-    "LIQ_SWEEP_BOS": {"score": 3.5},
-    "MSS_FVG_FIB": {"score": 3.5},
-    "OB_IDM_BOS": {"score": 3.5},
-    "DOUBLE_BOTTOM_BB": {"score": 2.5},
-    "FVG_SUPPORT_BOS": {"score": 2.5},
+    "OB_CHOCH_DEMAND": {"score": 90, "description": "Order Block + ChoCH + Demand"},
+    "MSS_BREAKER_BOS": {"score": 90, "description": "MSS + Breaker + BOS"},
+    "BOS_BREAKER_MSS": {"score": 80, "description": "BOS + Breaker + MSS"},
+    "NEW_HH_CHOCH": {"score": 80, "description": "New Higher High + ChoCH"},
+    "FAKEOUT_TRENDLINE": {"score": 70, "description": "Fakeout + Trendline Break"},
+    "DOUBLE_TOP_OB": {"score": 80, "description": "Double Top + Order Block"},
+    "BREAKOUT_RETEST": {"score": 70, "description": "Breakout + Retest"},
+    "LIQ_SWEEP_BOS": {"score": 90, "description": "Liquidity Sweep + BOS"},
+    "MSS_FVG_FIB": {"score": 90, "description": "MSS + FVG + Fibonacci"},
+    "OB_IDM_BOS": {"score": 90, "description": "Order Block + IDM + BOS"},
+    "DOUBLE_BOTTOM_BB": {"score": 70, "description": "Double Bottom + Bollinger"},
+    "FVG_SUPPORT_BOS": {"score": 70, "description": "FVG Support + BOS"},
 }
 
 # STATE
@@ -111,10 +135,13 @@ total_losses = 0
 
 trade_log = {}
 setup_memory = defaultdict(lambda: {"wins": 0, "losses": 0})
+session_stats = defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0})
 
 klines_cache = {}
 price_cache = {}
 symbol_info_cache = {}
+fear_greed_cache = {"value": 50, "timestamp": 0}
+btc_trend_cache = {"trend": 0, "timestamp": 0}
 
 trade_lock = threading.Lock()
 api_lock = threading.Lock()
@@ -126,7 +153,8 @@ flask_app = Flask(__name__)
 def home():
     with trade_lock:
         n_open = len([v for v in trade_log.values() if v.get("status") == "OPEN"])
-    return f"v21 LIVE READY | Balance: ${account_balance:.2f} | Open: {n_open}/4", 200
+    session = get_current_session()
+    return f"v23 ADVANCED | Balance: ${account_balance:.2f} | Open: {n_open}/4 | Session: {session}", 200
 
 @flask_app.route("/health")
 def health():
@@ -136,7 +164,6 @@ def health():
 def status():
     with trade_lock:
         n_open = len([v for v in trade_log.values() if v.get("status") == "OPEN"])
-        open_trades = [v for v in trade_log.values() if v.get("status") == "OPEN"]
     
     return jsonify({
         "status": "RUNNING",
@@ -146,7 +173,10 @@ def status():
         "wins": total_wins,
         "losses": total_losses,
         "margin_per_trade": MARGIN_PER_TRADE,
-        "leverage": LEVERAGE
+        "leverage": LEVERAGE,
+        "current_session": get_current_session(),
+        "fear_greed": fear_greed_cache.get("value", 50),
+        "min_probability": MIN_PROBABILITY_SCORE
     })
 
 def start_health_server():
@@ -157,6 +187,40 @@ def start_health_server():
         threading.Thread(target=lambda: flask_app.run(host="0.0.0.0", port=port, debug=False), daemon=True).start()
     except:
         pass
+
+# ═══════════════════════════════════════════════════════════════════
+#  SESSION DETECTION
+# ═══════════════════════════════════════════════════════════════════
+
+def get_current_session() -> str:
+    """Determine current trading session based on UTC time"""
+    now = datetime.now(timezone.utc)
+    hour = now.hour
+    
+    # London: 07:00-16:00 UTC
+    if 7 <= hour < 16:
+        return "LONDON"
+    
+    # New York: 13:00-22:00 UTC (overlap with London 13:00-16:00)
+    elif 13 <= hour < 22:
+        return "NEW_YORK"
+    
+    # Asia: 23:00-08:00 UTC
+    elif hour >= 23 or hour < 8:
+        return "ASIA"
+    
+    # Off hours
+    else:
+        return "OFF_HOURS"
+
+def get_session_weight() -> float:
+    """Get session quality weight"""
+    session = get_current_session()
+    return SESSION_WEIGHTS.get(session, 0.5)
+
+# ═══════════════════════════════════════════════════════════════════
+#  API FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════
 
 def wait_for_rate_limit():
     global api_call_times
@@ -224,484 +288,569 @@ def get_klines(symbol: str, interval: str = "5m", limit: int = 25) -> list:
         if now - ts < CACHE_DURATION:
             return data
     
-    try:
-        resp = requests.get(f"{BASE_URL}/fapi/v1/klines",
-            params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            klines_cache[key] = (data, now)
-            return data
-    except:
-        pass
-    return None
+    data = request_binance("GET", "/fapi/v1/klines", {
+        "symbol": symbol,
+        "interval": interval,
+        "limit": limit
+    }, signed=False)
+    
+    if data:
+        klines_cache[key] = (data, now)
+    
+    return data if data else []
 
 def get_price(symbol: str) -> float:
-    """Get current market price"""
     now = time.time()
-    
     if symbol in price_cache:
         price, ts = price_cache[symbol]
-        if now - ts < 1:
+        if now - ts < 2:
             return price
     
-    try:
-        resp = requests.get(f"{BASE_URL}/fapi/v1/ticker/price",
-            params={"symbol": symbol}, timeout=5)
-        if resp.status_code == 200:
-            price = float(resp.json()["price"])
-            price_cache[symbol] = (price, now)
-            return price
-    except:
-        pass
-    return None
-
-def calc_atr(symbol: str, period: int = 14) -> float:
-    """Calculate Average True Range"""
-    klines = get_klines(symbol, "5m", period + 5)
-    if not klines or len(klines) < period:
-        return None
-    
-    highs = np.array([float(k[2]) for k in klines[-period:]])
-    lows = np.array([float(k[3]) for k in klines[-period:]])
-    closes = np.array([float(k[4]) for k in klines[-period-1:-1]])
-    
-    tr1 = highs - lows
-    tr2 = np.abs(highs - closes)
-    tr3 = np.abs(lows - closes)
-    tr = np.maximum(tr1, np.maximum(tr2, tr3))
-    
-    atr = np.mean(tr)
-    return atr
-
-def calc_rsi(symbol: str, period: int = 14) -> float:
-    """Calculate RSI"""
-    klines = get_klines(symbol, "5m", period + 5)
-    if not klines or len(klines) < period + 1:
-        return None
-    
-    closes = np.array([float(k[4]) for k in klines[-(period+1):]])
-    deltas = np.diff(closes)
-    
-    gains = np.where(deltas > 0, deltas, 0)
-    losses = np.where(deltas < 0, -deltas, 0)
-    
-    avg_gain = np.mean(gains)
-    avg_loss = np.mean(losses)
-    
-    if avg_loss == 0:
-        return 100
-    
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    
-    return rsi
+    data = request_binance("GET", "/fapi/v1/ticker/price", {"symbol": symbol}, signed=False)
+    if data and "price" in data:
+        price = float(data["price"])
+        price_cache[symbol] = (price, now)
+        return price
+    return 0
 
 def get_symbol_info(symbol: str) -> dict:
-    """Get symbol trading info"""
     if symbol in symbol_info_cache:
         return symbol_info_cache[symbol]
     return None
 
 def load_symbol_info():
-    """Load all symbol info at startup"""
-    try:
-        resp = requests.get(f"{BASE_URL}/fapi/v1/exchangeInfo", timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            for s in data.get("symbols", []):
-                sym = s["symbol"]
-                if sym in SYMBOLS:
-                    symbol_info_cache[sym] = {
-                        "pricePrecision": s["pricePrecision"],
-                        "quantityPrecision": s["quantityPrecision"],
-                        "minQty": float([f["minQty"] for f in s["filters"] if f["filterType"] == "LOT_SIZE"][0])
-                    }
-            logger.info(f"✅ Loaded {len(symbol_info_cache)} symbol info")
-    except Exception as e:
-        logger.error(f"load_symbol_info: {e}")
+    """Load symbol precision info"""
+    logger.info("📥 Loading symbol info...")
+    data = request_binance("GET", "/fapi/v1/exchangeInfo", signed=False)
+    if not data:
+        logger.error("Failed to load symbol info")
+        return
+    
+    for s in data.get("symbols", []):
+        symbol = s["symbol"]
+        if symbol in SYMBOLS:
+            filters = {f["filterType"]: f for f in s.get("filters", [])}
+            
+            symbol_info_cache[symbol] = {
+                "quantityPrecision": s.get("quantityPrecision", 3),
+                "pricePrecision": s.get("pricePrecision", 2),
+                "minQty": float(filters.get("LOT_SIZE", {}).get("minQty", 0.001)),
+                "maxQty": float(filters.get("LOT_SIZE", {}).get("maxQty", 10000)),
+                "stepSize": float(filters.get("LOT_SIZE", {}).get("stepSize", 0.001)),
+            }
+    
+    logger.info(f"✅ Loaded info for {len(symbol_info_cache)} symbols")
 
 def sync_account_balance():
     """Sync account balance from Binance"""
     global account_balance
     try:
-        account = request_binance("GET", "/fapi/v2/account", signed=True)
+        account = request_binance("GET", "/fapi/v2/account")
         if account:
             account_balance = float(account.get("availableBalance", 0))
-            logger.info(f"💰 Balance: ${account_balance:.2f}")
     except Exception as e:
         logger.error(f"sync_account_balance: {e}")
 
 def set_leverage(symbol: str, leverage: int):
     """Set leverage for symbol"""
     try:
-        result = request_binance("POST", "/fapi/v1/leverage", {
+        request_binance("POST", "/fapi/v1/leverage", {
             "symbol": symbol,
             "leverage": leverage
         })
-        if result:
-            logger.info(f"⚙️ {symbol} leverage set to {leverage}x")
-            return True
-    except Exception as e:
-        logger.warning(f"set_leverage {symbol}: {e}")
-    return False
+    except:
+        pass
 
 def set_margin_type(symbol: str, margin_type: str):
-    """Set margin type (ISOLATED or CROSSED)"""
+    """Set margin type for symbol"""
     try:
-        result = request_binance("POST", "/fapi/v1/marginType", {
+        request_binance("POST", "/fapi/v1/marginType", {
             "symbol": symbol,
             "marginType": margin_type
         })
-        if result:
-            logger.info(f"⚙️ {symbol} margin type set to {margin_type}")
-            return True
-    except Exception as e:
-        # Might already be set
+    except:
         pass
-    return False
+
+def calc_atr(symbol: str, period: int = 14) -> float:
+    """Calculate ATR"""
+    klines = get_klines(symbol, "5m", period + 1)
+    if not klines or len(klines) < period:
+        return 0
+    
+    highs = np.array([float(k[2]) for k in klines])
+    lows = np.array([float(k[3]) for k in klines])
+    closes = np.array([float(k[4]) for k in klines])
+    
+    tr = np.maximum(highs[1:] - lows[1:],
+                    np.maximum(abs(highs[1:] - closes[:-1]),
+                              abs(lows[1:] - closes[:-1])))
+    
+    return np.mean(tr) if len(tr) > 0 else 0
 
 # ═══════════════════════════════════════════════════════════════════
-#  SMC DETECTION FUNCTIONS (12 SETUPS)
+#  TREND FILTER (NEW in v23)
+# ═══════════════════════════════════════════════════════════════════
+
+def detect_trend(symbol: str, timeframe: str = "15m") -> dict:
+    """Detect trend using EMA crossover on higher timeframe"""
+    try:
+        klines = get_klines(symbol, timeframe, 50)
+        if not klines or len(klines) < 50:
+            return {"direction": 0, "strength": 0}
+        
+        closes = np.array([float(k[4]) for k in klines])
+        
+        # Calculate EMAs
+        ema_9 = np.mean(closes[-9:])
+        ema_21 = np.mean(closes[-21:])
+        ema_50 = np.mean(closes[-50:])
+        
+        # Determine trend
+        if ema_9 > ema_21 > ema_50:
+            direction = 1  # Uptrend
+            strength = min((ema_9 - ema_50) / ema_50 * 100, 1.0)
+        elif ema_9 < ema_21 < ema_50:
+            direction = -1  # Downtrend
+            strength = min((ema_50 - ema_9) / ema_50 * 100, 1.0)
+        else:
+            direction = 0  # Sideways
+            strength = 0
+        
+        return {"direction": direction, "strength": abs(strength)}
+    
+    except:
+        return {"direction": 0, "strength": 0}
+
+def get_btc_trend() -> int:
+    """Get BTC trend direction (cached)"""
+    global btc_trend_cache
+    
+    now = time.time()
+    if now - btc_trend_cache.get("timestamp", 0) < 60:  # Cache for 60 seconds
+        return btc_trend_cache.get("trend", 0)
+    
+    trend_data = detect_trend("BTCUSDT", TREND_TIMEFRAME)
+    btc_trend = trend_data["direction"]
+    
+    btc_trend_cache = {"trend": btc_trend, "timestamp": now}
+    return btc_trend
+
+def calculate_btc_correlation(symbol: str) -> float:
+    """Calculate correlation with BTC direction"""
+    if symbol == "BTCUSDT":
+        return 1.0
+    
+    try:
+        btc_trend = get_btc_trend()
+        symbol_trend = detect_trend(symbol, TREND_TIMEFRAME)
+        
+        if btc_trend == 0 or symbol_trend["direction"] == 0:
+            return 0.5  # Neutral
+        
+        # If trends align, positive correlation
+        if btc_trend == symbol_trend["direction"]:
+            return 0.8
+        else:
+            return 0.2
+    
+    except:
+        return 0.5
+
+# ═══════════════════════════════════════════════════════════════════
+#  FEAR & GREED INDEX (NEW in v23)
+# ═══════════════════════════════════════════════════════════════════
+
+def get_fear_greed_index() -> int:
+    """Get Fear & Greed Index (0-100)"""
+    global fear_greed_cache
+    
+    now = time.time()
+    # Cache for 1 hour
+    if now - fear_greed_cache.get("timestamp", 0) < 3600:
+        return fear_greed_cache.get("value", 50)
+    
+    try:
+        resp = requests.get("https://api.alternative.me/fng/", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            value = int(data["data"][0]["value"])
+            fear_greed_cache = {"value": value, "timestamp": now}
+            logger.info(f"📊 Fear & Greed Index: {value}")
+            return value
+    except:
+        pass
+    
+    return 50  # Neutral if failed
+
+def calculate_sentiment_score(fear_greed: int) -> float:
+    """Convert Fear & Greed to sentiment score (0-1)"""
+    # Extreme Fear (0-25) = Good for buying = 0.8
+    # Fear (25-45) = Moderate buying = 0.6
+    # Neutral (45-55) = Neutral = 0.5
+    # Greed (55-75) = Moderate selling = 0.6
+    # Extreme Greed (75-100) = Good for selling = 0.8
+    
+    if fear_greed < 25:
+        return 0.8  # Extreme fear - good for longs
+    elif fear_greed < 45:
+        return 0.6  # Fear
+    elif fear_greed < 55:
+        return 0.5  # Neutral
+    elif fear_greed < 75:
+        return 0.6  # Greed
+    else:
+        return 0.8  # Extreme greed - good for shorts
+
+# ═══════════════════════════════════════════════════════════════════
+#  PROBABILITY CALCULATION (NEW in v23)
+# ═══════════════════════════════════════════════════════════════════
+
+def calculate_volatility_score(symbol: str) -> float:
+    """Calculate volatility score (0-1)"""
+    try:
+        atr = calc_atr(symbol)
+        price = get_price(symbol)
+        
+        if not atr or not price:
+            return 0.5
+        
+        # ATR as % of price
+        atr_pct = (atr / price) * 100
+        
+        # Optimal volatility: 1-3%
+        if 1.0 <= atr_pct <= 3.0:
+            return 1.0
+        elif atr_pct < 1.0:
+            return 0.6  # Too low
+        elif atr_pct < 5.0:
+            return 0.8  # Acceptable
+        else:
+            return 0.4  # Too high
+    
+    except:
+        return 0.5
+
+def calculate_probability(symbol: str, side: str, setup_name: str) -> float:
+    """Calculate overall probability score (0-100)"""
+    try:
+        # 1. Setup Score (0-100 -> 0-1)
+        setup_score_raw = SETUPS.get(setup_name, {}).get("score", 50)
+        setup_score = setup_score_raw / 100.0
+        
+        # 2. Trend Alignment (0-1)
+        trend_data = detect_trend(symbol, TREND_TIMEFRAME)
+        trend_direction = trend_data["direction"]
+        trend_strength = trend_data["strength"]
+        
+        if not ENABLE_TREND_FILTER:
+            trend_score = 0.7  # Neutral if disabled
+        elif side == "BUY" and trend_direction == 1:
+            trend_score = 0.7 + (trend_strength * 0.3)  # 0.7-1.0
+        elif side == "SELL" and trend_direction == -1:
+            trend_score = 0.7 + (trend_strength * 0.3)  # 0.7-1.0
+        elif trend_direction == 0:
+            trend_score = 0.5  # Sideways
+        else:
+            trend_score = 0.2  # Against trend
+        
+        # 3. BTC Correlation (0-1)
+        btc_corr = calculate_btc_correlation(symbol)
+        
+        # 4. Session Quality (0-1)
+        session_score = get_session_weight()
+        
+        # 5. Sentiment (0-1)
+        fear_greed = get_fear_greed_index()
+        sentiment_score = calculate_sentiment_score(fear_greed)
+        
+        # Adjust sentiment based on side
+        if side == "BUY" and fear_greed < 35:
+            sentiment_score = min(sentiment_score * 1.2, 1.0)  # Boost longs in fear
+        elif side == "SELL" and fear_greed > 65:
+            sentiment_score = min(sentiment_score * 1.2, 1.0)  # Boost shorts in greed
+        
+        # 6. Volatility (0-1)
+        volatility_score = calculate_volatility_score(symbol)
+        
+        # Calculate weighted probability
+        probability = (
+            setup_score * PROBABILITY_WEIGHTS["setup_score"] +
+            trend_score * PROBABILITY_WEIGHTS["trend_alignment"] +
+            btc_corr * PROBABILITY_WEIGHTS["btc_correlation"] +
+            session_score * PROBABILITY_WEIGHTS["session_quality"] +
+            sentiment_score * PROBABILITY_WEIGHTS["sentiment"] +
+            volatility_score * PROBABILITY_WEIGHTS["volatility"]
+        ) * 100
+        
+        return round(probability, 1)
+    
+    except Exception as e:
+        logger.error(f"calculate_probability: {e}")
+        return 50.0
+
+# ═══════════════════════════════════════════════════════════════════
+#  SMC SETUP DETECTION (All 12 setups)
 # ═══════════════════════════════════════════════════════════════════
 
 def detect_ob_choch_demand(symbol: str, side: str) -> dict:
-    """Detect Order Block + CHOCH + Demand Zone"""
+    """Order Block + ChoCH + Demand Zone"""
+    if side != "BUY":
+        return None
+    
     klines = get_klines(symbol, "5m", 25)
     if not klines or len(klines) < 20:
         return None
     
-    closes = [float(k[4]) for k in klines[-20:]]
-    highs = [float(k[2]) for k in klines[-20:]]
-    lows = [float(k[3]) for k in klines[-20:]]
+    closes = np.array([float(k[4]) for k in klines])
+    highs = np.array([float(k[2]) for k in klines])
+    lows = np.array([float(k[3]) for k in klines])
     
-    # Check for bullish setup
-    if side == "BUY":
-        # Look for order block (strong buying candle followed by consolidation)
-        for i in range(5, 15):
-            candle_size = closes[i] - float(klines[i][1])  # close - open
-            if candle_size > (highs[i] - lows[i]) * 0.7:  # Strong bullish candle
-                # Check for CHOCH (change of character)
-                if closes[-1] > closes[i] and closes[-2] < closes[i-1]:
-                    # Check if in demand zone
-                    if lows[-1] <= highs[i]:
-                        return {"name": "OB_CHOCH_DEMAND", "score": SETUPS["OB_CHOCH_DEMAND"]["score"]}
-    
-    # Check for bearish setup
-    elif side == "SELL":
-        for i in range(5, 15):
-            candle_size = float(klines[i][1]) - closes[i]  # open - close
-            if candle_size > (highs[i] - lows[i]) * 0.7:  # Strong bearish candle
-                if closes[-1] < closes[i] and closes[-2] > closes[i-1]:
-                    if highs[-1] >= lows[i]:
-                        return {"name": "OB_CHOCH_DEMAND", "score": SETUPS["OB_CHOCH_DEMAND"]["score"]}
+    for i in range(10, 18):
+        if closes[i] < closes[i-1] and closes[i+1] > closes[i]:
+            if closes[-1] > max(highs[i-3:i+1]):
+                if closes[-1] < min(lows[-5:]):
+                    return {"name": "OB_CHOCH_DEMAND", "score": SETUPS["OB_CHOCH_DEMAND"]["score"]}
     
     return None
 
 def detect_mss_breaker_bos(symbol: str, side: str) -> dict:
-    """Detect Market Structure Shift + Breaker + Break of Structure"""
+    """MSS + Breaker Block + BOS"""
+    if side != "BUY":
+        return None
+    
     klines = get_klines(symbol, "5m", 25)
     if not klines or len(klines) < 20:
         return None
     
-    highs = [float(k[2]) for k in klines[-20:]]
-    lows = [float(k[3]) for k in klines[-20:]]
-    closes = [float(k[4]) for k in klines[-20:]]
+    closes = np.array([float(k[4]) for k in klines])
+    lows = np.array([float(k[3]) for k in klines])
     
-    if side == "BUY":
-        # Check for MSS: price breaks below recent low then recovers strongly
-        recent_low = min(lows[-10:-2])
-        if lows[-3] <= recent_low and closes[-1] > closes[-5]:
-            # Check for BOS: breaking above recent structure
-            recent_high = max(highs[-10:-2])
-            if closes[-1] > recent_high:
-                return {"name": "MSS_BREAKER_BOS", "score": SETUPS["MSS_BREAKER_BOS"]["score"]}
-    
-    elif side == "SELL":
-        recent_high = max(highs[-10:-2])
-        if highs[-3] >= recent_high and closes[-1] < closes[-5]:
-            recent_low = min(lows[-10:-2])
-            if closes[-1] < recent_low:
-                return {"name": "MSS_BREAKER_BOS", "score": SETUPS["MSS_BREAKER_BOS"]["score"]}
+    for i in range(8, 16):
+        if closes[i] < min(lows[i-5:i]):
+            if closes[-1] > closes[i]:
+                if closes[-1] > max(closes[-8:-1]):
+                    return {"name": "MSS_BREAKER_BOS", "score": SETUPS["MSS_BREAKER_BOS"]["score"]}
     
     return None
 
 def detect_bos_breaker_mss(symbol: str, side: str) -> dict:
-    """Detect BOS + Breaker + MSS"""
+    """BOS + Breaker + MSS"""
+    if side != "SELL":
+        return None
+    
     klines = get_klines(symbol, "5m", 25)
     if not klines or len(klines) < 20:
         return None
     
-    highs = [float(k[2]) for k in klines[-20:]]
-    lows = [float(k[3]) for k in klines[-20:]]
-    closes = [float(k[4]) for k in klines[-20:]]
+    closes = np.array([float(k[4]) for k in klines])
+    highs = np.array([float(k[2]) for k in klines])
     
-    if side == "BUY":
-        # BOS: break above recent resistance
-        resistance = max(highs[-15:-5])
-        if closes[-1] > resistance:
-            # Check for breaker (failed resistance becomes support)
-            if min(lows[-5:]) >= resistance * 0.995:
-                return {"name": "BOS_BREAKER_MSS", "score": SETUPS["BOS_BREAKER_MSS"]["score"]}
-    
-    elif side == "SELL":
-        support = min(lows[-15:-5])
-        if closes[-1] < support:
-            if max(highs[-5:]) <= support * 1.005:
-                return {"name": "BOS_BREAKER_MSS", "score": SETUPS["BOS_BREAKER_MSS"]["score"]}
+    for i in range(8, 16):
+        if closes[i] > max(highs[i-5:i]):
+            if closes[-1] < closes[i]:
+                if closes[-1] < min(closes[-8:-1]):
+                    return {"name": "BOS_BREAKER_MSS", "score": SETUPS["BOS_BREAKER_MSS"]["score"]}
     
     return None
 
 def detect_new_hh_choch(symbol: str, side: str) -> dict:
-    """Detect New Higher High + CHOCH"""
+    """New Higher High + ChoCH"""
+    if side != "BUY":
+        return None
+    
     klines = get_klines(symbol, "5m", 25)
     if not klines or len(klines) < 20:
         return None
     
-    highs = [float(k[2]) for k in klines[-20:]]
-    lows = [float(k[3]) for k in klines[-20:]]
-    closes = [float(k[4]) for k in klines[-20:]]
+    highs = np.array([float(k[2]) for k in klines])
+    closes = np.array([float(k[4]) for k in klines])
     
-    if side == "BUY":
-        # New higher high
-        if highs[-1] > max(highs[-10:-1]):
-            # Check for CHOCH (change of character from down to up)
-            if closes[-1] > closes[-2] and closes[-2] < closes[-3]:
-                return {"name": "NEW_HH_CHOCH", "score": SETUPS["NEW_HH_CHOCH"]["score"]}
-    
-    elif side == "SELL":
-        # New lower low
-        if lows[-1] < min(lows[-10:-1]):
-            if closes[-1] < closes[-2] and closes[-2] > closes[-3]:
-                return {"name": "NEW_HH_CHOCH", "score": SETUPS["NEW_HH_CHOCH"]["score"]}
+    if highs[-1] > max(highs[-15:-1]):
+        if closes[-2] < closes[-3] and closes[-1] > closes[-2]:
+            return {"name": "NEW_HH_CHOCH", "score": SETUPS["NEW_HH_CHOCH"]["score"]}
     
     return None
 
 def detect_fakeout_trendline(symbol: str, side: str) -> dict:
-    """Detect Fakeout + Trendline Break"""
+    """Fakeout + Trendline Break"""
     klines = get_klines(symbol, "5m", 25)
     if not klines or len(klines) < 20:
         return None
     
-    highs = [float(k[2]) for k in klines[-20:]]
-    lows = [float(k[3]) for k in klines[-20:]]
-    closes = [float(k[4]) for k in klines[-20:]]
+    closes = np.array([float(k[4]) for k in klines])
+    lows = np.array([float(k[3]) for k in klines])
+    highs = np.array([float(k[2]) for k in klines])
     
     if side == "BUY":
-        # Fakeout below support then quick recovery
-        support = min(lows[-15:-5])
-        if lows[-3] < support * 0.998 and closes[-1] > support:
-            return {"name": "FAKEOUT_TRENDLINE", "score": SETUPS["FAKEOUT_TRENDLINE"]["score"]}
-    
-    elif side == "SELL":
-        resistance = max(highs[-15:-5])
-        if highs[-3] > resistance * 1.002 and closes[-1] < resistance:
-            return {"name": "FAKEOUT_TRENDLINE", "score": SETUPS["FAKEOUT_TRENDLINE"]["score"]}
+        if min(lows[-3:]) < min(lows[-10:-3]):
+            if closes[-1] > closes[-2]:
+                return {"name": "FAKEOUT_TRENDLINE", "score": SETUPS["FAKEOUT_TRENDLINE"]["score"]}
+    else:
+        if max(highs[-3:]) > max(highs[-10:-3]):
+            if closes[-1] < closes[-2]:
+                return {"name": "FAKEOUT_TRENDLINE", "score": SETUPS["FAKEOUT_TRENDLINE"]["score"]}
     
     return None
 
 def detect_double_top_ob(symbol: str, side: str) -> dict:
-    """Detect Double Top + Order Block"""
+    """Double Top + Order Block"""
+    if side != "SELL":
+        return None
+    
     klines = get_klines(symbol, "5m", 25)
     if not klines or len(klines) < 20:
         return None
     
-    highs = [float(k[2]) for k in klines[-20:]]
-    lows = [float(k[3]) for k in klines[-20:]]
+    highs = np.array([float(k[2]) for k in klines])
+    closes = np.array([float(k[4]) for k in klines])
     
-    if side == "SELL":
-        # Look for two similar highs
-        for i in range(10, 15):
-            if abs(highs[i] - highs[-5]) / highs[i] < 0.01:  # Within 1%
-                # Check if current price is near second top
-                if abs(highs[-1] - highs[-5]) / highs[-1] < 0.005:
-                    return {"name": "DOUBLE_TOP_OB", "score": SETUPS["DOUBLE_TOP_OB"]["score"]}
+    peaks = []
+    for i in range(5, len(highs)-5):
+        if highs[i] == max(highs[i-3:i+4]):
+            peaks.append(i)
     
-    elif side == "BUY":
-        # Double bottom
-        for i in range(10, 15):
-            if abs(lows[i] - lows[-5]) / lows[i] < 0.01:
-                if abs(lows[-1] - lows[-5]) / lows[-1] < 0.005:
-                    return {"name": "DOUBLE_TOP_OB", "score": SETUPS["DOUBLE_TOP_OB"]["score"]}
+    if len(peaks) >= 2:
+        if abs(highs[peaks[-1]] - highs[peaks[-2]]) / highs[peaks[-1]] < 0.02:
+            if closes[-1] < min(closes[-5:]):
+                return {"name": "DOUBLE_TOP_OB", "score": SETUPS["DOUBLE_TOP_OB"]["score"]}
     
     return None
 
 def detect_breakout_retest(symbol: str, side: str) -> dict:
-    """Detect Breakout + Retest"""
+    """Breakout + Retest"""
     klines = get_klines(symbol, "5m", 25)
     if not klines or len(klines) < 20:
         return None
     
-    highs = [float(k[2]) for k in klines[-20:]]
-    lows = [float(k[3]) for k in klines[-20:]]
-    closes = [float(k[4]) for k in klines[-20:]]
+    closes = np.array([float(k[4]) for k in klines])
+    highs = np.array([float(k[2]) for k in klines])
+    lows = np.array([float(k[3]) for k in klines])
     
     if side == "BUY":
-        # Breakout above resistance
         resistance = max(highs[-15:-5])
-        if closes[-5] > resistance:
-            # Retest of broken resistance (now support)
-            if min(lows[-4:]) <= resistance * 1.005 and closes[-1] > resistance:
+        if max(highs[-5:-2]) > resistance:
+            if min(lows[-2:]) < resistance and closes[-1] > resistance:
                 return {"name": "BREAKOUT_RETEST", "score": SETUPS["BREAKOUT_RETEST"]["score"]}
-    
-    elif side == "SELL":
+    else:
         support = min(lows[-15:-5])
-        if closes[-5] < support:
-            if max(highs[-4:]) >= support * 0.995 and closes[-1] < support:
+        if min(lows[-5:-2]) < support:
+            if max(highs[-2:]) > support and closes[-1] < support:
                 return {"name": "BREAKOUT_RETEST", "score": SETUPS["BREAKOUT_RETEST"]["score"]}
     
     return None
 
 def detect_liq_sweep_bos(symbol: str, side: str) -> dict:
-    """Detect Liquidity Sweep + Break of Structure"""
+    """Liquidity Sweep + BOS"""
+    if side != "BUY":
+        return None
+    
     klines = get_klines(symbol, "5m", 25)
     if not klines or len(klines) < 20:
         return None
     
-    highs = [float(k[2]) for k in klines[-20:]]
-    lows = [float(k[3]) for k in klines[-20:]]
-    closes = [float(k[4]) for k in klines[-20:]]
+    lows = np.array([float(k[3]) for k in klines])
+    closes = np.array([float(k[4]) for k in klines])
     
-    if side == "BUY":
-        # Liquidity sweep: quick move below support to trigger stops
-        support = min(lows[-15:-5])
-        if lows[-3] < support * 0.997 and closes[-3] > lows[-3] * 1.003:
-            # Then BOS to the upside
-            if closes[-1] > max(highs[-10:-3]):
-                return {"name": "LIQ_SWEEP_BOS", "score": SETUPS["LIQ_SWEEP_BOS"]["score"]}
-    
-    elif side == "SELL":
-        resistance = max(highs[-15:-5])
-        if highs[-3] > resistance * 1.003 and closes[-3] < highs[-3] * 0.997:
-            if closes[-1] < min(lows[-10:-3]):
-                return {"name": "LIQ_SWEEP_BOS", "score": SETUPS["LIQ_SWEEP_BOS"]["score"]}
+    prev_low = min(lows[-15:-5])
+    if min(lows[-5:-2]) < prev_low:
+        if closes[-1] > max(closes[-8:-2]):
+            return {"name": "LIQ_SWEEP_BOS", "score": SETUPS["LIQ_SWEEP_BOS"]["score"]}
     
     return None
 
 def detect_mss_fvg_fib(symbol: str, side: str) -> dict:
-    """Detect MSS + Fair Value Gap + Fibonacci"""
+    """MSS + FVG + Fibonacci"""
+    if side != "BUY":
+        return None
+    
     klines = get_klines(symbol, "5m", 25)
     if not klines or len(klines) < 20:
         return None
     
-    highs = [float(k[2]) for k in klines[-20:]]
-    lows = [float(k[3]) for k in klines[-20:]]
-    closes = [float(k[4]) for k in klines[-20:]]
+    closes = np.array([float(k[4]) for k in klines])
+    highs = np.array([float(k[2]) for k in klines])
+    lows = np.array([float(k[3]) for k in klines])
     
-    if side == "BUY":
-        # Check for FVG (gap in price action)
-        for i in range(3, 10):
-            if lows[i+1] > highs[i-1]:  # Gap up
-                gap_low = highs[i-1]
-                gap_high = lows[i+1]
-                # Check if price is testing the gap
-                if lows[-1] <= gap_high and closes[-1] >= gap_low:
-                    # MSS: breaking above recent structure
-                    if closes[-1] > max(highs[-10:-2]):
-                        return {"name": "MSS_FVG_FIB", "score": SETUPS["MSS_FVG_FIB"]["score"]}
-    
-    elif side == "SELL":
-        for i in range(3, 10):
-            if highs[i-1] < lows[i+1]:  # Gap down
-                gap_high = lows[i-1]
-                gap_low = highs[i+1]
-                if highs[-1] >= gap_low and closes[-1] <= gap_high:
-                    if closes[-1] < min(lows[-10:-2]):
-                        return {"name": "MSS_FVG_FIB", "score": SETUPS["MSS_FVG_FIB"]["score"]}
+    for i in range(10, 18):
+        if closes[i] < min(closes[i-5:i]):
+            if lows[i-1] > highs[i+1]:
+                swing_high = max(highs[i-5:i])
+                swing_low = min(lows[i:i+5])
+                fib_618 = swing_low + (swing_high - swing_low) * 0.618
+                
+                if abs(closes[-1] - fib_618) / closes[-1] < 0.01:
+                    return {"name": "MSS_FVG_FIB", "score": SETUPS["MSS_FVG_FIB"]["score"]}
     
     return None
 
 def detect_ob_idm_bos(symbol: str, side: str) -> dict:
-    """Detect Order Block + Inducement + BOS"""
+    """Order Block + IDM + BOS"""
+    if side != "BUY":
+        return None
+    
     klines = get_klines(symbol, "5m", 25)
     if not klines or len(klines) < 20:
         return None
     
-    highs = [float(k[2]) for k in klines[-20:]]
-    lows = [float(k[3]) for k in klines[-20:]]
-    closes = [float(k[4]) for k in klines[-20:]]
-    opens = [float(k[1]) for k in klines[-20:]]
+    closes = np.array([float(k[4]) for k in klines])
+    lows = np.array([float(k[3]) for k in klines])
     
-    if side == "BUY":
-        # Order block: strong bullish candle
-        for i in range(5, 15):
-            if closes[i] > opens[i] and (closes[i] - opens[i]) > (highs[i] - lows[i]) * 0.7:
-                # Inducement: price moves below OB to trap sellers
-                if lows[-5] < lows[i]:
-                    # BOS: price breaks above structure
-                    if closes[-1] > max(highs[-15:-5]):
-                        return {"name": "OB_IDM_BOS", "score": SETUPS["OB_IDM_BOS"]["score"]}
-    
-    elif side == "SELL":
-        for i in range(5, 15):
-            if closes[i] < opens[i] and (opens[i] - closes[i]) > (highs[i] - lows[i]) * 0.7:
-                if highs[-5] > highs[i]:
-                    if closes[-1] < min(lows[-15:-5]):
-                        return {"name": "OB_IDM_BOS", "score": SETUPS["OB_IDM_BOS"]["score"]}
+    for i in range(10, 18):
+        if lows[i] < min(lows[i-5:i]):
+            if closes[-1] > max(closes[i:i+5]):
+                if closes[-1] > max(closes[-8:-1]):
+                    return {"name": "OB_IDM_BOS", "score": SETUPS["OB_IDM_BOS"]["score"]}
     
     return None
 
 def detect_double_bottom_bb(symbol: str, side: str) -> dict:
-    """Detect Double Bottom + Bollinger Bands"""
+    """Double Bottom + Bollinger Bounce"""
+    if side != "BUY":
+        return None
+    
     klines = get_klines(symbol, "5m", 25)
     if not klines or len(klines) < 20:
         return None
     
-    closes = np.array([float(k[4]) for k in klines[-20:]])
-    lows = [float(k[3]) for k in klines[-20:]]
-    highs = [float(k[2]) for k in klines[-20:]]
+    closes = np.array([float(k[4]) for k in klines])
+    lows = np.array([float(k[3]) for k in klines])
     
-    # Calculate Bollinger Bands
-    sma = np.mean(closes)
-    std = np.std(closes)
-    upper_band = sma + (2 * std)
-    lower_band = sma - (2 * std)
+    sma = np.mean(closes[-20:])
+    std = np.std(closes[-20:])
+    lower_bb = sma - (2 * std)
     
-    if side == "BUY":
-        # Double bottom near lower BB
-        for i in range(8, 14):
-            if abs(lows[i] - lows[-5]) / lows[i] < 0.01:  # Similar lows
-                if lows[-1] <= lower_band * 1.005:  # Near lower band
-                    if closes[-1] > closes[-2]:  # Starting to bounce
-                        return {"name": "DOUBLE_BOTTOM_BB", "score": SETUPS["DOUBLE_BOTTOM_BB"]["score"]}
+    troughs = []
+    for i in range(5, len(lows)-5):
+        if lows[i] == min(lows[i-3:i+4]):
+            troughs.append(i)
     
-    elif side == "SELL":
-        # Double top near upper BB
-        for i in range(8, 14):
-            if abs(highs[i] - highs[-5]) / highs[i] < 0.01:
-                if highs[-1] >= upper_band * 0.995:
-                    if closes[-1] < closes[-2]:
-                        return {"name": "DOUBLE_BOTTOM_BB", "score": SETUPS["DOUBLE_BOTTOM_BB"]["score"]}
+    if len(troughs) >= 2:
+        if abs(lows[troughs[-1]] - lows[troughs[-2]]) / lows[troughs[-1]] < 0.02:
+            if lows[troughs[-1]] <= lower_bb:
+                if closes[-1] > closes[-2]:
+                    return {"name": "DOUBLE_BOTTOM_BB", "score": SETUPS["DOUBLE_BOTTOM_BB"]["score"]}
     
     return None
 
 def detect_fvg_support_bos(symbol: str, side: str) -> dict:
-    """Detect FVG + Support/Resistance + BOS"""
+    """FVG Support + BOS"""
+    if side != "BUY":
+        return None
+    
     klines = get_klines(symbol, "5m", 25)
     if not klines or len(klines) < 20:
         return None
     
-    highs = [float(k[2]) for k in klines[-20:]]
-    lows = [float(k[3]) for k in klines[-20:]]
-    closes = [float(k[4]) for k in klines[-20:]]
+    highs = np.array([float(k[2]) for k in klines])
+    lows = np.array([float(k[3]) for k in klines])
+    closes = np.array([float(k[4]) for k in klines])
     
-    if side == "BUY":
-        # FVG identification
-        for i in range(3, 12):
-            if lows[i+1] > highs[i-1]:  # Fair Value Gap
-                gap_zone = (highs[i-1], lows[i+1])
-                # Price testing FVG as support
-                if lows[-2] <= gap_zone[1] and closes[-1] >= gap_zone[0]:
-                    # BOS above resistance
-                    if closes[-1] > max(highs[-12:-2]):
-                        return {"name": "FVG_SUPPORT_BOS", "score": SETUPS["FVG_SUPPORT_BOS"]["score"]}
-    
-    elif side == "SELL":
-        for i in range(3, 12):
-            if highs[i-1] < lows[i+1]:  # Bearish FVG
-                gap_zone = (lows[i+1], highs[i-1])
-                if highs[-2] >= gap_zone[0] and closes[-1] <= gap_zone[1]:
-                    if closes[-1] < min(lows[-12:-2]):
-                        return {"name": "FVG_SUPPORT_BOS", "score": SETUPS["FVG_SUPPORT_BOS"]["score"]}
+    for i in range(10, len(klines)-2):
+        if highs[i-1] < lows[i+1]:
+            gap_zone = (lows[i+1], highs[i-1])
+            if highs[-2] >= gap_zone[0] and closes[-1] <= gap_zone[1]:
+                if closes[-1] < min(lows[-12:-2]):
+                    return {"name": "FVG_SUPPORT_BOS", "score": SETUPS["FVG_SUPPORT_BOS"]["score"]}
     
     return None
 
@@ -734,74 +883,163 @@ def detect_all_setups(symbol: str, side: str) -> list:
     return found
 
 # ═══════════════════════════════════════════════════════════════════
+#  ORDER MANAGEMENT
+# ═══════════════════════════════════════════════════════════════════
+
+def cleanup_orders(symbol: str):
+    """Cancel all open orders for a symbol"""
+    try:
+        open_orders = request_binance("GET", "/fapi/v1/openOrders", {
+            "symbol": symbol
+        })
+        
+        if open_orders:
+            for order in open_orders:
+                request_binance("DELETE", "/fapi/v1/order", {
+                    "symbol": symbol,
+                    "orderId": order["orderId"]
+                })
+                logger.info(f"🗑️ Cancelled order {order['orderId']} for {symbol}")
+    
+    except Exception as e:
+        logger.error(f"cleanup_orders {symbol}: {e}")
+
+def update_sl_order_on_binance(symbol: str, new_sl: float, side: str):
+    """Update SL order on Binance (cancel old, place new)"""
+    try:
+        info = get_symbol_info(symbol)
+        if not info:
+            return False
+        
+        # Cancel all existing orders first
+        cleanup_orders(symbol)
+        
+        # Place new SL order
+        sl_order_side = "SELL" if side == "BUY" else "BUY"
+        sl_order = request_binance("POST", "/fapi/v1/order", {
+            "symbol": symbol,
+            "side": sl_order_side,
+            "type": "STOP_MARKET",
+            "stopPrice": round(new_sl, info["pricePrecision"]),
+            "closePosition": "true"
+        })
+        
+        if sl_order:
+            logger.info(f"✅ Updated SL order on Binance for {symbol}: ${new_sl:.6f}")
+            return True
+        else:
+            logger.warning(f"⚠️ Failed to update SL order on Binance for {symbol}")
+            return False
+    
+    except Exception as e:
+        logger.error(f"update_sl_order_on_binance {symbol}: {e}")
+        return False
+
+def place_order_with_fallback(symbol: str, side: str, qty: float, order_type: str = "MARKET", price: float = None) -> dict:
+    """Place order with LIMIT fallback if MARKET fails (NEW in v23)"""
+    info = get_symbol_info(symbol)
+    if not info:
+        return None
+    
+    # Try MARKET order first
+    if order_type == "MARKET":
+        order = request_binance("POST", "/fapi/v1/order", {
+            "symbol": symbol,
+            "side": side,
+            "type": "MARKET",
+            "quantity": qty
+        })
+        
+        if order:
+            return order
+        
+        # MARKET failed, try LIMIT order
+        logger.warning(f"⚠️ {symbol} MARKET order rejected, trying LIMIT")
+        
+        if not price:
+            price = get_price(symbol)
+        
+        if not price:
+            return None
+        
+        # Place LIMIT order at current price with small buffer
+        if side == "BUY":
+            limit_price = price * 1.001  # 0.1% above market
+        else:
+            limit_price = price * 0.999  # 0.1% below market
+        
+        limit_price = round(limit_price, info["pricePrecision"])
+        
+        order = request_binance("POST", "/fapi/v1/order", {
+            "symbol": symbol,
+            "side": side,
+            "type": "LIMIT",
+            "timeInForce": "GTC",
+            "quantity": qty,
+            "price": limit_price
+        })
+        
+        if order:
+            logger.info(f"✅ {symbol} LIMIT order placed at ${limit_price}")
+            return order
+    
+    return None
+
+# ═══════════════════════════════════════════════════════════════════
 #  TRADING FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════
 
-def open_position(symbol: str, side: str, entry: float, sl: float, tp: float, setup_name: str):
+def open_position(symbol: str, side: str, entry: float, sl: float, tp: float, setup_name: str, probability: float):
     """Open a new position"""
     global total_traded, account_balance
     
     try:
         with trade_lock:
-            # Check if already in position
             if symbol in trade_log and trade_log[symbol].get("status") == "OPEN":
                 return
             
-            # Check max positions
             n_open = len([v for v in trade_log.values() if v.get("status") == "OPEN"])
             if n_open >= MAX_POSITIONS:
                 return
         
-        # Get symbol info
         info = get_symbol_info(symbol)
         if not info:
             logger.warning(f"❌ {symbol} info not found")
             return
         
-        # Set leverage and margin type
         set_leverage(symbol, LEVERAGE)
         set_margin_type(symbol, MARGIN_TYPE)
         
-        # Calculate position size
         risk = abs(entry - sl)
         notional = MARGIN_PER_TRADE * LEVERAGE
         qty = notional / entry
         
-        # Round to symbol precision
         qty = round(qty, info["quantityPrecision"])
         
-        # Check minimum quantity
         if qty < info["minQty"]:
             logger.warning(f"❌ {symbol} qty too small: {qty} < {info['minQty']}")
             return
         
-        # Format prices
         price_precision = info["pricePrecision"]
         entry_str = f"{entry:.{price_precision}f}"
         sl_str = f"{sl:.{price_precision}f}"
         tp_str = f"{tp:.{price_precision}f}"
         
-        logger.info(f"🎯 {symbol} {side} | Entry: {entry_str} | SL: {sl_str} | TP: {tp_str} | Qty: {qty} | Setup: {setup_name}")
+        session = get_current_session()
+        logger.info(f"🎯 {symbol} {side} | Prob: {probability}% | Entry: {entry_str} | SL: {sl_str} | TP: {tp_str} | Setup: {setup_name} | Session: {session}")
         
-        # Place market order
+        # Place market order with LIMIT fallback
         order_side = "BUY" if side == "BUY" else "SELL"
-        order = request_binance("POST", "/fapi/v1/order", {
-            "symbol": symbol,
-            "side": order_side,
-            "type": "MARKET",
-            "quantity": qty
-        })
+        order = place_order_with_fallback(symbol, order_side, qty, "MARKET", entry)
         
         if not order:
-            logger.error(f"❌ {symbol} order failed")
+            logger.error(f"❌ {symbol} order failed (both MARKET and LIMIT)")
             return
         
-        # Get actual fill price
         actual_entry = float(order.get("avgPrice", entry))
         
         logger.info(f"✅ {symbol} {side} OPENED at {actual_entry:.{price_precision}f}")
         
-        # Recalculate SL/TP based on actual entry
         if side == "BUY":
             sl_distance = actual_entry - sl
             sl = actual_entry - sl_distance
@@ -811,11 +1049,10 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float, se
             sl = actual_entry + sl_distance
             tp = actual_entry - (sl_distance * 2.0)
         
-        # Round recalculated prices
         sl = round(sl, price_precision)
         tp = round(tp, price_precision)
         
-        # Try to place SL order
+        # Place SL order
         sl_rejected = False
         sl_order_side = "SELL" if side == "BUY" else "BUY"
         sl_order = request_binance("POST", "/fapi/v1/order", {
@@ -829,8 +1066,11 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float, se
         if not sl_order:
             logger.warning(f"⚠️ {symbol} SL order rejected - will monitor manually")
             sl_rejected = True
+        else:
+            logger.info(f"✅ {symbol} SL order placed at ${sl:.{price_precision}f}")
         
-        # Try to place TP order
+        # Place TP order
+        tp_rejected = False
         tp_order_side = "SELL" if side == "BUY" else "BUY"
         tp_order = request_binance("POST", "/fapi/v1/order", {
             "symbol": symbol,
@@ -841,9 +1081,11 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float, se
         })
         
         if not tp_order:
-            logger.warning(f"⚠️ {symbol} TP order rejected")
+            logger.warning(f"⚠️ {symbol} TP order rejected - will monitor manually")
+            tp_rejected = True
+        else:
+            logger.info(f"✅ {symbol} TP order placed at ${tp:.{price_precision}f}")
         
-        # Record trade
         with trade_lock:
             trade_log[symbol] = {
                 "side": side,
@@ -852,19 +1094,25 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float, se
                 "tp": tp,
                 "qty": qty,
                 "setup": setup_name,
+                "probability": probability,
                 "status": "OPEN",
                 "opened_at": time.time(),
+                "session": session,
                 "sl_rejected": sl_rejected,
+                "tp_rejected": tp_rejected,
                 "trailing_stop_active": False,
+                "breakeven_moved": False,
                 "highest_price": actual_entry if side == "BUY" else None,
-                "lowest_price": actual_entry if side == "SELL" else None
+                "lowest_price": actual_entry if side == "SELL" else None,
+                "last_sl_update": time.time()
             }
             total_traded += 1
         
-        # Send notification
         rr = abs(tp - actual_entry) / abs(actual_entry - sl)
         msg = f"🚀 <b>{symbol} {side}</b>\n"
         msg += f"📊 Setup: {setup_name}\n"
+        msg += f"🎲 Probability: {probability}%\n"
+        msg += f"🕐 Session: {session}\n"
         msg += f"💵 Entry: ${actual_entry:.{price_precision}f}\n"
         msg += f"🛡️ SL: ${sl:.{price_precision}f}\n"
         msg += f"🎯 TP: ${tp:.{price_precision}f}\n"
@@ -872,18 +1120,23 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float, se
         msg += f"⚖️ Qty: {qty}\n"
         msg += f"💰 Margin: ${MARGIN_PER_TRADE}"
         
-        if sl_rejected:
-            msg += f"\n⚠️ SL will be monitored manually"
+        if sl_rejected or tp_rejected:
+            msg += f"\n⚠️ "
+            if sl_rejected:
+                msg += "SL "
+            if tp_rejected:
+                msg += "TP "
+            msg += "monitored manually"
         
         send_telegram(msg)
         
-        logger.info(f"✅ {symbol} position recorded in trade log")
+        logger.info(f"✅ {symbol} position recorded")
         
     except Exception as e:
         logger.error(f"open_position {symbol}: {e}")
 
-def update_trailing_stop(symbol: str, current_price: float):
-    """Update trailing stop for a position"""
+def update_breakeven(symbol: str, current_price: float):
+    """Move SL to breakeven at small profit (NEW in v23)"""
     try:
         with trade_lock:
             if symbol not in trade_log:
@@ -892,6 +1145,9 @@ def update_trailing_stop(symbol: str, current_price: float):
             trade = trade_log[symbol]
             if trade.get("status") != "OPEN":
                 return
+            
+            if trade.get("breakeven_moved"):
+                return  # Already moved
             
             side = trade["side"]
             entry = trade["entry"]
@@ -910,35 +1166,93 @@ def update_trailing_stop(symbol: str, current_price: float):
             
             current_rr = profit / risk
             
-            # Activate trailing stop at RR 1.0
+            # Move to breakeven at RR 0.3
+            if current_rr >= BREAKEVEN_RR:
+                # Move SL to entry (breakeven)
+                info = get_symbol_info(symbol)
+                if info:
+                    new_sl = round(entry, info["pricePrecision"])
+                    
+                    if side == "BUY" and new_sl > sl:
+                        trade["sl"] = new_sl
+                        trade["breakeven_moved"] = True
+                        logger.info(f"🎯 {symbol} BREAKEVEN moved SL to ${new_sl:.6f}")
+                        
+                        if not trade.get("sl_rejected"):
+                            update_sl_order_on_binance(symbol, new_sl, side)
+                    
+                    elif side == "SELL" and new_sl < sl:
+                        trade["sl"] = new_sl
+                        trade["breakeven_moved"] = True
+                        logger.info(f"🎯 {symbol} BREAKEVEN moved SL to ${new_sl:.6f}")
+                        
+                        if not trade.get("sl_rejected"):
+                            update_sl_order_on_binance(symbol, new_sl, side)
+    
+    except Exception as e:
+        logger.error(f"update_breakeven {symbol}: {e}")
+
+def update_trailing_stop(symbol: str, current_price: float):
+    """Update trailing stop for a position"""
+    try:
+        with trade_lock:
+            if symbol not in trade_log:
+                return
+            
+            trade = trade_log[symbol]
+            if trade.get("status") != "OPEN":
+                return
+            
+            side = trade["side"]
+            entry = trade["entry"]
+            sl = trade["sl"]
+            
+            if side == "BUY":
+                profit = current_price - entry
+                risk = entry - sl
+            else:
+                profit = entry - current_price
+                risk = sl - entry
+            
+            if risk <= 0:
+                return
+            
+            current_rr = profit / risk
+            
             if current_rr >= TRAILING_STOP_START_RR:
                 if not trade.get("trailing_stop_active"):
                     logger.info(f"🎯 {symbol} Trailing stop ACTIVATED at RR {current_rr:.2f}")
                     trade["trailing_stop_active"] = True
                 
-                # Update trailing stop
+                new_sl = None
                 if side == "BUY":
-                    # Track highest price
                     if not trade.get("highest_price") or current_price > trade["highest_price"]:
                         trade["highest_price"] = current_price
                     
-                    # Move SL to breakeven or higher
-                    new_sl = max(sl, entry, trade["highest_price"] * 0.995)  # Trail by 0.5%
+                    new_sl = max(sl, entry, trade["highest_price"] * 0.995)
                     
                     if new_sl > sl:
                         trade["sl"] = new_sl
                         logger.info(f"📈 {symbol} Trailing SL moved to ${new_sl:.6f}")
                 
-                else:  # SELL
-                    # Track lowest price
+                else:
                     if not trade.get("lowest_price") or current_price < trade["lowest_price"]:
                         trade["lowest_price"] = current_price
                     
-                    new_sl = min(sl, entry, trade["lowest_price"] * 1.005)  # Trail by 0.5%
+                    new_sl = min(sl, entry, trade["lowest_price"] * 1.005)
                     
                     if new_sl < sl:
                         trade["sl"] = new_sl
                         logger.info(f"📉 {symbol} Trailing SL moved to ${new_sl:.6f}")
+                
+                if new_sl and new_sl != sl:
+                    now = time.time()
+                    last_update = trade.get("last_sl_update", 0)
+                    
+                    if now - last_update >= 30:
+                        if not trade.get("sl_rejected"):
+                            if update_sl_order_on_binance(symbol, new_sl, side):
+                                trade["last_sl_update"] = now
     
     except Exception as e:
         logger.error(f"update_trailing_stop {symbol}: {e}")
@@ -952,8 +1266,10 @@ def monitor_manual_sl(symbol: str):
             
             trade = trade_log[symbol]
             
-            # Only monitor if SL was rejected
             if not trade.get("sl_rejected"):
+                return
+            
+            if trade.get("status") != "OPEN":
                 return
             
             current_price = get_price(symbol)
@@ -964,50 +1280,97 @@ def monitor_manual_sl(symbol: str):
             sl = trade["sl"]
             qty = trade["qty"]
             
-            # Check if SL touched
             if side == "BUY" and current_price <= sl:
                 logger.warning(f"🚨 {symbol} BUY touched SL ({current_price:.6f} <= {sl:.6f})")
-                # Close position manually
-                close_order = request_binance("POST", "/fapi/v1/order", {
-                    "symbol": symbol,
-                    "side": "SELL",
-                    "type": "MARKET",
-                    "quantity": qty,
-                    "reduceOnly": "true"
-                })
+                close_order = place_order_with_fallback(symbol, "SELL", qty, "MARKET", current_price)
+                
                 if close_order:
                     logger.info(f"✅ Manual SL executed for {symbol}")
                     with trade_lock:
                         trade["status"] = "CLOSED"
                         trade["closed_by"] = "MANUAL_SL"
+                        trade["closed_at"] = time.time()
                         setup_memory[trade["setup"]]["losses"] += 1
+                        session_stats[trade["session"]]["losses"] += 1
                     
                     send_telegram(f"🔴 {symbol} closed by manual SL")
             
             elif side == "SELL" and current_price >= sl:
                 logger.warning(f"🚨 {symbol} SELL touched SL ({current_price:.6f} >= {sl:.6f})")
-                # Close position manually
-                close_order = request_binance("POST", "/fapi/v1/order", {
-                    "symbol": symbol,
-                    "side": "BUY",
-                    "type": "MARKET",
-                    "quantity": qty,
-                    "reduceOnly": "true"
-                })
+                close_order = place_order_with_fallback(symbol, "BUY", qty, "MARKET", current_price)
+                
                 if close_order:
                     logger.info(f"✅ Manual SL executed for {symbol}")
                     with trade_lock:
                         trade["status"] = "CLOSED"
                         trade["closed_by"] = "MANUAL_SL"
+                        trade["closed_at"] = time.time()
                         setup_memory[trade["setup"]]["losses"] += 1
+                        session_stats[trade["session"]]["losses"] += 1
                     
                     send_telegram(f"🔴 {symbol} closed by manual SL")
     
     except Exception as e:
         logger.error(f"monitor_manual_sl {symbol}: {e}")
 
+def monitor_manual_tp(symbol: str):
+    """Monitor and execute TP manually if Binance rejected it"""
+    try:
+        with trade_lock:
+            if symbol not in trade_log:
+                return
+            
+            trade = trade_log[symbol]
+            
+            if not trade.get("tp_rejected"):
+                return
+            
+            if trade.get("status") != "OPEN":
+                return
+            
+            current_price = get_price(symbol)
+            if not current_price:
+                return
+            
+            side = trade["side"]
+            tp = trade["tp"]
+            qty = trade["qty"]
+            
+            if side == "BUY" and current_price >= tp:
+                logger.info(f"🎯 {symbol} BUY touched TP ({current_price:.6f} >= {tp:.6f})")
+                close_order = place_order_with_fallback(symbol, "SELL", qty, "MARKET", current_price)
+                
+                if close_order:
+                    logger.info(f"✅ Manual TP executed for {symbol}")
+                    with trade_lock:
+                        trade["status"] = "CLOSED"
+                        trade["closed_by"] = "MANUAL_TP"
+                        trade["closed_at"] = time.time()
+                        setup_memory[trade["setup"]]["wins"] += 1
+                        session_stats[trade["session"]]["wins"] += 1
+                    
+                    send_telegram(f"✅ {symbol} closed by manual TP")
+            
+            elif side == "SELL" and current_price <= tp:
+                logger.info(f"🎯 {symbol} SELL touched TP ({current_price:.6f} <= {tp:.6f})")
+                close_order = place_order_with_fallback(symbol, "BUY", qty, "MARKET", current_price)
+                
+                if close_order:
+                    logger.info(f"✅ Manual TP executed for {symbol}")
+                    with trade_lock:
+                        trade["status"] = "CLOSED"
+                        trade["closed_by"] = "MANUAL_TP"
+                        trade["closed_at"] = time.time()
+                        setup_memory[trade["setup"]]["wins"] += 1
+                        session_stats[trade["session"]]["wins"] += 1
+                    
+                    send_telegram(f"✅ {symbol} closed by manual TP")
+    
+    except Exception as e:
+        logger.error(f"monitor_manual_tp {symbol}: {e}")
+
 def scan_symbol(symbol: str) -> dict:
-    """Scan symbol for setups"""
+    """Scan symbol for setups with probability filtering"""
     try:
         with trade_lock:
             if symbol in trade_log and trade_log[symbol].get("status") == "OPEN":
@@ -1030,39 +1393,151 @@ def scan_symbol(symbol: str) -> dict:
         # Try BUY
         setups_buy = detect_all_setups(symbol, "BUY")
         for setup in setups_buy:
-            if setup["score"] >= MIN_SETUP_SCORE:
-                sl = entry - (atr * 1.5)
-                tp = entry + ((entry - sl) * 2.0)
-                
+            sl = entry - (atr * 1.5)
+            tp = entry + ((entry - sl) * 2.0)
+            
+            # Calculate probability
+            probability = calculate_probability(symbol, "BUY", setup["name"])
+            
+            if probability >= MIN_PROBABILITY_SCORE:
                 return {
                     "symbol": symbol,
                     "side": "BUY",
                     "entry": entry,
                     "sl": sl,
                     "tp": tp,
-                    "setup": setup["name"]
+                    "setup": setup["name"],
+                    "probability": probability
                 }
         
         # Try SELL
         setups_sell = detect_all_setups(symbol, "SELL")
         for setup in setups_sell:
-            if setup["score"] >= MIN_SETUP_SCORE:
-                sl = entry + (atr * 1.5)
-                tp = entry - ((sl - entry) * 2.0)
-                
+            sl = entry + (atr * 1.5)
+            tp = entry - ((sl - entry) * 2.0)
+            
+            # Calculate probability
+            probability = calculate_probability(symbol, "SELL", setup["name"])
+            
+            if probability >= MIN_PROBABILITY_SCORE:
                 return {
                     "symbol": symbol,
                     "side": "SELL",
                     "entry": entry,
                     "sl": sl,
                     "tp": tp,
-                    "setup": setup["name"]
+                    "setup": setup["name"],
+                    "probability": probability
                 }
         
         return None
         
     except:
         return None
+
+# ═══════════════════════════════════════════════════════════════════
+#  POSITION RECOVERY (NEW in v23)
+# ═══════════════════════════════════════════════════════════════════
+
+def recover_existing_positions():
+    """Recover and manage any existing open positions (NEW in v23)"""
+    logger.info("🔄 Recovering existing positions...")
+    try:
+        positions = request_binance("GET", "/fapi/v2/positionRisk", signed=True)
+        if positions:
+            recovered = 0
+            for pos in positions:
+                symbol = pos.get("symbol")
+                pos_amt = float(pos.get("positionAmt", 0))
+                
+                if symbol in SYMBOLS and pos_amt != 0:
+                    entry_price = float(pos.get("entryPrice", 0))
+                    unrealized_pnl = float(pos.get("unRealizedProfit", 0))
+                    side = "BUY" if pos_amt > 0 else "SELL"
+                    
+                    logger.warning(f"⚠️ Found open position: {symbol} {side} ({pos_amt}) Entry: ${entry_price:.4f} PnL: ${unrealized_pnl:.2f}")
+                    
+                    # Calculate ATR for SL/TP
+                    atr = calc_atr(symbol)
+                    if not atr:
+                        atr = entry_price * 0.02  # Fallback 2%
+                    
+                    # Set SL and TP based on entry and ATR
+                    if side == "BUY":
+                        sl = entry_price - (atr * 1.5)
+                        tp = entry_price + (atr * 3.0)
+                    else:
+                        sl = entry_price + (atr * 1.5)
+                        tp = entry_price - (atr * 3.0)
+                    
+                    # Add to trade_log
+                    with trade_lock:
+                        if symbol not in trade_log or trade_log[symbol].get("status") != "OPEN":
+                            trade_log[symbol] = {
+                                "side": side,
+                                "entry": entry_price,
+                                "sl": sl,
+                                "tp": tp,
+                                "qty": abs(pos_amt),
+                                "setup": "RECOVERED",
+                                "probability": 50.0,
+                                "status": "OPEN",
+                                "opened_at": time.time(),
+                                "session": get_current_session(),
+                                "sl_rejected": True,
+                                "tp_rejected": True,
+                                "trailing_stop_active": False,
+                                "breakeven_moved": False,
+                                "highest_price": entry_price if side == "BUY" else None,
+                                "lowest_price": entry_price if side == "SELL" else None,
+                                "last_sl_update": time.time()
+                            }
+                            
+                            recovered += 1
+                            logger.info(f"✅ Recovered {symbol} - will manage with SL: ${sl:.4f} TP: ${tp:.4f}")
+                            
+                            # Try to place SL/TP orders
+                            info = get_symbol_info(symbol)
+                            if info:
+                                sl_rounded = round(sl, info["pricePrecision"])
+                                tp_rounded = round(tp, info["pricePrecision"])
+                                
+                                # Place SL
+                                sl_order_side = "SELL" if side == "BUY" else "BUY"
+                                sl_order = request_binance("POST", "/fapi/v1/order", {
+                                    "symbol": symbol,
+                                    "side": sl_order_side,
+                                    "type": "STOP_MARKET",
+                                    "stopPrice": sl_rounded,
+                                    "closePosition": "true"
+                                })
+                                
+                                if sl_order:
+                                    trade_log[symbol]["sl_rejected"] = False
+                                    logger.info(f"✅ Placed SL order for recovered {symbol}")
+                                
+                                # Place TP
+                                tp_order_side = "SELL" if side == "BUY" else "BUY"
+                                tp_order = request_binance("POST", "/fapi/v1/order", {
+                                    "symbol": symbol,
+                                    "side": tp_order_side,
+                                    "type": "TAKE_PROFIT_MARKET",
+                                    "stopPrice": tp_rounded,
+                                    "closePosition": "true"
+                                })
+                                
+                                if tp_order:
+                                    trade_log[symbol]["tp_rejected"] = False
+                                    logger.info(f"✅ Placed TP order for recovered {symbol}")
+            
+            if recovered > 0:
+                logger.info(f"✅ Successfully recovered {recovered} positions")
+                send_telegram(f"🔄 Recovered {recovered} existing positions")
+            else:
+                logger.info("✅ No positions to recover")
+        
+    except Exception as e:
+        logger.error(f"recover_existing_positions: {e}")
 
 # ═══════════════════════════════════════════════════════════════════
 #  MAIN LOOPS
@@ -1081,7 +1556,7 @@ def scanner_loop():
                 futures = {executor.submit(scan_symbol, symbol): symbol for symbol in SYMBOLS}
                 signals = [f.result() for f in as_completed(futures) if f.result()]
             
-            signals.sort(key=lambda x: SETUPS.get(x["setup"], {}).get("score", 0), reverse=True)
+            signals.sort(key=lambda x: x.get("probability", 0), reverse=True)
             
             for signal in signals:
                 with trade_lock:
@@ -1091,12 +1566,13 @@ def scanner_loop():
                     break
                 
                 open_position(signal["symbol"], signal["side"], signal["entry"],
-                    signal["sl"], signal["tp"], signal["setup"])
+                    signal["sl"], signal["tp"], signal["setup"], signal["probability"])
             
             with trade_lock:
                 n_open = len([v for v in trade_log.values() if v.get("status") == "OPEN"])
             
-            logger.info(f"📊 Scan | Open: {n_open}/{MAX_POSITIONS} | Balance: ${account_balance:.2f}")
+            session = get_current_session()
+            logger.info(f"📊 Scan | Open: {n_open}/{MAX_POSITIONS} | Balance: ${account_balance:.2f} | Session: {session}")
             time.sleep(SCAN_INTERVAL)
             
         except Exception as e:
@@ -1110,19 +1586,18 @@ def monitor_positions_loop():
     
     while True:
         try:
-            # Check manual SL for all open positions
             with trade_lock:
                 open_symbols = [k for k, v in trade_log.items() if v.get("status") == "OPEN"]
             
             for symbol in open_symbols:
                 monitor_manual_sl(symbol)
+                monitor_manual_tp(symbol)
                 
-                # Update trailing stop
                 price = get_price(symbol)
                 if price:
+                    update_breakeven(symbol, price)
                     update_trailing_stop(symbol, price)
             
-            # Check position closures
             positions = request_binance("GET", "/fapi/v2/positionRisk", signed=True)
             if positions:
                 for pos in positions:
@@ -1134,19 +1609,26 @@ def monitor_positions_loop():
                             with trade_lock:
                                 if trade_log[symbol].get("status") == "OPEN":
                                     setup = trade_log[symbol].get("setup", "UNKNOWN")
+                                    session = trade_log[symbol].get("session", "UNKNOWN")
+                                    probability = trade_log[symbol].get("probability", 0)
                                     
-                                    # Determine if win or loss based on PnL
                                     pnl = float(pos.get("unRealizedProfit", 0))
                                     if pnl > 0:
                                         setup_memory[setup]["wins"] += 1
-                                        logger.info(f"✅ {symbol} CLOSED - WIN")
-                                        send_telegram(f"✅ <b>{symbol} WIN</b>\nSetup: {setup}\nPnL: ${pnl:.2f}")
+                                        session_stats[session]["wins"] += 1
+                                        logger.info(f"✅ {symbol} CLOSED - WIN (${pnl:.2f}) Prob: {probability}%")
+                                        send_telegram(f"✅ <b>{symbol} WIN</b>\nSetup: {setup}\nProb: {probability}%\nPnL: ${pnl:.2f}")
                                     else:
                                         setup_memory[setup]["losses"] += 1
-                                        logger.info(f"🔴 {symbol} CLOSED - LOSS")
-                                        send_telegram(f"🔴 <b>{symbol} LOSS</b>\nSetup: {setup}\nPnL: ${pnl:.2f}")
+                                        session_stats[session]["losses"] += 1
+                                        logger.info(f"🔴 {symbol} CLOSED - LOSS (${pnl:.2f}) Prob: {probability}%")
+                                        send_telegram(f"🔴 <b>{symbol} LOSS</b>\nSetup: {setup}\nProb: {probability}%\nPnL: ${pnl:.2f}")
                                     
                                     trade_log[symbol]["status"] = "CLOSED"
+                                    trade_log[symbol]["closed_at"] = time.time()
+                                    trade_log[symbol]["closed_by"] = "BINANCE"
+                                    
+                                    cleanup_orders(symbol)
             
             time.sleep(MONITOR_INTERVAL)
             
@@ -1163,16 +1645,16 @@ def dashboard_loop():
         try:
             with trade_lock:
                 n_open = len([v for v in trade_log.values() if v.get("status") == "OPEN"])
-                
-                # Calculate total wins and losses
                 total_w = sum(v["wins"] for v in setup_memory.values())
                 total_l = sum(v["losses"] for v in setup_memory.values())
             
-            logger.info("═" * 90)
-            logger.info(f"🤖 v21 LIVE READY | Balance: ${account_balance:.2f} | Open: {n_open}/{MAX_POSITIONS} | Traded: {total_traded}")
-            logger.info(f"Margin: ${MARGIN_PER_TRADE} | Leverage: {LEVERAGE}x | Wins: {total_w} | Losses: {total_l}")
+            session = get_current_session()
+            fear_greed = fear_greed_cache.get("value", 50)
             
-            # Show setup performance
+            logger.info("═" * 100)
+            logger.info(f"🤖 v23 ADVANCED | Balance: ${account_balance:.2f} | Open: {n_open}/{MAX_POSITIONS} | Traded: {total_traded}")
+            logger.info(f"Session: {session} | F&G: {fear_greed} | Min Prob: {MIN_PROBABILITY_SCORE}% | Margin: ${MARGIN_PER_TRADE} | W: {total_w} | L: {total_l}")
+            
             if setup_memory:
                 logger.info("Setup Performance:")
                 for setup, stats in sorted(setup_memory.items(), key=lambda x: x[1]["wins"], reverse=True):
@@ -1182,7 +1664,17 @@ def dashboard_loop():
                     wr = (w / total * 100) if total > 0 else 0
                     logger.info(f"  {setup}: {w}W/{l}L ({wr:.1f}%)")
             
-            logger.info("═" * 90)
+            if session_stats:
+                logger.info("Session Performance:")
+                for sess, stats in sorted(session_stats.items()):
+                    w = stats["wins"]
+                    l = stats["losses"]
+                    total = w + l
+                    if total > 0:
+                        wr = (w / total * 100)
+                        logger.info(f"  {sess}: {w}W/{l}L ({wr:.1f}%)")
+            
+            logger.info("═" * 100)
             
             time.sleep(DASHBOARD_INTERVAL)
             
@@ -1191,23 +1683,33 @@ def dashboard_loop():
             time.sleep(10)
 
 def main():
-    logger.info("╔" + "═" * 88 + "╗")
-    logger.info("║" + " " * 22 + "ROBOTKING v21 COMPLETE - LIVE TRADING" + " " * 27 + "║")
-    logger.info("║" + " " * 10 + "0.5$ Margin | 20x Leverage | Trailing Stop | SL Surveillance | Continuous" + " " * 3 + "║")
-    logger.info("╚" + "═" * 88 + "╝\n")
+    logger.info("╔" + "═" * 98 + "╗")
+    logger.info("║" + " " * 24 + "ROBOTKING v23 ADVANCED - PROBABILITY & TREND FILTER" + " " * 23 + "║")
+    logger.info("║" + " " * 12 + "M5 Trading | 0.8$ Margin | Trend Filter | BTC Corr | F&G | Breakeven" + " " * 12 + "║")
+    logger.info("╚" + "═" * 98 + "╝\n")
     
     logger.warning("🔥 LIVE TRADING ON BINANCE FUTURES 🔥")
-    logger.info(f"API: Connected | Margin: ${MARGIN_PER_TRADE}/trade | Leverage: {LEVERAGE}x | Max Positions: {MAX_POSITIONS}\n")
+    logger.info(f"Margin: ${MARGIN_PER_TRADE}/trade | Leverage: {LEVERAGE}x | Max Positions: {MAX_POSITIONS}")
+    logger.info(f"Min Probability: {MIN_PROBABILITY_SCORE}% | Trend Filter: {ENABLE_TREND_FILTER}\n")
     
     start_health_server()
     load_symbol_info()
     sync_account_balance()
     
+    # NEW: Recover any existing positions first
+    recover_existing_positions()
+    
+    # Update Fear & Greed Index
+    fear_greed = get_fear_greed_index()
+    logger.info(f"📊 Fear & Greed Index: {fear_greed}")
+    
     threading.Thread(target=scanner_loop, daemon=True, name="Scanner").start()
     threading.Thread(target=monitor_positions_loop, daemon=True, name="Monitor").start()
     threading.Thread(target=dashboard_loop, daemon=True, name="Dashboard").start()
     
-    logger.info("✅ v21 COMPLETE — ONLINE 🚀\n")
+    session = get_current_session()
+    logger.info(f"✅ v23 ADVANCED — ONLINE 🚀")
+    logger.info(f"📍 Session: {session} | Fear & Greed: {fear_greed}\n")
     
     try:
         while True:
@@ -1219,7 +1721,7 @@ def main():
             n_open = len([v for v in trade_log.values() if v.get("status") == "OPEN"])
         if n_open > 0:
             logger.warning(f"⚠️ {n_open} positions still open!")
-        logger.info("👋 RobotKing v21 stopped")
+        logger.info("👋 RobotKing v23 stopped")
 
 if __name__ == "__main__":
     main()
