@@ -2,22 +2,31 @@
 # -*- coding: utf-8 -*-
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║   ROBOTKING v36 — TRAILING SL INTELLIGENT + RR MAX       ║
+║   ROBOTKING v37 — SL STRUCTUREL + RISQUE $0.30 FIXE       ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-v35 — CORRECTIONS CRITIQUES (vs v34-fix2) :
-🔴 V35-1 — MAX_POSITIONS = 1 (capital $2-3 → 1 seul trade à la fois)
-🔴 V35-2 — LEVERAGE 40x → 20x (survie prioritaire sur rendement)
-🔴 V35-3 — Monitor M1 : surveillance toutes les 10s (était 2s mais avec bugs)
-🔴 V35-4 — Trailing SL M1 : ATR calculé sur 1m, serré dès +0.3R
-🔴 V35-5 — Dashboard live toutes les 30s avec PnL en temps réel
-🔴 V35-6 — Suppression pause drawdown qui bloquait tout le trading
-🔴 V35-7 — Recover immédiat au démarrage + SL protecteur auto
-🔴 V35-8 — Double protection : SL Binance + SL logiciel toujours actifs
-🔴 V35-9 — BTC BEAR autorise SELL uniquement (pas de BUY contre tendance)
-🟠 V35-10 — Kill zone élargie : toute la journée active (7h-22h UTC)
-🟠 V35-11 — TP partiel 40% dès RR 1.5 (sécurisation rapide)
-🟠 V35-12 — SL initial = 1% du prix (pas ATR trop large qui laisse courir)
+v37 vs v36 :
+🟢 V37-1 — Risque FIXE $0.30 par trade
+           qty = FIXED_RISK_USDT / sl_distance (plus de % capital)
+🟢 V37-2 — SL structurel : OB bottom/top > swing pivot 15m > ATR fallback
+🟢 V37-3 — TP partiel DESACTIVE — trailing SL = seul mecanisme de sortie
+🟢 V37-4 — TP = filet de securite RR8 (anti-pompe soudaine uniquement)
+
+Securite compte $3 :
+🛡️  V37-SAFE-1 — MAX 2 positions simultanees
+🛡️  V37-SAFE-2 — Cap marge 40% balance par trade (max $1.20 sur $3)
+🛡️  V37-SAFE-3 — recover() limite a 2 positions
+🛡️  V37-SAFE-4 — Kill-switch 20% / pause douce 10% (2 pertes max par jour)
+🆕 V37-FLOOR   — Hard floor $1.50 : trading gelé si balance critique
+🆕 V37-FIX401  — HTTP 401/403 : pas de retry inutile sur clé API invalide
+
+Heritage de v36 :
+✅ Infrastructure Binance robuste (STOP_MARKET, rate limit, timestamp sync)
+✅ SMC engine : SWEEP_CHOCH_OB (score 92) / BREAKER_FVG (85) / BOS (78)
+✅ Probability engine : BTC MTF + trend + F&G + vol + liquidite
+✅ Trailing SL candle-based des RR1 avec breakeven a +0.5R
+✅ Kill-switch drawdown journalier + kill zones London/NY
+✅ Dashboard live 30s + journal CSV
 """
 
 import time, hmac, hashlib, requests, threading, os, logging, json, numpy as np
@@ -53,6 +62,195 @@ if not API_KEY or not API_SECRET:
 BASE_URL = "https://fapi.binance.com"
 
 _binance_time_offset = 0  # décalage ms entre horloge locale et Binance
+
+# ═══════════════════════════════════════════════════════════════════
+#  ROBOTKING v37 — CONFIGURATION PRINCIPALE
+#  v37 vs v36 :
+#    🟢 V37-1 — FIXED_RISK_USDT = 0.30 (risque dollar fixe, lot auto)
+#    🟢 V37-2 — SL structurel (OB bottom/top, swing pivot 15m)
+#    🟢 V37-3 — PARTIAL_TP désactivé (trailing SL = seul mécanisme de sortie)
+#    🟢 V37-4 — TP = filet de sécurité RR 8 (pas de sortie active)
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Risque & Sizing ───────────────────────────────────────────────
+FIXED_RISK_USDT    = 0.30    # V37-1 : risque fixe $0.30 par trade
+LEVERAGE           = 40      # Levier fixe
+LEVERAGE_MIN       = 10
+LEVERAGE_MAX       = 40
+MARGIN_FIXED_USDT  = 0.80    # Conservé pour can_afford_position() uniquement
+MARGIN_TYPE        = "ISOLATED"
+MIN_NOTIONAL       = 5.0     # Notionnel minimum Binance Futures
+
+# ── Risk Sizing params ───────────────────────────────────────────
+MAX_RISK_MULTIPLIER = 2.0    # On accepte jusqu'à 2× le risque si min_notional l'exige
+MAX_MARGIN_PER_TRADE_PCT = 0.40  # ⚠️ V37-SAFE : marge max par trade = 40% balance
+                                  # Avec $3 : max $1.20/trade × 2 trades = $2.40 (buffer $0.60 frais)
+BALANCE_HARD_FLOOR       = 1.50  # 🆕 V37-FLOOR : si balance < $1.50 → freeze total trading
+                                  # Protection ultime : évite de trader avec $0.10 restants
+MIN_SL_DISTANCE_PCT = 0.003  # SL structural minimum 0.3% du prix
+
+# ── Trailing / Breakeven ──────────────────────────────────────────
+TRAILING_ENABLED    = True
+TRAILING_START_RR   = 1.0    # Trailing démarre dès RR1
+ATR_TRAIL_MULT      = 1.5    # Multiplicateur ATR pour trailing
+SL_MIN_UPDATE_TICKS = 5      # Nb de ticks minimum pour bouger le SL
+
+BREAKEVEN_RR         = 0.5   # Breakeven dès +0.5R
+BREAKEVEN_FEE_BUFFER = 0.0006  # Buffer frais (~0.06% taker)
+
+# ── TP : V37-3 — Désactivé (trailing = seule sortie) ─────────────
+PARTIAL_TP_ENABLED   = False  # V37-3 : TP partiel désactivé
+PARTIAL_TP_RR        = 999.0  # Jamais déclenché
+PARTIAL_TP_CLOSE_PCT = 0.30
+TP_SAFETY_NET_RR     = 8.0    # V37-4 : TP filet RR8 (protection anti-pompe soudaine)
+
+# ── Signal / Setups ───────────────────────────────────────────────
+MIN_SETUP_SCORE      = 85     # Score minimum pour valider un setup
+MIN_PROBABILITY_SCORE = 65.0  # Probabilité minimum
+CONFLUENCE_HIGH      = 4      # Confluence haute ≥ 4/5
+CONFLUENCE_MIN       = 3      # Confluence minimale
+VOLUME_ENTRY_MULT    = 2.0    # Volume spike multiplicateur
+SIGNAL_COOLDOWN_SECS = 1800   # 30 min entre 2 signaux sur le même symbole
+ENABLE_TREND_FILTER  = True
+
+# ── SMC Detection params ──────────────────────────────────────────
+FVG_MIN_GAP_PCT  = 0.001   # Gap minimal FVG (0.1% du prix)
+OB_LOOKBACK      = 10      # Lookback Order Block
+SWEEP_CLOSE_MARGIN = 0.002  # Marge de clôture sweep (0.2%)
+
+# ── HTF Bias ─────────────────────────────────────────────────────
+HTF_EMA_LEN  = 50          # EMA bias HTF
+HTF_BIAS_TF  = "1h"        # Timeframe HTF 1H
+TREND_TIMEFRAME = "15m"
+
+# ── ATR Spike filter ─────────────────────────────────────────────
+ATR_SPIKE_FILTER   = True
+ATR_SPIKE_MULT     = 3.0
+ATR_SPIKE_LOOKBACK = 50
+
+# ── Kill Zones ────────────────────────────────────────────────────
+KILL_ZONE_STRICT = True
+LONDON_OPEN_H    = 7
+LONDON_CLOSE_H   = 11
+NY_OPEN_H        = 13
+NY_CLOSE_H       = 17
+
+# ── BTC Filter ────────────────────────────────────────────────────
+BTC_FILTER_ENABLED = True
+BTC_BULL_THRESHOLD = 0.25
+BTC_BEAR_THRESHOLD = -0.25
+BTC_NEUTRAL_BLOCK  = False
+BTC_NEUTRAL_MIN    = -0.10
+BTC_NEUTRAL_MAX    = 0.10
+BTC_DAILY_BLOCK    = True
+BTC_TIMEFRAMES     = {
+    "15m": {"weight": 0.15, "label": "15m"},
+    "1h":  {"weight": 0.25, "label": "1H"},
+    "4h":  {"weight": 0.35, "label": "4H"},
+    "1d":  {"weight": 0.25, "label": "1D"},
+}
+
+# ── Drawdown ──────────────────────────────────────────────────────
+DAILY_DRAWDOWN_LIMIT    = 0.20   # 20% → kill-switch ($0.60 sur $3 = 2 pertes max)
+DRAWDOWN_PAUSE_HOURS    = 8      # Pause 8h après kill-switch (était 12h)
+DAILY_HARD_DRAWDOWN_PCT = 0.10   # 10% → pause douce ($0.30 = 1 perte max)
+DAILY_HARD_PAUSE_HOURS  = 2      # Pause 2h après 1 perte
+
+# ── Filtres marché ────────────────────────────────────────────────
+MAX_SPREAD_PCT       = 0.001   # 0.1% max spread bid-ask
+MAX_FUNDING_RATE_ABS = 0.0015  # 0.15% max funding
+MIN_VOLUME_24H_USDT  = 50_000_000  # 50M$ volume minimum
+
+# ── Liquidity ─────────────────────────────────────────────────────
+LIQ_TOP_N_WALLS      = 3
+LIQ_SPOOF_THRESHOLD  = 5.0
+
+# ── Symbol streak / cooldown ──────────────────────────────────────
+SYMBOL_CONSEC_LOSS_LIMIT  = 2
+SYMBOL_COOLDOWN_MINUTES   = 45
+
+# ── Recovery positions externes ───────────────────────────────────
+EXTERNAL_MAX_LEVERAGE       = 50
+EXTERNAL_POSITION_WHITELIST = []
+
+# ── Divers ────────────────────────────────────────────────────────
+SCAN_INTERVAL      = 15     # secondes entre scans
+MONITOR_INTERVAL   = 10
+DASHBOARD_INTERVAL = 30
+CACHE_DURATION     = 30
+MAX_WORKERS        = 5
+TRADE_JOURNAL_FILE = "trades.csv"
+
+# ── Poids probability engine ──────────────────────────────────────
+PROBABILITY_WEIGHTS = {
+    "setup_score":     0.30,
+    "trend_alignment": 0.25,
+    "btc_correlation": 0.15,
+    "session_quality": 0.10,
+    "sentiment":       0.10,
+    "volatility":      0.05,
+    "liquidity":       0.05,
+}
+
+# ── Poids sessions ────────────────────────────────────────────────
+SESSION_WEIGHTS = {
+    "LONDON":    0.90,
+    "NEW_YORK":  0.90,
+    "ASIA":      0.50,
+    "OFF_HOURS": 0.30,
+}
+
+# ── Setups SMC ────────────────────────────────────────────────────
+SETUPS = {
+    "SWEEP_CHOCH_OB":  {"score": 92, "description": "Sweep Liq → CHOCH → OB/FVG"},
+    "BREAKER_FVG":     {"score": 85, "description": "Breaker Block + FVG retest"},
+    "BOS_CONTINUATION":{"score": 78, "description": "BOS Continuation + FVG mitig"},
+}
+
+# ── Profils sizing / BTC score ────────────────────────────────────
+SIZING_PROFILES = {
+    "STRONG_BULL": {"min": 0.50,  "max": 1.00,  "multiplier": 1.2, "leverage": 40, "start_rr": 1.0, "step_atr": 0.5, "lock_pct": 0.004, "label": "🟢🟢"},
+    "BULL":        {"min": 0.25,  "max": 0.50,  "multiplier": 1.0, "leverage": 30, "start_rr": 1.0, "step_atr": 0.5, "lock_pct": 0.004, "label": "🟢"},
+    "NEUTRAL":     {"min": -0.25, "max": 0.25,  "multiplier": 0.8, "leverage": 20, "start_rr": 1.0, "step_atr": 0.5, "lock_pct": 0.004, "label": "⚪"},
+    "BEAR":        {"min": -0.50, "max": -0.25, "multiplier": 0.8, "leverage": 20, "start_rr": 1.0, "step_atr": 0.5, "lock_pct": 0.004, "label": "🔴"},
+    "STRONG_BEAR": {"min": -1.00, "max": -0.50, "multiplier": 0.6, "leverage": 15, "start_rr": 1.0, "step_atr": 0.5, "lock_pct": 0.004, "label": "🔴🔴"},
+}
+
+# ── Profils trailing / BTC score ──────────────────────────────────
+TRAILING_PROFILES = {
+    "STRONG_BULL": {"min": 0.50,  "max": 1.00,  "start_rr": 1.0, "step_atr": 0.3, "lock_pct": 0.003, "label": "🟢🟢"},
+    "BULL":        {"min": 0.25,  "max": 0.50,  "start_rr": 1.0, "step_atr": 0.4, "lock_pct": 0.003, "label": "🟢"},
+    "NEUTRAL":     {"min": -0.25, "max": 0.25,  "start_rr": 1.0, "step_atr": 0.5, "lock_pct": 0.004, "label": "⚪"},
+    "BEAR":        {"min": -0.50, "max": -0.25, "start_rr": 1.0, "step_atr": 0.5, "lock_pct": 0.005, "label": "🔴"},
+    "STRONG_BEAR": {"min": -1.00, "max": -0.50, "start_rr": 1.0, "step_atr": 0.6, "lock_pct": 0.006, "label": "🔴🔴"},
+}
+
+# ── Fallback symbols ──────────────────────────────────────────────
+FALLBACK_SYMBOLS = [
+    "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","AVAXUSDT",
+    "DOGEUSDT","LINKUSDT","MATICUSDT","NEARUSDT","APTUSDT","ARBUSDT","OPUSDT",
+    "LTCUSDT","UNIUSDT","ATOMUSDT","INJUSDT","SUIUSDT","TIAUSDT",
+]
+SYMBOLS            = []
+MICRO_CAP_SYMBOLS  = []
+
+# ── Global state ──────────────────────────────────────────────────
+account_balance     = 0.0
+trade_log           = {}
+setup_memory        = defaultdict(lambda: {"wins": 0, "losses": 0})
+total_traded        = 0
+trade_lock          = threading.Lock()
+api_lock            = threading.Lock()
+api_semaphore       = threading.Semaphore(8)
+api_call_times      = []
+klines_cache        = {}
+price_cache         = {}
+symbol_info_cache   = {}
+signal_attempted_at = {}
+symbol_cooldown_until = {}
+symbol_loss_streak  = defaultdict(int)
+btc_trend_cache     = {}
+fear_greed_cache    = {}
 
 def sync_binance_time():
     """V36 — Synchro horloge robuste (moyenne 3 mesures + compensation latence)."""
@@ -158,7 +356,7 @@ def home():
     max_pos = calculate_max_positions(account_balance)
     paused  = time.time() < drawdown_state.get("paused_until", 0)
     status  = "⏸ PAUSED (drawdown)" if paused else "🟢 RUNNING"
-    return f"v35 ROBOTKING | {status} | Balance: ${account_balance:.2f} | Open: {n_open}/{max_pos}", 200
+    return f"v37 ROBOTKING | {status} | Balance: ${account_balance:.2f} | Open: {n_open}/{max_pos} | Risk: ${FIXED_RISK_USDT}/trade", 200
 
 @flask_app.route("/health")
 def health():
@@ -175,7 +373,7 @@ def status():
         "positions_open":  n_open,
         "max_positions":   calculate_max_positions(account_balance),
         "total_traded":    total_traded,
-        "version": "v35",
+        "version": "v37",
         "drawdown_paused": paused,
     })
 
@@ -347,19 +545,13 @@ def check_drawdown_kill_switch() -> bool:
 
 def init_drawdown_reference():
     """
-    Appelé UNE SEULE FOIS au démarrage, après sync_account_balance().
-    Fixe la balance de référence du jour et marque l'état comme initialisé.
-    Sans cela, un redémarrage après pertes déclencherait un faux positif.
+    V36-FIX3 — Toujours utiliser la balance ACTUELLE comme référence.
+    Evite le faux drawdown -76% après redémarrage post-pertes.
     """
     global drawdown_state
     drawdown_state["balance_at_start_of_day"] = account_balance
-    drawdown_state["last_reset"]              = time.time()
-    drawdown_state["paused_until"]            = 0.0
-    drawdown_state["initialized"]             = True
+    drawdown_state["initialized"] = True
     logger.info(f"✅ Drawdown référence initialisée : ${account_balance:.2f}")
-
-
-# ─── V30-4 : FILTRE FUNDING RATE ─────────────────────────────────
 def is_funding_safe(symbol: str, side: str = None) -> bool:
     """
     FIX2-6 — Filtre funding directionnel (pas juste abs()).
@@ -437,8 +629,8 @@ def calculate_adaptive_leverage(btc_score: float, probability: float,
 
 # ─── POSITION SIZING ─────────────────────────────────────────────
 def calculate_max_positions(balance: float) -> int:
-    """V35: 1 SEULE POSITION MAX — capital trop petit pour diversifier."""
-    return 1
+    """V37 : 2 positions max — chacune limitée à 40% de la balance en marge."""
+    return 2
 
 def calculate_margin_for_trade(balance: float, probability: float = 68.0,
                                setup_score: float = 70.0) -> float:
@@ -447,23 +639,43 @@ def calculate_margin_for_trade(balance: float, probability: float = 68.0,
 
 def can_afford_position(balance: float, existing_positions: int) -> bool:
     """
-    FIX-8 — Vérification complète avant ouverture :
-    1. Limite de positions simultanées (max 3)
-    2. Balance suffisante pour couvrir la marge de la nouvelle position
-    3. Notionnel minimum atteignable (balance × LEVERAGE ≥ MIN_NOTIONAL=32$)
+    V37-SAFE — Vérification avant ouverture (compte $3+) :
+    1. Limite de positions simultanées (MAX = 2)
+    2. Balance suffisante pour couvrir le risque fixe $0.30 × 2 (sécurité)
+    3. Balance × LEVERAGE ≥ MIN_NOTIONAL
+    4. Il reste assez de marge libre pour une nouvelle position :
+       balance × MAX_MARGIN_PER_TRADE_PCT × (MAX_POS - n_open) ≥ seuil
     """
-    if existing_positions >= calculate_max_positions(balance):
+    max_pos = calculate_max_positions(balance)
+    if existing_positions >= max_pos:
         return False
-    # Marge totale engagée si on ouvre une position de plus
-    total_margin = MARGIN_FIXED_USDT * (existing_positions + 1)
-    if balance < total_margin:
-        logger.debug(f"  [AFFORD] Balance ${balance:.2f} < marge requise ${total_margin:.2f} → skip")
+
+    # ⚠️ Hard floor : si balance sous le seuil minimum absolu → freeze total
+    if balance < BALANCE_HARD_FLOOR:
+        logger.error(
+            f"🛑 [HARD-FLOOR] Balance ${balance:.2f} < ${BALANCE_HARD_FLOOR} "
+            f"→ Trading GELÉ (recharger le compte)"
+        )
         return False
-    # Vérification notionnel : la balance disponible doit pouvoir générer MIN_NOTIONAL
-    # avec le levier (sécurité si balance très basse)
+
+    # Balance minimum : 2× le risque fixe pour absorber une perte
+    if balance < FIXED_RISK_USDT * 2:
+        logger.debug(f"  [AFFORD] Balance ${balance:.2f} < ${FIXED_RISK_USDT*2:.2f} → skip")
+        return False
+
+    # Notionnel minimum atteignable
     if balance * LEVERAGE < MIN_NOTIONAL:
-        logger.warning(f"  [AFFORD] Balance ${balance:.2f} × {LEVERAGE}x = ${balance*LEVERAGE:.2f} < MIN_NOTIONAL ${MIN_NOTIONAL:.0f} → skip")
+        logger.warning(f"  [AFFORD] ${balance:.2f} × {LEVERAGE}x = ${balance*LEVERAGE:.2f} < MIN_NOTIONAL ${MIN_NOTIONAL:.0f} → skip")
         return False
+
+    # ⚠️ Vérification marge disponible pour la nouvelle position
+    # Chaque trade peut consommer jusqu'à 40% de balance → 2 trades = 80%
+    # On vérifie qu'il reste au moins 40% de balance non engagée
+    max_margin_new = balance * MAX_MARGIN_PER_TRADE_PCT
+    if max_margin_new * LEVERAGE < MIN_NOTIONAL:
+        logger.warning(f"  [AFFORD] Marge max/trade ${max_margin_new:.2f} × {LEVERAGE}x < MIN_NOTIONAL → skip")
+        return False
+
     return True
 
 # ─── RATE LIMITING ───────────────────────────────────────────────
@@ -497,8 +709,10 @@ def request_binance(method: str, path: str, params: dict = None, signed: bool = 
     with api_semaphore:
         for attempt in range(3):
             try:
-                # V36: Timestamp frais à chaque tentative (fix Render clock drift)
+                # V36-FIX3: Timestamp recalculé à chaque tentative
                 if signed:
+                    # Supprimer ancienne signature si présente
+                    params.pop("signature", None)
                     params["timestamp"]  = int(time.time() * 1000) + _binance_time_offset
                     params["recvWindow"] = 20000
                     params["signature"]  = _sign(params)
@@ -525,11 +739,22 @@ def request_binance(method: str, path: str, params: dict = None, signed: bool = 
                     send_telegram("🚨 <b>IP BAN Binance (418)</b> — pause 120s")
                     time.sleep(120)
                     return None
+                elif resp.status_code in (401, 403):
+                    body = resp.text[:300]
+                    logger.error(f"🔑 API {resp.status_code} — Clé invalide ou IP non autorisée: {body}")
+                    send_telegram(
+                        f"🔑 <b>Erreur API {resp.status_code}</b>\n"
+                        f"Clé API invalide ou IP non autorisée.\n"
+                        f"Vérifier API_KEY/API_SECRET + whitelist IP Binance."
+                    )
+                    return None  # Pas de retry — inutile sur clé invalide
                 elif resp.status_code >= 400:
                     body = resp.text[:200]
                     logger.warning(f"API {resp.status_code}: {body}")
-                    if "-1021" in body:
+                    if "-1021" in body and attempt < 2:
+                        logger.warning(f"⏱️ -1021 → resync + retry {attempt+1}/3")
                         sync_binance_time()
+                        continue
                     return None
             except Exception as e:
                 logger.warning(f"Request error (attempt {attempt+1}/3): {e}")
@@ -1903,10 +2128,41 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float,
 
         set_leverage(symbol, adap_lev)
         set_margin_type(symbol, MARGIN_TYPE)
-        notional = margin * adap_lev  # 0.8 × 40 = 32$ notionnel
-        # FIX2-1 : Utiliser stepSize pour l'arrondi (pas quantityPrecision seul)
+
+        # ── V37-1 : Qty calculé depuis le risque fixe $0.30 ──────
+        # sl_distance = distance en prix entre entry et sl structurel
+        # qty = FIXED_RISK_USDT / sl_distance
+        # On utilise le SL passé par scan_symbol (zone structurelle)
+        sl_structural = sl   # sl passé en paramètre = zone structurelle
+        if side == "BUY":
+            sl_dist_initial = max(entry - sl_structural, entry * MIN_SL_DISTANCE_PCT)
+        else:
+            sl_dist_initial = max(sl_structural - entry, entry * MIN_SL_DISTANCE_PCT)
+
+        # Calcul qty depuis le risque fixe
+        if sl_dist_initial > 0:
+            qty_from_risk = FIXED_RISK_USDT / sl_dist_initial
+        else:
+            qty_from_risk = FIXED_RISK_USDT / (entry * 0.01)
+
         step_size = info.get("stepSize", 0.001)
-        qty = _round_step(notional / entry, step_size)
+        qty = _round_step(qty_from_risk, step_size)
+
+        # ── V37-SAFE : Cap marge = 40% balance max par trade ─────────
+        # Évite la liquidation si 2 trades simultanés épuisent la balance
+        max_margin_allowed = account_balance * MAX_MARGIN_PER_TRADE_PCT
+        max_qty_margin     = _round_step((max_margin_allowed * adap_lev) / entry, step_size)
+        if qty > max_qty_margin and max_qty_margin > 0:
+            logger.warning(
+                f"  [MARGIN-CAP] {symbol} qty {qty}→{max_qty_margin} "
+                f"(marge ${qty*entry/adap_lev:.2f}→${max_qty_margin*entry/adap_lev:.2f} "
+                f"≤ {MAX_MARGIN_PER_TRADE_PCT*100:.0f}% × ${account_balance:.2f})"
+            )
+            qty = max_qty_margin
+
+        notional = qty * entry
+        logger.info(f"  [V37-SIZING] {symbol} risk=${FIXED_RISK_USDT} | SL_dist={sl_dist_initial:.{pp}f} | qty={qty} | notional=${notional:.2f}")
+
 
         is_valid, msg, adjusted_qty = validate_order_size(symbol, qty, entry)
         if not is_valid:
@@ -1950,19 +2206,43 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float,
 
         logger.info(f"📌 {symbol} entryPrice confirmé: ${actual_entry}")
 
-        # Recalcul SL/TP sur la base du vrai prix d'entrée
-        # V35-FIX: ATR 1m pour SL serré, TP à RR 1.5 max (atteignable)
-        atr_real = calc_atr(symbol, timeframe="1m") or actual_entry * 0.005
+        # ── V37-2 : Conserver le SL structurel, recalculer qty si besoin ──
+        # Le sl passé en paramètre vient de get_structural_sl() dans scan_symbol.
+        # On recalcule juste la distance sur la base du vrai prix d'entrée.
         if side == "BUY":
-            sl_distance = max(actual_entry - sl, atr_real * 1.5)
-            sl_distance = min(sl_distance, actual_entry * 0.012)  # max 1.2%
-            sl = round(actual_entry - sl_distance, pp)
-            tp = get_tp_from_liquidity(symbol, "BUY", actual_entry, sl_distance)
+            sl_distance = max(actual_entry - sl, actual_entry * MIN_SL_DISTANCE_PCT)
+            sl          = round(actual_entry - sl_distance, pp)
         else:
-            sl_distance = max(sl - actual_entry, atr_real * 1.5)
-            sl_distance = min(sl_distance, actual_entry * 0.012)  # max 1.2%
-            sl = round(actual_entry + sl_distance, pp)
-            tp = get_tp_from_liquidity(symbol, "SELL", actual_entry, sl_distance)
+            sl_distance = max(sl - actual_entry, actual_entry * MIN_SL_DISTANCE_PCT)
+            sl          = round(actual_entry + sl_distance, pp)
+
+        # Recalcul final qty sur le vrai prix d'entrée
+        if sl_distance > 0:
+            qty_final = FIXED_RISK_USDT / sl_distance
+            qty = _round_step(qty_final, info.get("stepSize", 0.001))
+            logger.info(f"  [V37-QTY-FINAL] {symbol} entry={actual_entry:.{pp}f} | sl_dist={sl_distance:.{pp}f} | qty={qty} | risk_réel=${sl_distance*qty:.4f}")
+
+        # Garde min notional : si qty trop petit, ajuster à la hausse
+        # (le risque réel sera légèrement supérieur à $0.30 — acceptable)
+        notional_check = qty * actual_entry
+        min_notional_sym = info.get("minNotional", MIN_NOTIONAL)
+        if notional_check < min_notional_sym:
+            qty_min = _round_step(min_notional_sym / actual_entry + info.get("stepSize", 0.001), info.get("stepSize", 0.001))
+            real_risk = sl_distance * qty_min
+            if real_risk <= FIXED_RISK_USDT * MAX_RISK_MULTIPLIER:
+                logger.info(f"  [V37-MIN-NOTIONAL] {symbol} qty ajusté {qty}→{qty_min} | risque réel ${real_risk:.4f}")
+                qty = qty_min
+            else:
+                logger.warning(f"  [V37-SKIP] {symbol} min notional exige risque ${real_risk:.4f} > ${FIXED_RISK_USDT*MAX_RISK_MULTIPLIER:.2f} → skip")
+                place_order_with_fallback(symbol, "SELL" if side == "BUY" else "BUY", qty, actual_entry)
+                return
+
+        # V37-4 : TP = filet de sécurité RR 8 (le trailing SL est le vrai mécanisme de sortie)
+        if side == "BUY":
+            tp = round(actual_entry + sl_distance * TP_SAFETY_NET_RR, pp)
+        else:
+            tp = round(actual_entry - sl_distance * TP_SAFETY_NET_RR, pp)
+        logger.info(f"  [V37-TP-FILET] {symbol} TP filet @ {tp:.{pp}f} (RR {TP_SAFETY_NET_RR}×) — sortie réelle = trailing SL")
 
         # Validation finale : TP doit être cohérent avec la direction
         if side == "BUY" and tp <= actual_entry:
@@ -2024,9 +2304,10 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float,
             f"🚀 <b>{symbol}</b> {side}\n"
             f"Prob: {probability}% | Mode: {profile_ctx.get('label','?')}\n"
             f"Entry: ${actual_entry:.{pp}f} | Levier: {adap_lev}x\n"
-            f"SL: ${sl:.{pp}f} {'🛡️ Binance' if sl_tp_results['sl_sent'] else '⚠️ logiciel'}\n"
-            f"TP: ${tp:.{pp}f} {'🎯 Binance' if sl_tp_results['tp_sent'] else '⚠️ logiciel'}\n"
-            f"Margin: ${margin:.2f} | BTC: {btc_ctx['label']} ({btc_score_ctx:+.2f})"
+            f"SL: ${sl:.{pp}f} {'🛡️ Binance' if sl_tp_results['sl_sent'] else '⚠️ logiciel'} | dist={abs(actual_entry-sl)/actual_entry*100:.2f}%\n"
+            f"Risque: ${sl_distance*qty:.4f} (fixe ${FIXED_RISK_USDT}) | Qty: {qty}\n"
+            f"TP filet: ${tp:.{pp}f} (RR{TP_SAFETY_NET_RR}) — sortie = trailing SL 🔁\n"
+            f"BTC: {btc_ctx['label']} ({btc_score_ctx:+.2f})"
         )
 
     except Exception as e:
@@ -2395,6 +2676,97 @@ def monitor_manual_tp(symbol: str):
     except:
         pass
 
+# ─── V37 : SL STRUCTUREL ─────────────────────────────────────────
+def get_structural_sl(symbol: str, side: str, setup: dict, entry: float) -> float:
+    """
+    V37-2 — SL placé sur la zone structurelle du setup détecté.
+
+    Priorité :
+      1. SWEEP_CHOCH_OB  → ob["bottom"] (BUY) ou ob["top"] (SELL)
+      2. BREAKER_FVG     → breaker_level - buffer (BUY) ou + buffer (SELL)
+      3. BOS_CONTINUATION→ bos_level - buffer (BUY) ou + buffer (SELL)
+      4. Fallback        → dernier pivot low/high sur 15m (lb=5 bougies)
+
+    Le SL est placé 1 tick sous/sur la zone pour éviter le whipsaw.
+    Il est ensuite borné : min MIN_SL_DISTANCE_PCT, max 2.5% du prix.
+    """
+    try:
+        info = get_symbol_info(symbol)
+        tick = get_tick_size(symbol) if info else entry * 0.0001
+        pp   = info["pricePrecision"] if info else 4
+        buf  = tick * 3  # buffer = 3 ticks sous/sur la zone
+
+        name = setup.get("name", "")
+
+        if name == "SWEEP_CHOCH_OB":
+            ob = setup.get("ob", {})
+            if ob:
+                if side == "BUY":
+                    sl_raw = ob["bottom"] - buf
+                else:
+                    sl_raw = ob["top"] + buf
+                sl_raw = round(sl_raw, pp)
+                sl_dist = abs(entry - sl_raw)
+                if sl_dist >= entry * MIN_SL_DISTANCE_PCT:
+                    return sl_raw
+
+        elif name == "BREAKER_FVG":
+            brk = setup.get("breaker_level", 0)
+            if brk:
+                if side == "BUY":
+                    sl_raw = round(brk - buf, pp)
+                else:
+                    sl_raw = round(brk + buf, pp)
+                sl_dist = abs(entry - sl_raw)
+                if sl_dist >= entry * MIN_SL_DISTANCE_PCT:
+                    return sl_raw
+
+        elif name == "BOS_CONTINUATION":
+            bos = setup.get("bos_level", 0)
+            if bos:
+                if side == "BUY":
+                    sl_raw = round(bos - buf, pp)
+                else:
+                    sl_raw = round(bos + buf, pp)
+                sl_dist = abs(entry - sl_raw)
+                if sl_dist >= entry * MIN_SL_DISTANCE_PCT:
+                    return sl_raw
+
+        # ── Fallback : dernier swing pivot 15m ──────────────────
+        data = _get_klines_np(symbol, "15m", 40)
+        if data is not None:
+            _, h, l, _, _ = data
+            if side == "BUY":
+                pl = find_pivot_lows(l, lb=4)
+                if pl:
+                    swing_low = l[max(pl)]
+                    sl_raw = round(swing_low - buf, pp)
+                    sl_dist = abs(entry - sl_raw)
+                    if sl_dist >= entry * MIN_SL_DISTANCE_PCT:
+                        return sl_raw
+            else:
+                ph = find_pivot_highs(h, l, lb=4)
+                if ph:
+                    swing_high = h[max(ph)]
+                    sl_raw = round(swing_high + buf, pp)
+                    sl_dist = abs(entry - sl_raw)
+                    if sl_dist >= entry * MIN_SL_DISTANCE_PCT:
+                        return sl_raw
+
+    except Exception as e:
+        logger.debug(f"get_structural_sl {symbol}: {e}")
+
+    # ── Fallback ultime : ATR 15m × 1.5 ─────────────────────────
+    atr_fallback = calc_atr(symbol, period=14, timeframe="15m") or entry * 0.01
+    dist = max(atr_fallback * 1.5, entry * MIN_SL_DISTANCE_PCT)
+    info = get_symbol_info(symbol)
+    pp = info["pricePrecision"] if info else 4
+    if side == "BUY":
+        return round(entry - dist, pp)
+    else:
+        return round(entry + dist, pp)
+
+
 # ─── SCAN ────────────────────────────────────────────────────────
 def scan_symbol(symbol: str) -> dict:
     try:
@@ -2485,12 +2857,14 @@ def scan_symbol(symbol: str) -> dict:
                 if setup.get("score", 0) < MIN_SETUP_SCORE:
                     logger.debug(f"  [SCORE-FILTER] {symbol} BUY {setup['name']} score={setup['score']} < {MIN_SETUP_SCORE} → skip")
                     continue
-                # V35-12 : SL max 1% du prix d'entrée (capital limité)
-                atr_1m      = calc_atr(symbol, timeframe="1m") or entry * 0.005
-                sl_distance = min(atr_1m * 2.5, entry * 0.015)  # V36: Max 1.5%
+                # V37-2 : SL sur zone structurelle (OB bottom / swing low)
+                sl          = get_structural_sl(symbol, "BUY", setup, entry)
+                sl_distance = entry - sl
+                if sl_distance <= 0:
+                    continue
                 sl_distance = max(sl_distance, entry * MIN_SL_DISTANCE_PCT)
                 sl          = entry - sl_distance
-                tp          = get_tp_from_liquidity(symbol, "BUY", entry, sl_distance)
+                tp          = round(entry + sl_distance * TP_SAFETY_NET_RR, get_symbol_info(symbol).get("pricePrecision", 4) if get_symbol_info(symbol) else 4)
                 probability = calculate_probability(symbol, "BUY", setup["name"])
                 rr_check = abs(tp - entry) / sl_distance if sl_distance > 0 else 0
                 if rr_check < 2.0:
@@ -2522,12 +2896,14 @@ def scan_symbol(symbol: str) -> dict:
                 if setup.get("score", 0) < MIN_SETUP_SCORE:
                     logger.debug(f"  [SCORE-FILTER] {symbol} SELL {setup['name']} score={setup['score']} < {MIN_SETUP_SCORE} → skip")
                     continue
-                # V35-12 : SL max 1% du prix d'entrée
-                atr_1m      = calc_atr(symbol, timeframe="1m") or entry * 0.005
-                sl_distance = min(atr_1m * 2.5, entry * 0.015)  # V36: Max 1.5%
+                # V37-2 : SL sur zone structurelle (OB top / swing high)
+                sl          = get_structural_sl(symbol, "SELL", setup, entry)
+                sl_distance = sl - entry
+                if sl_distance <= 0:
+                    continue
                 sl_distance = max(sl_distance, entry * MIN_SL_DISTANCE_PCT)
                 sl          = entry + sl_distance
-                tp          = get_tp_from_liquidity(symbol, "SELL", entry, sl_distance)
+                tp          = round(entry - sl_distance * TP_SAFETY_NET_RR, get_symbol_info(symbol).get("pricePrecision", 4) if get_symbol_info(symbol) else 4)
                 probability = calculate_probability(symbol, "SELL", setup["name"])
                 rr_check = abs(tp - entry) / sl_distance if sl_distance > 0 else 0
                 if rr_check < 2.0:
@@ -2568,6 +2944,9 @@ def recover_existing_positions():
         if not positions:
             return
 
+        max_pos = calculate_max_positions(account_balance)
+        recovered_count = 0
+
         for pos in positions:
             symbol  = pos.get("symbol")
             pos_amt = float(pos.get("positionAmt", 0))
@@ -2584,6 +2963,13 @@ def recover_existing_positions():
             with trade_lock:
                 if symbol in trade_log and trade_log[symbol].get("status") == "OPEN":
                     continue
+
+            # ⚠️ V37-SAFE : Limiter le recover à MAX_POSITIONS
+            with trade_lock:
+                n_open = len([v for v in trade_log.values() if v.get("status") == "OPEN"])
+            if n_open + recovered_count >= max_pos:
+                logger.warning(f"  [RECOVER-LIMIT] {symbol} ignoré — déjà {n_open+recovered_count}/{max_pos} positions (limite sécurité compte ${account_balance:.2f})")
+                continue
 
             # Position inconnue → l'adopter (manuelle ou bot redémarré)
             # V30-6 — Sécurité : whitelist + levier max acceptable
@@ -2698,6 +3084,7 @@ def recover_existing_positions():
 
             sl_status = "🛡️ Binance" if sl_tp["sl_sent"] else "⚠️ logiciel"
             tp_status = "🎯 Binance" if sl_tp["tp_sent"] else "⚠️ logiciel"
+            recovered_count += 1
             logger.info(f"✅ [{source}] {symbol} {side} adopté | SL {sl_status} @ {sl:.{pp}f} | TP {tp_status} @ {tp:.{pp}f}")
 
             send_telegram(
@@ -2729,6 +3116,24 @@ def scanner_loop():
                 time.sleep(10)
                 continue
             sync_account_balance()
+
+            # 🆕 V37-FLOOR : Hard floor — freeze si balance critique
+            if account_balance < BALANCE_HARD_FLOOR:
+                if not getattr(scanner_loop, '_floor_alerted', False):
+                    msg = (
+                        f"🛑 <b>HARD FLOOR ATTEINT</b>\n"
+                        f"Balance: <b>${account_balance:.2f}</b> &lt; ${BALANCE_HARD_FLOOR}\n"
+                        f"Trading GELÉ automatiquement.\n"
+                        f"👉 Recharger le compte puis /resume"
+                    )
+                    send_telegram(msg)
+                    logger.error(f"🛑 [HARD-FLOOR] ${account_balance:.2f} < ${BALANCE_HARD_FLOOR} → freeze")
+                    scanner_loop._floor_alerted = True
+                time.sleep(30)
+                continue
+            else:
+                scanner_loop._floor_alerted = False  # reset si rechargé
+
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 futures = {executor.submit(scan_symbol, symbol): symbol for symbol in SYMBOLS}
                 signals = [f.result() for f in as_completed(futures) if f.result()]
@@ -2900,9 +3305,9 @@ def dashboard_loop():
             dd_pct    = (ref_bal - account_balance) / ref_bal * 100 if ref_bal > 0 else 0
 
             logger.info("═" * 64)
-            logger.info(f"v36 ROBOTKING | ${account_balance:.2f} | {n_open}/{max_pos} pos | W:{total_w} L:{total_l}{pause_str}")
-            logger.info(f"Levier: {LEVERAGE_MIN}→{LEVERAGE_MAX}x | BTC: {btc_label} ({btc_score:+.2f}) | Daily: {'🔴 BEAR' if btc_full['daily_bear'] else '🟢 BULL'}")
-            logger.info(f"SL Binance: {binance_sl} ✅ | SL logiciel: {software_sl} | Trailing: {trailing_active} 🔁")
+            logger.info(f"v37 ROBOTKING | ${account_balance:.2f} | {n_open}/{max_pos} pos | W:{total_w} L:{total_l}{pause_str}")
+            logger.info(f"Risque/trade: ${FIXED_RISK_USDT} | Levier: {LEVERAGE}x | BTC: {btc_label} ({btc_score:+.2f}) | Daily: {'🔴 BEAR' if btc_full['daily_bear'] else '🟢 BULL'}")
+            logger.info(f"SL Binance: {binance_sl} ✅ | SL logiciel: {software_sl} | Trailing: {trailing_active} 🔁 | TP filet RR{TP_SAFETY_NET_RR}")
             logger.info(f"Drawdown jour: {dd_pct:.1f}% | Ref: ${ref_bal:.2f}")
 
             # ── V35: Affichage détaillé de CHAQUE position ouverte ──
@@ -2978,13 +3383,16 @@ def dashboard_loop():
 # ─── MAIN ────────────────────────────────────────────────────────
 def main():
     logger.info("╔" + "═" * 60 + "╗")
-    logger.info("║" + "   ROBOTKING v36 — TRAILING SL INTELLIGENT + RR MAX      ║")
+    logger.info("║" + "   ROBOTKING v37 — SL STRUCTUREL + RISQUE $0.30 FIXE      ║")
     logger.info("╚" + "═" * 60 + "╝\n")
 
     logger.warning("🔥 LIVE TRADING 🔥")
-    logger.info(f"✅ V36 : 1 pos max | 20x levier | SL 1.5% | Trailing CANDLE | Dashboard live 30s")
-    logger.info(f"✅ V36 : BE+frais dès +0.5R | Trailing candle dès +1R | TP partiel 30% à 1R")
-    logger.info(f"✅ V36 : RR min 2.0 | TP filet loin (RR3) | ATR spike adaptatif BEAR")
+    logger.info(f"✅ V37-1 : Risque FIXE ${FIXED_RISK_USDT} | qty = risk / sl_dist | Pas de lot % capital")
+    logger.info(f"✅ V37-2 : SL structurel (OB zone, swing pivot 15m) — pas ATR arbitraire")
+    logger.info(f"✅ V37-3 : TP partiel DÉSACTIVÉ — trailing SL = seul mécanisme de sortie")
+    logger.info(f"✅ V37-4 : TP filet RR{TP_SAFETY_NET_RR} (anti-pompe soudaine uniquement)")
+    logger.info(f"🆕 V37-FLOOR : Hard floor ${BALANCE_HARD_FLOOR} — trading gelé si balance critique (Telegram alert)")
+    logger.info(f"🆕 V37-FIX401 : HTTP 401/403 → arrêt immédiat sans retry + alerte Telegram")
 
     _init_journal()
 
@@ -3000,9 +3408,9 @@ def main():
     max_pos = calculate_max_positions(account_balance)
 
     logger.info(f"💰 Balance:  ${account_balance:.2f}")
-    logger.info(f"📊 Max pos:  {max_pos} | Levier: {LEVERAGE_MIN}→{LEVERAGE_MAX}x adaptatif")
+    logger.info(f"🎯 Risque/trade: ${FIXED_RISK_USDT} | Levier: {LEVERAGE}x | Sizing: qty = ${FIXED_RISK_USDT} / sl_dist")
     logger.info(f"🛡️  Kill-switch: -{DAILY_DRAWDOWN_LIMIT*100:.0f}% / 24h | Funding filter: {MAX_FUNDING_RATE_ABS*100:.2f}%")
-    logger.info(f"✅ v30: Levier adapt | Marge prob | TP liquidité smart | Kill-switch | Filtres\n")
+    logger.info(f"📐 SL structurel: OB zone → swing pivot → ATR fallback | TP filet RR{TP_SAFETY_NET_RR}\n")
 
     recover_existing_positions()
 
@@ -3010,7 +3418,7 @@ def main():
     threading.Thread(target=monitor_positions_loop, daemon=True).start()
     threading.Thread(target=dashboard_loop,         daemon=True).start()
 
-    logger.info("✅ v35 ROBOTKING — ANTI-LIQUIDATION ONLINE 🚀\n")
+    logger.info("✅ v37 ROBOTKING — SL STRUCTUREL + RISQUE FIXE $0.30 ONLINE 🚀\n")
     try:
         while True:
             time.sleep(60)
