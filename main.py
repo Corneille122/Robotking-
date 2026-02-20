@@ -52,6 +52,24 @@ if not API_KEY or not API_SECRET:
 
 BASE_URL = "https://fapi.binance.com"
 
+_binance_time_offset = 0  # décalage ms entre horloge locale et Binance
+
+def sync_binance_time():
+    """Synchronise l'horloge locale avec Binance — corrige erreur -1021."""
+    global _binance_time_offset
+    try:
+        resp = requests.get(BASE_URL + "/fapi/v1/time", timeout=5)
+        if resp.status_code == 200:
+            server_time = resp.json()["serverTime"]
+            local_time  = int(time.time() * 1000)
+            _binance_time_offset = server_time - local_time
+            if abs(_binance_time_offset) > 1000:
+                logger.warning(f"⏱️  Horloge désync: offset={_binance_time_offset}ms — corrigé")
+            else:
+                logger.info(f"⏱️  Horloge OK: offset={_binance_time_offset}ms")
+    except Exception as e:
+        logger.warning(f"sync_binance_time: {e}")
+
 # ─── CONFIGURATION ───────────────────────────────────────────────
 # V35 — Levier 20x ISOLATED (survie prioritaire avec petit capital)
 LEVERAGE          = 20
@@ -698,8 +716,9 @@ def request_binance(method: str, path: str, params: dict = None, signed: bool = 
     if params is None:
         params = {}
     if signed:
-        params["timestamp"] = int(time.time() * 1000)
-        params["signature"] = _sign(params)
+        params["timestamp"]  = int(time.time() * 1000) + _binance_time_offset
+        params["recvWindow"] = 10000   # 10s tolerance (fix erreur -1021)
+        params["signature"]  = _sign(params)
     wait_for_rate_limit()
     headers = {"X-MBX-APIKEY": API_KEY}
     url = BASE_URL + path
@@ -2907,8 +2926,13 @@ def recover_existing_positions():
 def scanner_loop():
     logger.info("🔍 Scanner started")
     time.sleep(5)
+    _scan_count = 0
     while True:
         try:
+            # Resync horloge Binance toutes les 10 min (fix -1021)
+            _scan_count += 1
+            if _scan_count % 40 == 0:
+                sync_binance_time()
             # FIX2-7 — Vérification emergency stop
             if _bot_emergency_stop:
                 logger.info("🛑 Scanner arrêté (emergency stop) — attente /resume")
@@ -3175,6 +3199,7 @@ def main():
     _init_journal()
 
     start_health_server()
+    sync_binance_time()   # Fix -1021 timestamp
     load_symbol_info()
     sync_account_balance()
 
