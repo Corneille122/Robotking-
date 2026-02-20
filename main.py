@@ -82,6 +82,8 @@ def sync_binance_time():
             logger.info(f"Horloge OK: offset={_binance_time_offset}ms")
     else:
         logger.warning("sync_binance_time: aucune mesure reussie")
+TRADE_JOURNAL_FILE = "trades.csv"  # V36-FIX2: constante déplacée avant _init_journal
+
 def _init_journal():
     """Crée le fichier CSV avec headers si absent."""
     import os as _os
@@ -501,6 +503,11 @@ def request_binance(method: str, path: str, params: dict = None, signed: bool = 
     with api_semaphore:
         for attempt in range(3):
             try:
+                # V36-FIX2: Recalcul timestamp frais à chaque tentative (fix Render clock drift)
+                if signed:
+                    params["timestamp"]  = int(time.time() * 1000) + _binance_time_offset
+                    params["recvWindow"] = 20000
+                    params["signature"]  = _sign(params)
                 if method == "GET":
                     resp = requests.get(url, params=params, headers=headers, timeout=10)
                 elif method == "POST":
@@ -3180,7 +3187,7 @@ def main():
     threading.Thread(target=monitor_positions_loop, daemon=True).start()
     threading.Thread(target=dashboard_loop,         daemon=True).start()
 
-    logger.info("✅ v35 ROBOTKING — ANTI-LIQUIDATION ONLINE 🚀\n")
+    logger.info("✅ v36 ROBOTKING — TRAILING CANDLE ONLINE 🚀\n")
     try:
         while True:
             time.sleep(60)
