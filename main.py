@@ -136,7 +136,7 @@ NY_OPEN_H      = 7;  NY_CLOSE_H      = 22   # Journée complète
 
 # V34-3 : Filtre spike ATR (évite les pump/dump imprévisibles)
 ATR_SPIKE_FILTER         = True
-ATR_SPIKE_MULT           = 2.0     # Skip si ATR actuel > 2× ATR moyen 50 bougies
+ATR_SPIKE_MULT           = 3.0     # V36-HF: 3.0× (était 2.0) — évite de tout bloquer en sell-off
 ATR_SPIKE_LOOKBACK       = 50      # Nombre de bougies pour l'ATR moyen de référence
 
 # V34-6 : Anti-overtrade par symbole
@@ -1376,11 +1376,15 @@ def is_in_strict_kill_zone() -> bool:
     return in_london or in_ny
 
 
-def is_atr_spike(symbol: str) -> bool:
+def is_atr_spike(symbol: str, side: str = None) -> bool:
     """
-    V34-3 — Détecte les spikes ATR : ATR actuel > 2× ATR moyen des 50 dernières bougies.
-    Un ATR anormalement élevé = pump/dump/news → risque de faux signaux.
-    Retourne True si spike détecté (→ skip le trade).
+    V36-HF — Filtre ATR spike contextualisé.
+
+    En sell-off généralisé (BTC BEAR fort), un ATR élevé = tendance, pas anomalie.
+    → Si BTC score < -0.40 et side == SELL, on tolère jusqu à 3.5× ATR moyen.
+    → Sinon seuil normal = ATR_SPIKE_MULT (3.0×).
+
+    Retourne True si spike anormal détecté (→ skip le trade).
     """
     if not ATR_SPIKE_FILTER:
         return False
@@ -1403,8 +1407,22 @@ def is_atr_spike(symbol: str) -> bool:
         if avg_atr <= 0:
             return False
         ratio = current_atr / avg_atr
-        if ratio > ATR_SPIKE_MULT:
-            logger.info(f"  [ATR-SPIKE] {symbol} ATR ratio={ratio:.2f} > {ATR_SPIKE_MULT} → skip")
+
+        # V36-HF: seuil adaptatif selon contexte BTC
+        threshold = ATR_SPIKE_MULT  # 3.0 par défaut
+        try:
+            btc = get_btc_composite_score()
+            btc_score = btc.get("score", 0)
+            # En BEAR fort + trade SELL = ATR élevé = tendance normale → tolérance max
+            if btc_score < -0.40 and side == "SELL":
+                threshold = 4.0  # très tolérant en sell-off généralisé
+            elif btc_score < -0.25:
+                threshold = 3.5  # tolérant en BEAR modéré
+        except:
+            pass
+
+        if ratio > threshold:
+            logger.info(f"  [ATR-SPIKE] {symbol} ATR ratio={ratio:.2f} > {threshold:.1f} → skip")
             return True
         return False
     except Exception as e:
@@ -2797,8 +2815,7 @@ def scan_symbol(symbol: str) -> dict:
             return None
 
         # ── V34-3 : Filtre ATR spike (pump/dump imprévisible) ───────
-        if is_atr_spike(symbol):
-            return None
+        # ATR spike check moved below — needs side context
 
         entry = get_price(symbol)
         if not entry:
@@ -2843,6 +2860,8 @@ def scan_symbol(symbol: str) -> dict:
                 logger.debug(f"  [FUNDING-DIR] {symbol} BUY bloqué par funding")
 
         if allow_buy:
+            if is_atr_spike(symbol, side="BUY"):
+                return None
             setups_buy = detect_all_setups(symbol, "BUY")
             for setup in setups_buy:
                 # V34-1 : Score minimum 85 — ignore les setups faibles
@@ -2879,6 +2898,9 @@ def scan_symbol(symbol: str) -> dict:
                 logger.debug(f"  [FUNDING-DIR] {symbol} SELL bloqué par funding")
 
         if allow_sell:
+            if is_atr_spike(symbol, side="SELL"):
+                logger.debug(f"  [ATR-SPIKE] {symbol} SELL bloqué")
+                return None
             setups_sell = detect_all_setups(symbol, "SELL")
             for setup in setups_sell:
                 # V34-1 : Score minimum 85
@@ -3085,7 +3107,7 @@ def scanner_loop():
         try:
             # Resync horloge Binance toutes les 10 min (fix -1021)
             _scan_count += 1
-            if _scan_count % 40 == 0:
+            if _scan_count % 10 == 0:  # V36-HF: resync toutes les 10 scans (~2.5min)
                 sync_binance_time()
             # FIX2-7 — Vérification emergency stop
             if _bot_emergency_stop:
