@@ -55,259 +55,33 @@ BASE_URL = "https://fapi.binance.com"
 _binance_time_offset = 0  # décalage ms entre horloge locale et Binance
 
 def sync_binance_time():
-    """Synchronise l'horloge locale avec Binance — corrige erreur -1021."""
+    """
+    V36-FIX2 — Synchro horloge robuste avec moyenne sur 3 mesures.
+    Corrige erreur -1021 meme sur serveurs avec derive importante.
+    """
     global _binance_time_offset
-    try:
-        resp = requests.get(BASE_URL + "/fapi/v1/time", timeout=5)
-        if resp.status_code == 200:
-            server_time = resp.json()["serverTime"]
-            local_time  = int(time.time() * 1000)
-            _binance_time_offset = server_time - local_time
-            if abs(_binance_time_offset) > 1000:
-                logger.warning(f"⏱️  Horloge désync: offset={_binance_time_offset}ms — corrigé")
-            else:
-                logger.info(f"⏱️  Horloge OK: offset={_binance_time_offset}ms")
-    except Exception as e:
-        logger.warning(f"sync_binance_time: {e}")
-
-# ─── CONFIGURATION ───────────────────────────────────────────────
-# V35 — Levier 20x ISOLATED (survie prioritaire avec petit capital)
-LEVERAGE          = 20
-LEVERAGE_MIN      = 20
-LEVERAGE_MAX      = 20
-
-# V35 — Marge fixe 0.8$ par trade (notionnel 16$ à 20x)
-MARGIN_FIXED_USDT = 0.8           # Marge allouée par position
-MIN_NOTIONAL      = MARGIN_FIXED_USDT * LEVERAGE  # Notionnel = 16$
-MIN_MARGIN_PER_TRADE = MARGIN_FIXED_USDT
-MARGIN_TYPE       = "ISOLATED"
-
-MIN_PROBABILITY_SCORE  = 68
-TRAILING_STOP_START_RR = 1.0   # V36: Trailing dès +1.0R (après TP partiel)
-BREAKEVEN_RR           = 0.5   # V36: Breakeven dès +0.5R (assez de profit pour couvrir frais)
-BREAKEVEN_FEE_BUFFER   = 0.0012  # V36: 0.12% buffer au-dessus entry (frais maker+taker+marge)
-
-BTC_FILTER_ENABLED  = True
-MIN_SL_DISTANCE_PCT = 0.008    # V35: SL minimum 0.8% (adapté au 20x)
-ENABLE_TREND_FILTER = True
-TREND_TIMEFRAME     = "15m"
-
-# V35 — Drawdown assoupli (capital trop petit pour 4% de seuil)
-DAILY_DRAWDOWN_LIMIT  = 0.50   # -50% → kill switch (was 30%)
-DRAWDOWN_PAUSE_HOURS  = 0.0    # V35: PLUS DE PAUSE DRAWDOWN (0h)
-
-# Filtre funding rate
-MAX_FUNDING_RATE_ABS  = 0.0015
-
-# Filtre spread
-MAX_SPREAD_PCT        = 0.005   # Légèrement plus large pour le top 100
-
-# Recover externe
-EXTERNAL_POSITION_WHITELIST = []   # Vide = tous les symboles acceptés
-EXTERNAL_MAX_LEVERAGE = 40
-
-# TP liquidité
-LIQ_TOP_N_WALLS           = 3
-LIQ_MIN_WALL_DISTANCE_ATR = 1.5   # Légèrement réduit pour micro-moves
-LIQ_SPOOF_THRESHOLD       = 3.0
-
-# ─── V33 : CONSTANTES SMC (traduit Pine Script) ──────────────────
-PIVOT_LOOKBACK     = 5       # ta.pivothigh/pivotlow lookback (gauche et droite)
-FVG_MIN_GAP_PCT    = 0.0005  # FVG min gap = 0.05% du prix (fvgThreshold Pine)
-HTF_EMA_LEN        = 50      # EMA HTF pour bias directionnel (Pine : ta.ema 50)
-HTF_BIAS_TF        = "1h"    # Timeframe HTF bias (Pine : input "60")
-ATR_LEN            = 14      # ATR length (Pine : atrLen)
-ATR_SL_MULT        = 0.3     # V35: SL = low/high ± ATR×0.3 (plus serré)
-ATR_TRAIL_MULT     = 0.8     # V35: Trailing = ATR×0.8 (plus serré qu'1.5)
-VOLUME_SPIKE_MULT  = 1.5     # Volume spike = SMA20 × 1.5 sur le sweep
-CONFLUENCE_MIN     = 3       # Minimum conditions validées sur 5 pour trader
-OB_LOOKBACK        = 10      # Lookback pour trouver l'Order Block avant BOS
-SWEEP_CLOSE_MARGIN = 0.002   # Le close doit revenir à 0.2% du niveau sweepé
-
-# ─── V34 : FILTRES HAUTE PROBABILITÉ ─────────────────────────────
-MIN_SETUP_SCORE          = 88      # V36: Score minimum 88 (était 85) — setups très haute probabilité seulement
-VOLUME_ENTRY_MULT        = 2.5     # V36: Volume 2.5× SMA20 (était 2.0×) — signal plus fort requis
-CONFLUENCE_HIGH          = 4       # V34-9 : Confluence élevée requise pour SWEEP_CHOCH_OB
-
-# V35-10 — Kill zone élargie : 7h-22h UTC (presque toute la journée)
-KILL_ZONE_STRICT         = True
-LONDON_OPEN_H  = 7;  LONDON_CLOSE_H  = 22   # Journée complète
-NY_OPEN_H      = 7;  NY_CLOSE_H      = 22   # Journée complète
-
-# V34-3 : Filtre spike ATR (évite les pump/dump imprévisibles)
-ATR_SPIKE_FILTER         = True
-ATR_SPIKE_MULT           = 3.0     # V36-HF: 3.0× (était 2.0) — évite de tout bloquer en sell-off
-ATR_SPIKE_LOOKBACK       = 50      # Nombre de bougies pour l'ATR moyen de référence
-
-# V34-6 : Anti-overtrade par symbole
-SYMBOL_CONSEC_LOSS_LIMIT = 2       # 2 pertes consécutives → cooldown
-SYMBOL_COOLDOWN_MINUTES  = 45      # 45 minutes de cooldown par symbole
-
-# V35-11 : TP partiel sécurisé rapidement
-PARTIAL_TP_ENABLED       = True
-PARTIAL_TP_RR            = 1.0     # V36: Ferme 30% dès RR 1:1 (sécurise rapidement)
-PARTIAL_TP_CLOSE_PCT     = 0.30    # V36: 30% au TP partiel (70% laissé courir avec trailing)
-
-# V35-6 — PLUS DE PAUSE DRAWDOWN DURE (bloquait toute reprise)
-DAILY_HARD_DRAWDOWN_PCT  = 0.99   # Désactivé (seuil irréaliste)
-DAILY_HARD_PAUSE_HOURS   = 0.0    # 0h = pas de pause
-
-# Probability Engine — poids
-PROBABILITY_WEIGHTS = {
-    "setup_score":      0.30,   # SMC setup = poids dominant
-    "trend_alignment":  0.25,
-    "btc_correlation":  0.15,
-    "session_quality":  0.10,
-    "sentiment":        0.08,
-    "volatility":       0.05,
-    "liquidity":        0.07,
-}
-
-SESSION_WEIGHTS = {
-    "LONDON":    1.0,
-    "NEW_YORK":  1.0,
-    "ASIA":      0.7,
-    "OFF_HOURS": 0.4
-}
-
-# ─── CONSTANTES BTC / TRAILING (inchangées) ──────────────────────
-BTC_BULL_THRESHOLD = 0.25
-BTC_BEAR_THRESHOLD = -0.25
-BTC_NEUTRAL_BLOCK  = True
-BTC_NEUTRAL_MIN    = -0.15
-BTC_NEUTRAL_MAX    =  0.15
-BTC_DAILY_BLOCK    = True
-
-BTC_TIMEFRAMES = {
-    "15m": {"weight": 0.15, "label": "15m"},
-    "1h":  {"weight": 0.25, "label": "1H"},
-    "4h":  {"weight": 0.35, "label": "4H"},
-    "1d":  {"weight": 0.25, "label": "1D"},
-}
-
-TRAILING_ENABLED    = True
-TRAILING_START_RR   = 1.0
-TRAILING_STEP_ATR   = 0.5
-TRAILING_LOCK_PCT   = 0.003
-SL_MIN_UPDATE_TICKS = 3
-
-# V32-8 — Scores recalibrés sur les vrais win rates SMC
-SETUPS = {
-    "SWEEP_CHOCH_OB":    {"score": 92},   # Sweep + CHOCH + OB/FVG — le meilleur
-    "BREAKER_FVG":       {"score": 85},   # Breaker Block + FVG
-    "BOS_CONTINUATION":  {"score": 78},   # BOS + FVG mitigation (trend follow)
-}
-
-SIZING_PROFILES = {
-    "STRONG_BULL": {
-        "min": 0.50,  "max": 1.00,
-        "multiplier": 1.0, "leverage": LEVERAGE,
-        "start_rr": 0.8,   "step_atr": 0.4, "lock_pct": 0.003, "label": "🟢 BULL FORT",
-    },
-    "NEUTRAL": {
-        "min": -0.25, "max": 0.50,
-        "multiplier": 1.0, "leverage": LEVERAGE,
-        "start_rr": 1.0,   "step_atr": 0.5, "lock_pct": 0.003, "label": "⚪ NEUTRE",
-    },
-    "STRONG_BEAR": {
-        "min": -1.00, "max": -0.25,
-        "multiplier": 1.0, "leverage": LEVERAGE,
-        "start_rr": 0.8,   "step_atr": 0.35, "lock_pct": 0.003, "label": "🔴 BEAR FORT",
-    },
-}
-
-TRAILING_PROFILES = {
-    "STRONG_BULL": {
-        "min": 0.50,  "max": 1.00,
-        "start_rr": 0.8, "step_atr": 0.4, "lock_pct": 0.003, "label": "🟢",
-    },
-    "NEUTRAL": {
-        "min": -0.25, "max": 0.50,
-        "start_rr": 1.0, "step_atr": 0.5, "lock_pct": 0.003, "label": "⚪",
-    },
-    "STRONG_BEAR": {
-        "min": -1.00, "max": -0.25,
-        "start_rr": 0.8, "step_atr": 0.35, "lock_pct": 0.003, "label": "🔴",
-    },
-}
-
-# FIX2-9 — FALLBACK_SYMBOLS mis à jour février 2026
-# Source : top perps Binance Futures par volume/market cap (hors stables)
-# Inclut les nouveaux entrants : PEPE, TON, KAS, HBAR, XLM, POL (ex-MATIC)
-FALLBACK_SYMBOLS = [
-    # Tier 1 — BTC / ETH / L1 majeurs
-    "BTCUSDT","ETHUSDT","XRPUSDT","BNBUSDT","SOLUSDT","TRXUSDT","DOGEUSDT",
-    "ADAUSDT","AVAXUSDT","LTCUSDT","BCHUSDT","XLMUSDT","HBARUSDT","TONUSDT",
-    # Tier 2 — Top memes + high volume
-    "PEPEUSDT","SHIBUSDT","BONKUSDT","WIFUSDT","FLOKIUSDT",
-    # Tier 2 — L1 / L2 solides
-    "NEARUSDT","POLUSDT","LINKUSDT","DOTUSDT","ETCUSDT","ICPUSDT","KASUSDT",
-    "APTUSDT","SUIUSDT","ARBUSDT","OPUSDT","STXUSDT","SEIUSDT",
-    # Tier 3 — DeFi
-    "UNIUSDT","AAVEUSDT","MKRUSDT","CRVUSDT","LDOUSDT","SNXUSDT","GRTUSDT",
-    # Tier 3 — AI / Data
-    "FETUSDT","RNDRUSDT","WLDUSDT","INJUSDT",
-    # Tier 3 — Cosmos / Interop
-    "ATOMUSDT","TIAUSDT","RUNEUSDT",
-    # Tier 4 — Gaming / NFT / Autres liquides
-    "SANDUSDT","MANAUSDT","GALAUSDT","APEUSDT","CHZUSDT","FILUSDT",
-    "ALGOUSDT","VETUSDT","FTMUSDT","FLOWUSDT","GMTUSDT",
-]
-SYMBOLS = FALLBACK_SYMBOLS.copy()
-MICRO_CAP_SYMBOLS = FALLBACK_SYMBOLS  # Alias pour compatibilité
-
-SESSION_WEIGHTS = {
-    "LONDON":    1.0,
-    "NEW_YORK":  1.0,
-    "ASIA":      0.7,
-    "OFF_HOURS": 0.4
-}
-
-SCAN_INTERVAL      = 15
-MONITOR_INTERVAL   = 5     # V35: toutes les 5s (était 2s avec bugs)
-DASHBOARD_INTERVAL = 30    # V35: dashboard toutes les 30s (était 60s)
-MAX_WORKERS        = 20
-CACHE_DURATION     = 6
-
-# FIX2-8 — Volume minimum 24h pour être éligible au scan
-# Filtre les altcoins illiquides (spread large, slippage élevé)
-MIN_VOLUME_24H_USDT = 10_000_000   # 10M$ minimum de volume 24h
-
-# ─── STATE ───────────────────────────────────────────────────────
-account_balance = 0
-total_traded    = 0
-
-trade_log     = {}
-setup_memory  = defaultdict(lambda: {"wins": 0, "losses": 0})
-session_stats = defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0})
-
-klines_cache      = {}
-price_cache       = {}
-symbol_info_cache = {}
-fear_greed_cache  = {"value": 50,  "timestamp": 0}
-btc_trend_cache   = {"trend": 0,   "timestamp": 0}
-
-trade_lock     = threading.Lock()
-api_lock       = threading.Lock()
-api_call_times = []
-
-# FIX2-5 — Semaphore : limite à 8 appels API simultanés max
-# (100 symbols × 20 workers sans limite = pics pouvant dépasser 1200 poids/min)
-api_semaphore  = threading.Semaphore(8)
-
-# ─── V34-6 : ANTI-OVERTRADE PAR SYMBOLE ──────────────────────────
-symbol_loss_streak    = defaultdict(int)    # Pertes consécutives par symbole
-symbol_cooldown_until = {}                   # symbol → timestamp fin cooldown
-
-# ─── FIX-9 : SIGNAL COOLDOWN PAR SYMBOLE ─────────────────────────
-# Évite de ré-évaluer le même signal si une tentative vient d'échouer
-signal_attempted_at = {}    # symbol → timestamp dernière tentative d'entrée
-SIGNAL_COOLDOWN_BARS = 2    # 2 bougies 15m = 30 min minimum entre tentatives
-SIGNAL_COOLDOWN_SECS = SIGNAL_COOLDOWN_BARS * 15 * 60   # 1800s
-
-# ─── FIX-7 : JOURNAL CSV ─────────────────────────────────────────
-TRADE_JOURNAL_FILE = "trades.csv"
-
+    offsets = []
+    for _ in range(3):
+        try:
+            t0 = int(time.time() * 1000)
+            resp = requests.get(BASE_URL + "/fapi/v1/time", timeout=3)
+            t1 = int(time.time() * 1000)
+            if resp.status_code == 200:
+                server_time = resp.json()["serverTime"]
+                latency = (t1 - t0) // 2
+                offset = server_time - t0 - latency
+                offsets.append(offset)
+        except:
+            pass
+        time.sleep(0.1)
+    if offsets:
+        _binance_time_offset = int(sum(offsets) / len(offsets))
+        if abs(_binance_time_offset) > 500:
+            logger.warning(f"Horloge desync: offset={_binance_time_offset}ms ({len(offsets)} mesures) corrige")
+        else:
+            logger.info(f"Horloge OK: offset={_binance_time_offset}ms")
+    else:
+        logger.warning("sync_binance_time: aucune mesure reussie")
 def _init_journal():
     """Crée le fichier CSV avec headers si absent."""
     import os as _os
@@ -718,7 +492,7 @@ def request_binance(method: str, path: str, params: dict = None, signed: bool = 
         params = {}
     if signed:
         params["timestamp"]  = int(time.time() * 1000) + _binance_time_offset
-        params["recvWindow"] = 10000   # 10s tolerance (fix erreur -1021)
+        params["recvWindow"] = 20000   # V36-FIX2: 20s tolerance
         params["signature"]  = _sign(params)
     wait_for_rate_limit()
     headers = {"X-MBX-APIKEY": API_KEY}
@@ -751,7 +525,17 @@ def request_binance(method: str, path: str, params: dict = None, signed: bool = 
                     time.sleep(120)
                     return None
                 elif resp.status_code >= 400:
-                    logger.warning(f"API {resp.status_code}: {resp.text[:120]}")
+                    body = resp.text[:200]
+                    logger.warning(f"API {resp.status_code}: {body}")
+                    # V36-FIX2: Auto-resync si -1021 timestamp error
+                    if "-1021" in body:
+                        logger.warning("⏱️  -1021 détecté → resync horloge auto")
+                        sync_binance_time()
+                        if signed and attempt < 2:
+                            params["timestamp"] = int(time.time() * 1000) + _binance_time_offset
+                            params["recvWindow"] = 20000
+                            params["signature"] = _sign(params)
+                            continue  # retry avec nouveau timestamp
                     return None
             except Exception as e:
                 logger.warning(f"Request error (attempt {attempt+1}/3): {e}")
@@ -3107,7 +2891,7 @@ def scanner_loop():
         try:
             # Resync horloge Binance toutes les 10 min (fix -1021)
             _scan_count += 1
-            if _scan_count % 10 == 0:  # V36-HF: resync toutes les 10 scans (~2.5min)
+            if _scan_count % 5 == 0:   # V36-FIX2: resync toutes les 5 scans (~75s)
                 sync_binance_time()
             # FIX2-7 — Vérification emergency stop
             if _bot_emergency_stop:
