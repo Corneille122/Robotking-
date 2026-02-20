@@ -1,53 +1,23 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║   ROBOTKING v34-fix2 — TOUTES CORRECTIONS APPLIQUÉES           ║
+║   ROBOTKING v35 — SURVEILLANCE TOTALE + ANTI-LIQUIDATION       ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-v34-fix2 — CORRECTIONS SUPPLÉMENTAIRES (vs v34-fix) :
-🔴 FIX2-1 — stepSize réellement appliqué dans qty (round stepSize, pas precision)
-🔴 FIX2-2 — ATR_TRAIL_MULT branché dans update_trailing_sl (n'était pas utilisé)
-🔴 FIX2-3 — last_sl_update LU comme cooldown temps 30s (évite spam Binance)
-🟠 FIX2-4 — 429 exponential backoff (1s→5s→30s au lieu de flat 60s)
-🟠 FIX2-5 — Semaphore 8 concurrent API calls (évite ban sur 100 symbols × 20 workers)
-🟠 FIX2-6 — Funding directionnel : skip si funding favorable au trade (pas juste abs)
-🟡 FIX2-7 — Flask /stop endpoint d'urgence + /pause /resume
-🟡 FIX2-8 — Volume minimum 10M$ 24h dans load_symbol_info (filtre altcoins illiquides)
-🟡 FIX2-9 — FALLBACK_SYMBOLS mis à jour février 2026 (PEPE, TON, KAS, HBAR, XLM…)
-
-v34-fix — CORRECTIONS BUGS PRÉCÉDENTES :
-🔴 FIX-1  — Bug TP partiel : PARTIAL_TP_PCT → PARTIAL_TP_CLOSE_PCT (NameError)
-🔴 FIX-2  — calc_atr() passe de "5m" → "15m" (ATR cohérent avec les setups)
-🔴 FIX-3  — Après TP partiel : annule TP Binance + repose avec qty restante
-🟠 FIX-4  — Mitigation check OB/FVG : skip si zone déjà visitée (close dedans)
-🟠 FIX-5  — Filtre corrélation : max 2 positions du même groupe BTC/ETH/SOL
-🟠 FIX-6  — recover_existing_positions() init streak + cooldown par symbole
-🟡 FIX-7  — Journal CSV structuré (trades.csv) pour analyse win rate offline
-🟡 FIX-8  — can_afford_position() vérifie MIN_NOTIONAL (32$) avant d'ouvrir
-🟡 FIX-9  — Signal cooldown 2 bougies par symbole après tentative d'entrée
-
-v34 — NOUVEAUX FILTRES HAUTE PROBABILITÉ (vs v33) :
-✅ V34-1  — Score minimum setup ≥ 85 (ignore BOS_CONTINUATION si <85)
-✅ V34-2  — Kill zones STRICTES : London 7-11h UTC, NY 13-17h UTC
-✅ V34-3  — Filtre ATR spike : skip si ATR actuel > 2× ATR moyen 50 bougies
-✅ V34-4  — Bias 4H EMA50 strict sur TOUS les setups (pas seulement BOS)
-✅ V34-5  — Volume renforcé : 2.0× SMA20 (était 1.5×) pour les entrées
-✅ V34-6  — Anti-overtrade : cooldown 45 min si 2 pertes consécutives/symbole
-✅ V34-7  — TP partiel : ferme 50% à RR 1:2, laisse le reste courir en trailing
-✅ V34-8  — Pause globale si drawdown jour >4% (1h off) en plus du 15min
-✅ V34-9  — Confluence élevée requise : score_pts ≥ 4/5 pour SWEEP_CHOCH_OB
-
-v33 — INTÉGRATION PINE SCRIPT SMC :
-✅ V33-1  — Swing High/Low pivots (ta.pivothigh/pivotlow → Python)
-✅ V33-2  — BOS + CHOCH détection
-✅ V33-3  — Liquidity Sweep précis
-✅ V33-4  — FVG avec threshold min gap configurable
-✅ V33-5  — HTF bias EMA 50 sur 1H
-✅ V33-6  — Volume spike sur le sweep
-✅ V33-7  — Order Block : dernière bougie impulsive avant le BOS
-✅ V33-8  — Confluence score ≥ 3 conditions sur 5
-✅ V33-9  — Kill zones London/NY
-✅ V33-10 — SL basé sur low/high du signal - ATR×0.5
+v35 — CORRECTIONS CRITIQUES (vs v34-fix2) :
+🔴 V35-1 — MAX_POSITIONS = 1 (capital $2-3 → 1 seul trade à la fois)
+🔴 V35-2 — LEVERAGE 40x → 20x (survie prioritaire sur rendement)
+🔴 V35-3 — Monitor M1 : surveillance toutes les 10s (était 2s mais avec bugs)
+🔴 V35-4 — Trailing SL M1 : ATR calculé sur 1m, serré dès +0.3R
+🔴 V35-5 — Dashboard live toutes les 30s avec PnL en temps réel
+🔴 V35-6 — Suppression pause drawdown qui bloquait tout le trading
+🔴 V35-7 — Recover immédiat au démarrage + SL protecteur auto
+🔴 V35-8 — Double protection : SL Binance + SL logiciel toujours actifs
+🔴 V35-9 — BTC BEAR autorise SELL uniquement (pas de BUY contre tendance)
+🟠 V35-10 — Kill zone élargie : toute la journée active (7h-22h UTC)
+🟠 V35-11 — TP partiel 40% dès RR 1.5 (sécurisation rapide)
+🟠 V35-12 — SL initial = 1% du prix (pas ATR trop large qui laisse courir)
 """
 
 import time, hmac, hashlib, requests, threading, os, logging, json, numpy as np
@@ -83,29 +53,29 @@ if not API_KEY or not API_SECRET:
 BASE_URL = "https://fapi.binance.com"
 
 # ─── CONFIGURATION ───────────────────────────────────────────────
-# V32-6 — Levier FIXE 40x ISOLATED
-LEVERAGE          = 40
-LEVERAGE_MIN      = 40
-LEVERAGE_MAX      = 40
+# V35 — Levier 20x ISOLATED (survie prioritaire avec petit capital)
+LEVERAGE          = 20
+LEVERAGE_MIN      = 20
+LEVERAGE_MAX      = 20
 
-# V32-5 — Marge fixe 0.8$ par trade
+# V35 — Marge fixe 0.8$ par trade (notionnel 16$ à 20x)
 MARGIN_FIXED_USDT = 0.8           # Marge allouée par position
-MIN_NOTIONAL      = MARGIN_FIXED_USDT * LEVERAGE  # Notionnel = 32$
+MIN_NOTIONAL      = MARGIN_FIXED_USDT * LEVERAGE  # Notionnel = 16$
 MIN_MARGIN_PER_TRADE = MARGIN_FIXED_USDT
 MARGIN_TYPE       = "ISOLATED"
 
 MIN_PROBABILITY_SCORE  = 68
-TRAILING_STOP_START_RR = 1.0
-BREAKEVEN_RR           = 0.5
+TRAILING_STOP_START_RR = 0.5   # V35: Trailing dès +0.5R (était 1.0R)
+BREAKEVEN_RR           = 0.3   # V35: Breakeven dès +0.3R (était 0.5R)
 
 BTC_FILTER_ENABLED  = True
-MIN_SL_DISTANCE_PCT = 0.005    # SL minimum 0.5% (adapté au 40x)
+MIN_SL_DISTANCE_PCT = 0.008    # V35: SL minimum 0.8% (adapté au 20x)
 ENABLE_TREND_FILTER = True
 TREND_TIMEFRAME     = "15m"
 
-# V32-4 — Pause drawdown 15 minutes max
-DAILY_DRAWDOWN_LIMIT  = 0.30   # -30% du capital → pause (3 trades perdants)
-DRAWDOWN_PAUSE_HOURS  = 0.25   # 15 minutes (0.25h)
+# V35 — Drawdown assoupli (capital trop petit pour 4% de seuil)
+DAILY_DRAWDOWN_LIMIT  = 0.50   # -50% → kill switch (was 30%)
+DRAWDOWN_PAUSE_HOURS  = 0.0    # V35: PLUS DE PAUSE DRAWDOWN (0h)
 
 # Filtre funding rate
 MAX_FUNDING_RATE_ABS  = 0.0015
@@ -128,8 +98,8 @@ FVG_MIN_GAP_PCT    = 0.0005  # FVG min gap = 0.05% du prix (fvgThreshold Pine)
 HTF_EMA_LEN        = 50      # EMA HTF pour bias directionnel (Pine : ta.ema 50)
 HTF_BIAS_TF        = "1h"    # Timeframe HTF bias (Pine : input "60")
 ATR_LEN            = 14      # ATR length (Pine : atrLen)
-ATR_SL_MULT        = 0.5     # SL = low/high du signal ± ATR × 0.5 (Pine)
-ATR_TRAIL_MULT     = 1.5     # Trailing SL = ATR × 1.5 (Pine : trailATRMult)
+ATR_SL_MULT        = 0.3     # V35: SL = low/high ± ATR×0.3 (plus serré)
+ATR_TRAIL_MULT     = 0.8     # V35: Trailing = ATR×0.8 (plus serré qu'1.5)
 VOLUME_SPIKE_MULT  = 1.5     # Volume spike = SMA20 × 1.5 sur le sweep
 CONFLUENCE_MIN     = 3       # Minimum conditions validées sur 5 pour trader
 OB_LOOKBACK        = 10      # Lookback pour trouver l'Order Block avant BOS
@@ -140,10 +110,10 @@ MIN_SETUP_SCORE          = 85      # V34-1 : Score minimum — ignore BOS_CONTIN
 VOLUME_ENTRY_MULT        = 2.0     # V34-5 : Volume entrée renforcé (2.0× SMA20, était 1.5×)
 CONFLUENCE_HIGH          = 4       # V34-9 : Confluence élevée requise pour SWEEP_CHOCH_OB
 
-# V34-2 : Kill zones STRICTES (7-11h et 13-17h UTC uniquement)
+# V35-10 — Kill zone élargie : 7h-22h UTC (presque toute la journée)
 KILL_ZONE_STRICT         = True
-LONDON_OPEN_H  = 7;  LONDON_CLOSE_H  = 11   # London kill zone
-NY_OPEN_H      = 13; NY_CLOSE_H      = 17   # NY kill zone
+LONDON_OPEN_H  = 7;  LONDON_CLOSE_H  = 22   # Journée complète
+NY_OPEN_H      = 7;  NY_CLOSE_H      = 22   # Journée complète
 
 # V34-3 : Filtre spike ATR (évite les pump/dump imprévisibles)
 ATR_SPIKE_FILTER         = True
@@ -154,14 +124,14 @@ ATR_SPIKE_LOOKBACK       = 50      # Nombre de bougies pour l'ATR moyen de réf�
 SYMBOL_CONSEC_LOSS_LIMIT = 2       # 2 pertes consécutives → cooldown
 SYMBOL_COOLDOWN_MINUTES  = 45      # 45 minutes de cooldown par symbole
 
-# V34-7 : TP partiel
+# V35-11 : TP partiel sécurisé rapidement
 PARTIAL_TP_ENABLED       = True
-PARTIAL_TP_RR            = 2.0     # Ferme 50% à RR 1:2
-PARTIAL_TP_CLOSE_PCT     = 0.50    # 50% de la position fermée au TP partiel
+PARTIAL_TP_RR            = 1.5     # V35: Ferme 40% dès RR 1:1.5
+PARTIAL_TP_CLOSE_PCT     = 0.40    # V35: 40% au TP partiel (était 50%)
 
-# V34-8 : Pause globale drawdown jour > 4%
-DAILY_HARD_DRAWDOWN_PCT  = 0.04    # 4% → pause 1h complète
-DAILY_HARD_PAUSE_HOURS   = 1.0
+# V35-6 — PLUS DE PAUSE DRAWDOWN DURE (bloquait toute reprise)
+DAILY_HARD_DRAWDOWN_PCT  = 0.99   # Désactivé (seuil irréaliste)
+DAILY_HARD_PAUSE_HOURS   = 0.0    # 0h = pas de pause
 
 # Probability Engine — poids
 PROBABILITY_WEIGHTS = {
@@ -275,8 +245,8 @@ SESSION_WEIGHTS = {
 }
 
 SCAN_INTERVAL      = 15
-MONITOR_INTERVAL   = 2
-DASHBOARD_INTERVAL = 60
+MONITOR_INTERVAL   = 5     # V35: toutes les 5s (était 2s avec bugs)
+DASHBOARD_INTERVAL = 30    # V35: dashboard toutes les 30s (était 60s)
 MAX_WORKERS        = 20
 CACHE_DURATION     = 6
 
@@ -399,7 +369,7 @@ def home():
     max_pos = calculate_max_positions(account_balance)
     paused  = time.time() < drawdown_state.get("paused_until", 0)
     status  = "⏸ PAUSED (drawdown)" if paused else "🟢 RUNNING"
-    return f"v34-fix2 ROBOTKING | {status} | Balance: ${account_balance:.2f} | Open: {n_open}/{max_pos}", 200
+    return f"v35 ROBOTKING | {status} | Balance: ${account_balance:.2f} | Open: {n_open}/{max_pos}", 200
 
 @flask_app.route("/health")
 def health():
@@ -416,7 +386,7 @@ def status():
         "positions_open":  n_open,
         "max_positions":   calculate_max_positions(account_balance),
         "total_traded":    total_traded,
-        "version": "v34-fix2",
+        "version": "v35",
         "drawdown_paused": paused,
     })
 
@@ -678,8 +648,8 @@ def calculate_adaptive_leverage(btc_score: float, probability: float,
 
 # ─── POSITION SIZING ─────────────────────────────────────────────
 def calculate_max_positions(balance: float) -> int:
-    """3 positions max simultanées (V32-7)."""
-    return 3
+    """V35: 1 SEULE POSITION MAX — capital trop petit pour diversifier."""
+    return 1
 
 def calculate_margin_for_trade(balance: float, probability: float = 68.0,
                                setup_score: float = 70.0) -> float:
@@ -931,10 +901,10 @@ def calc_ema(values: np.ndarray, period: int) -> float:
     return ema
 
 # ─── ATR ─────────────────────────────────────────────────────────
-def calc_atr(symbol: str, period: int = 14, timeframe: str = "15m") -> float:
+def calc_atr(symbol: str, period: int = 14, timeframe: str = "1m") -> float:
     """
-    FIX-2 — ATR sur 15m (harmonisé avec tous les setups SMC).
-    Avant : utilisait "5m" → ATR 2-3× trop petit → SL/trailing trop serrés.
+    V35 — ATR sur 1m (M1) pour trailing SL ultra-serré.
+    Remplace 15m qui était beaucoup trop large pour le petit capital.
     """
     klines = get_klines(symbol, timeframe, period + 1)
     if not klines or len(klines) < period:
@@ -1016,61 +986,48 @@ def get_order_book_walls(symbol: str, depth: int = 50) -> dict:
 def get_tp_from_liquidity(symbol: str, side: str, entry: float,
                           sl_distance: float) -> float:
     """
-    V30-2 — TP smart basé sur les zones de liquidité.
-
-    Améliorations vs v29 :
-      • Filtre distance minimale : mur doit être à ≥ LIQ_MIN_WALL_DISTANCE_ATR × ATR
-        (évite les TP trop proches / murs trop serrés)
-      • Parcourt les top N murs et prend le premier valide
-      • Fallback R:R 2.5 si aucun mur valide trouvé
-      • Marge de sortie 0.3% avant le mur (exit avant les pros)
+    V35-FIX — TP smart basé sur les zones de liquidité.
+    fallback_rr = 1.5 (atteignable) au lieu de 2.5 (trop loin)
+    min_wall_dist réduit pour ne pas tout filtrer sur petits moves
     """
     try:
         walls = get_order_book_walls(symbol)
         info  = get_symbol_info(symbol)
         pp    = info.get("pricePrecision", 4) if info else 4
-        atr   = calc_atr(symbol) or entry * 0.015
-        min_wall_dist = atr * LIQ_MIN_WALL_DISTANCE_ATR   # Distance min valide
-        min_rr        = 1.5
-        fallback_rr   = 2.5
+        atr   = calc_atr(symbol, timeframe="1m") or entry * 0.005  # V35: ATR 1m
+        # V35-FIX: distance minimale réduite (était 1.5× ATR 15m = énorme)
+        min_wall_dist = atr * 0.5   # 0.5× ATR 1m = très accessible
+        min_rr        = 1.0         # TP min = 1:1 (atteignable)
+        fallback_rr   = 1.5         # V35-FIX: était 2.5 → trop loin, jamais atteint
 
         if side == "BUY":
-            # Parcourir les murs ask du plus proche au plus loin
-            candidates = sorted(walls.get("ask_walls", []), key=lambda x: x[0])  # prix croissant
+            candidates = sorted(walls.get("ask_walls", []), key=lambda x: x[0])
             for wall_price, wall_qty in candidates:
                 if wall_price <= entry:
-                    continue   # Mur en dessous de l'entrée → invalide
+                    continue
                 dist_to_wall = wall_price - entry
                 if dist_to_wall < min_wall_dist:
-                    logger.debug(f"  [TP-LIQ] Mur ask {wall_price:.{pp}f} trop proche ({dist_to_wall:.{pp}f} < {min_wall_dist:.{pp}f})")
-                    continue   # Trop proche → probable micro-mur
-                # Mur valide → sortir 0.3% avant
+                    continue
                 tp_liq = wall_price * 0.997
                 if tp_liq >= entry + sl_distance * min_rr:
-                    logger.info(f"  [TP-LIQ] {symbol} BUY → mur ask @ {wall_price:.{pp}f} (qty={wall_qty:.0f}) | TP={tp_liq:.{pp}f}")
+                    logger.info(f"  [TP-LIQ] {symbol} BUY → mur ask @ {wall_price:.{pp}f} | TP={tp_liq:.{pp}f}")
                     return round(tp_liq, pp)
-
-            # Fallback
             tp = round(entry + sl_distance * fallback_rr, pp)
             logger.info(f"  [TP-LIQ] {symbol} BUY → fallback TP={tp:.{pp}f} (R:R {fallback_rr})")
             return tp
 
         else:  # SELL
-            # Parcourir les murs bid du plus proche (en dessous) au plus loin
             candidates = sorted(walls.get("bid_walls", []), key=lambda x: x[0], reverse=True)
             for wall_price, wall_qty in candidates:
                 if wall_price >= entry:
                     continue
                 dist_to_wall = entry - wall_price
                 if dist_to_wall < min_wall_dist:
-                    logger.debug(f"  [TP-LIQ] Mur bid {wall_price:.{pp}f} trop proche")
                     continue
-                # Sortir 0.3% au-dessus du mur bid (ne pas attendre que le mur cède)
                 tp_liq = wall_price * 1.003
                 if tp_liq <= entry - sl_distance * min_rr:
-                    logger.info(f"  [TP-LIQ] {symbol} SELL → mur bid @ {wall_price:.{pp}f} (qty={wall_qty:.0f}) | TP={tp_liq:.{pp}f}")
+                    logger.info(f"  [TP-LIQ] {symbol} SELL → mur bid @ {wall_price:.{pp}f} | TP={tp_liq:.{pp}f}")
                     return round(tp_liq, pp)
-
             tp = round(entry - sl_distance * fallback_rr, pp)
             logger.info(f"  [TP-LIQ] {symbol} SELL → fallback TP={tp:.{pp}f} (R:R {fallback_rr})")
             return tp
@@ -1078,8 +1035,8 @@ def get_tp_from_liquidity(symbol: str, side: str, entry: float,
     except Exception as e:
         logger.warning(f"get_tp_from_liquidity {symbol}: {e}")
         pp = 4
-        return round(entry + sl_distance * 2.5, pp) if side == "BUY" \
-               else round(entry - sl_distance * 2.5, pp)
+        return round(entry + sl_distance * 1.5, pp) if side == "BUY" \
+               else round(entry - sl_distance * 1.5, pp)
 
 
 def calculate_liquidity_score(symbol: str) -> float:
@@ -2187,16 +2144,17 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float,
         logger.info(f"📌 {symbol} entryPrice confirmé: ${actual_entry}")
 
         # Recalcul SL/TP sur la base du vrai prix d'entrée
-        atr_real = calc_atr(symbol) or actual_entry * 0.015  # fallback 1.5%
+        # V35-FIX: ATR 1m pour SL serré, TP à RR 1.5 max (atteignable)
+        atr_real = calc_atr(symbol, timeframe="1m") or actual_entry * 0.005
         if side == "BUY":
-            sl_distance = max(actual_entry - sl, atr_real * 1.0)
+            sl_distance = max(actual_entry - sl, atr_real * 1.5)
+            sl_distance = min(sl_distance, actual_entry * 0.012)  # max 1.2%
             sl = round(actual_entry - sl_distance, pp)
-            # V29-3 : TP basé sur les zones de liquidité order book
             tp = get_tp_from_liquidity(symbol, "BUY", actual_entry, sl_distance)
         else:
-            sl_distance = max(sl - actual_entry, atr_real * 1.0)
+            sl_distance = max(sl - actual_entry, atr_real * 1.5)
+            sl_distance = min(sl_distance, actual_entry * 0.012)  # max 1.2%
             sl = round(actual_entry + sl_distance, pp)
-            # V29-3 : TP basé sur les zones de liquidité order book
             tp = get_tp_from_liquidity(symbol, "SELL", actual_entry, sl_distance)
 
         # Validation finale : TP doit être cohérent avec la direction
@@ -2443,11 +2401,9 @@ def update_trailing_sl(symbol: str, current_price: float):
             t_lock    = t_profile.get("lock_pct",    TRAILING_LOCK_PCT)
             t_label   = t_profile.get("label", "")
 
-            atr      = calc_atr(symbol) or entry * 0.015
-            # FIX2-2 — ATR_TRAIL_MULT branché (n'était pas utilisé avant)
-            # atr_step = max(ATR_TRAIL_MULT × ATR, lock_pct × prix)
-            # Le profil BTC adapte le multiplicateur (0.35–0.5) AUTOUR de ATR_TRAIL_MULT
-            effective_mult = ATR_TRAIL_MULT * t_step   # ex: 1.5 × 0.5 = 0.75 en neutre
+            atr      = calc_atr(symbol, timeframe="1m") or entry * 0.005  # V35: ATR M1
+            # V35: trailing serré — ATR M1 × 0.8
+            effective_mult = ATR_TRAIL_MULT * t_step   # ex: 0.8 × 0.5 = 0.4 en neutre
             atr_step = max(atr * effective_mult, entry * t_lock)
 
             new_sl = sl
@@ -2730,8 +2686,10 @@ def scan_symbol(symbol: str) -> dict:
                 if setup.get("score", 0) < MIN_SETUP_SCORE:
                     logger.debug(f"  [SCORE-FILTER] {symbol} BUY {setup['name']} score={setup['score']} < {MIN_SETUP_SCORE} → skip")
                     continue
-                atr_min     = max(atr, entry * MIN_SL_DISTANCE_PCT)
-                sl_distance = atr_min * 1.5
+                # V35-12 : SL max 1% du prix d'entrée (capital limité)
+                atr_1m      = calc_atr(symbol, timeframe="1m") or entry * 0.005
+                sl_distance = min(atr_1m * 2.0, entry * 0.010)  # Max 1%
+                sl_distance = max(sl_distance, entry * MIN_SL_DISTANCE_PCT)
                 sl          = entry - sl_distance
                 tp          = get_tp_from_liquidity(symbol, "BUY", entry, sl_distance)
                 probability = calculate_probability(symbol, "BUY", setup["name"])
@@ -2759,8 +2717,10 @@ def scan_symbol(symbol: str) -> dict:
                 if setup.get("score", 0) < MIN_SETUP_SCORE:
                     logger.debug(f"  [SCORE-FILTER] {symbol} SELL {setup['name']} score={setup['score']} < {MIN_SETUP_SCORE} → skip")
                     continue
-                atr_min     = max(atr, entry * MIN_SL_DISTANCE_PCT)
-                sl_distance = atr_min * 1.5
+                # V35-12 : SL max 1% du prix d'entrée
+                atr_1m      = calc_atr(symbol, timeframe="1m") or entry * 0.005
+                sl_distance = min(atr_1m * 2.0, entry * 0.010)  # Max 1%
+                sl_distance = max(sl_distance, entry * MIN_SL_DISTANCE_PCT)
                 sl          = entry + sl_distance
                 tp          = get_tp_from_liquidity(symbol, "SELL", entry, sl_distance)
                 probability = calculate_probability(symbol, "SELL", setup["name"])
@@ -3052,19 +3012,47 @@ def monitor_positions_loop():
                             with trade_lock:
                                 if trade_log[symbol].get("status") == "OPEN":
                                     setup = trade_log[symbol].get("setup")
-                                    pnl   = float(pos.get("unRealizedProfit", 0))
-                                    if pnl > 0:
+
+                                    # V35-FIX: Récupérer le vrai PnL réalisé depuis l'historique
+                                    # unRealizedProfit = 0 quand la position est fermée → inutile
+                                    real_pnl = 0.0
+                                    # Lire les infos AVANT le try (évite NameError dans except)
+                                    trade_entry = trade_log[symbol].get("entry", 0)
+                                    trade_side  = trade_log[symbol].get("side", "BUY")
+                                    trade_qty   = trade_log[symbol].get("qty", 0)
+                                    try:
+                                        # Récupérer le dernier income (PnL réalisé)
+                                        income_data = request_binance("GET", "/fapi/v1/income", {
+                                            "symbol": symbol,
+                                            "incomeType": "REALIZED_PNL",
+                                            "limit": 5
+                                        }, signed=True)
+                                        if income_data:
+                                            # Prendre le plus récent
+                                            recent = sorted(income_data, key=lambda x: x.get("time", 0), reverse=True)
+                                            real_pnl = float(recent[0].get("income", 0))
+                                    except Exception as e:
+                                        logger.debug(f"income fetch {symbol}: {e}")
+                                        # Fallback : estimer via mark price
+                                        mark = float(pos.get("markPrice", 0))
+                                        if mark > 0 and trade_entry > 0:
+                                            if trade_side == "BUY":
+                                                real_pnl = (mark - trade_entry) * trade_qty
+                                            else:
+                                                real_pnl = (trade_entry - mark) * trade_qty
+
+                                    if real_pnl > 0:
                                         setup_memory[setup]["wins"] += 1
-                                        update_symbol_streak(symbol, is_win=True)   # V34-6
-                                        log_trade_to_csv(symbol, trade_log[symbol], "WIN", pnl, rr_achieved=pnl/trade_log[symbol].get("margin", 0.8) if trade_log[symbol].get("margin") else 0)   # FIX-7
-                                        logger.info(f"✅ {symbol} WIN ${pnl:.2f} (Binance close)")
-                                        send_telegram(f"✅ <b>{symbol}</b> WIN ${pnl:.2f}")
+                                        update_symbol_streak(symbol, is_win=True)
+                                        log_trade_to_csv(symbol, trade_log[symbol], "WIN", real_pnl, rr_achieved=real_pnl/trade_log[symbol].get("margin", 0.8) if trade_log[symbol].get("margin") else 0)
+                                        logger.info(f"✅ {symbol} WIN ${real_pnl:.4f} (TP déclenché)")
+                                        send_telegram(f"✅ <b>{symbol}</b> TP WIN +${real_pnl:.4f} 🎯")
                                     else:
                                         setup_memory[setup]["losses"] += 1
-                                        update_symbol_streak(symbol, is_win=False)  # V34-6
-                                        log_trade_to_csv(symbol, trade_log[symbol], "LOSS", pnl, 0)   # FIX-7
-                                        logger.info(f"🔴 {symbol} LOSS ${pnl:.2f} (Binance close)")
-                                        send_telegram(f"🔴 <b>{symbol}</b> LOSS ${pnl:.2f}")
+                                        update_symbol_streak(symbol, is_win=False)
+                                        log_trade_to_csv(symbol, trade_log[symbol], "LOSS", real_pnl, 0)
+                                        logger.info(f"🔴 {symbol} LOSS ${real_pnl:.4f} (SL déclenché)")
+                                        send_telegram(f"🔴 <b>{symbol}</b> SL LOSS ${real_pnl:.4f}")
                                     trade_log[symbol]["status"] = "CLOSED"
                                     cleanup_orders(symbol)
             time.sleep(sleep_interval)
@@ -3085,14 +3073,9 @@ def dashboard_loop():
                 software_sl = n_open - binance_sl
 
             max_pos = calculate_max_positions(account_balance)
-            margin  = calculate_margin_for_trade(account_balance)
-            btc_t   = "🟢" if get_btc_trend() == 1 else ("🔴" if get_btc_trend() == -1 else "⚪")
-
-            liq_risk = "🚨 ÉLEVÉ" if (account_balance < 3 and n_open > 0) else ("⚠️  MOYEN" if account_balance < 6 else "✅ OK")
             btc_full  = get_btc_composite_score()
             btc_score = btc_full["score"]
             btc_label = btc_full["label"]
-            # Compte les positions avec trailing actif
             with trade_lock:
                 trailing_active = sum(1 for v in trade_log.values()
                                       if v.get("status") == "OPEN" and v.get("trailing_stop_active"))
@@ -3103,27 +3086,91 @@ def dashboard_loop():
             dd_pct    = (ref_bal - account_balance) / ref_bal * 100 if ref_bal > 0 else 0
 
             logger.info("═" * 64)
-            logger.info(f"v34-fix2 ROBOTKING | ${account_balance:.2f} | {n_open}/{max_pos} pos | W:{total_w} L:{total_l}{pause_str}")
-            logger.info(f"Levier: {LEVERAGE_MIN}→{LEVERAGE_MAX}x adaptatif | Marge: prob-adaptive")
-            logger.info(f"BTC: {btc_label} ({btc_score:+.2f}) | Daily: {'🔴 BEAR' if btc_full['daily_bear'] else '🟢 BULL' if btc_full['daily_bull'] else '⚪ NEUTRE'}")
+            logger.info(f"v35 ROBOTKING | ${account_balance:.2f} | {n_open}/{max_pos} pos | W:{total_w} L:{total_l}{pause_str}")
+            logger.info(f"Levier: {LEVERAGE_MIN}→{LEVERAGE_MAX}x | BTC: {btc_label} ({btc_score:+.2f}) | Daily: {'🔴 BEAR' if btc_full['daily_bear'] else '🟢 BULL'}")
             logger.info(f"SL Binance: {binance_sl} ✅ | SL logiciel: {software_sl} | Trailing: {trailing_active} 🔁")
-            logger.info(f"Drawdown jour: {dd_pct:.1f}% / {DAILY_DRAWDOWN_LIMIT*100:.0f}% max | Risque: {liq_risk}")
+            logger.info(f"Drawdown jour: {dd_pct:.1f}% | Ref: ${ref_bal:.2f}")
+
+            # ── V35: Affichage détaillé de CHAQUE position ouverte ──
+            if n_open > 0:
+                logger.info("─── POSITIONS OUVERTES ───")
+                try:
+                    # Récupérer les PnL réels depuis Binance
+                    positions_binance = request_binance("GET", "/fapi/v2/positionRisk", signed=True)
+                    pnl_map = {}
+                    if positions_binance:
+                        for pos in positions_binance:
+                            sym = pos.get("symbol")
+                            amt = float(pos.get("positionAmt", 0))
+                            if amt != 0:
+                                pnl_map[sym] = {
+                                    "pnl":   float(pos.get("unRealizedProfit", 0)),
+                                    "liq":   float(pos.get("liquidationPrice", 0)),
+                                    "mark":  float(pos.get("markPrice", 0)),
+                                }
+                except:
+                    pnl_map = {}
+
+                with trade_lock:
+                    for sym, t in trade_log.items():
+                        if t.get("status") != "OPEN":
+                            continue
+                        side  = t.get("side", "?")
+                        entry = t.get("entry", 0)
+                        sl    = t.get("sl", 0)
+                        tp    = t.get("tp", 0)
+                        qty   = t.get("qty", 0)
+                        setup = t.get("setup", "?")
+                        be    = "✅" if t.get("breakeven_moved") else "❌"
+                        trail = "🔁" if t.get("trailing_stop_active") else "  "
+                        sl_src = "🛡️B" if t.get("sl_on_binance") else "⚠️S"
+
+                        pdata = pnl_map.get(sym, {})
+                        pnl   = pdata.get("pnl", 0)
+                        mark  = pdata.get("mark", entry)
+                        liq   = pdata.get("liq", 0)
+                        pp    = get_symbol_info(sym)
+                        pp    = pp.get("pricePrecision", 4) if pp else 4
+
+                        # Distance au SL et au TP en %
+                        if side == "BUY":
+                            sl_dist = (mark - sl) / sl * 100 if sl > 0 else 0
+                            tp_dist = (tp - mark) / mark * 100 if mark > 0 else 0
+                        else:
+                            sl_dist = (sl - mark) / mark * 100 if mark > 0 else 0
+                            tp_dist = (mark - tp) / mark * 100 if mark > 0 else 0
+
+                        pnl_icon = "🟢" if pnl >= 0 else "🔴"
+                        liq_str  = f" | LIQ:{liq:.{pp}f}" if liq > 0 else ""
+
+                        logger.info(
+                            f"  {pnl_icon} {sym} {side} | Entry:{entry:.{pp}f} | Mark:{mark:.{pp}f}"
+                        )
+                        logger.info(
+                            f"     SL:{sl:.{pp}f}({sl_src},{sl_dist:+.2f}%) | TP:{tp:.{pp}f}({tp_dist:+.2f}%){liq_str}"
+                        )
+                        logger.info(
+                            f"     PnL: {pnl:+.4f}$ | BE:{be} {trail} | Setup:{setup}"
+                        )
+            else:
+                logger.info("  Aucune position ouverte — scan en cours...")
             logger.info("═" * 64)
 
             time.sleep(DASHBOARD_INTERVAL)
-        except:
+        except Exception as e:
+            logger.debug(f"dashboard_loop: {e}")
             time.sleep(10)
 
 # ─── MAIN ────────────────────────────────────────────────────────
 def main():
     logger.info("╔" + "═" * 60 + "╗")
-    logger.info("║" + "   ROBOTKING v34-fix2 — PRODUCTION READY                ║")
+    logger.info("║" + "   ROBOTKING v35 — ANTI-LIQUIDATION TOTAL               ║")
     logger.info("╚" + "═" * 60 + "╝\n")
 
     logger.warning("🔥 LIVE TRADING 🔥")
-    logger.info(f"✅ V34 : Score≥{MIN_SETUP_SCORE} | KillZone | ATR-spike | 4H bias | Cooldown | TP partiel")
-    logger.info("🔧 fix  : ATR 15m | TP partiel propre | Mitigation OB | Corrélation | Journal CSV")
-    logger.info("🔧 fix2 : stepSize | ATR_TRAIL_MULT | SL cooldown 30s | 429 backoff | Semaphore | Funding dir | /stop | Vol min")
+    logger.info(f"✅ V35 : 1 pos max | 20x levier | SL 1% | Trailing M1 | Dashboard live 30s")
+    logger.info(f"✅ V35 : Breakeven dès +0.3R | Trailing dès +0.5R | TP partiel 40% à 1.5R")
+    logger.info(f"✅ V35 : Kill zone 7h-22h | Pause drawdown DÉSACTIVÉE | Double SL")
 
     _init_journal()
 
@@ -3148,7 +3195,7 @@ def main():
     threading.Thread(target=monitor_positions_loop, daemon=True).start()
     threading.Thread(target=dashboard_loop,         daemon=True).start()
 
-    logger.info("✅ v25 MICRO — ONLINE 🚀\n")
+    logger.info("✅ v35 ROBOTKING — ANTI-LIQUIDATION ONLINE 🚀\n")
     try:
         while True:
             time.sleep(60)
