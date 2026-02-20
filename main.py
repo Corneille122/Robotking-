@@ -83,8 +83,9 @@ MIN_MARGIN_PER_TRADE = MARGIN_FIXED_USDT
 MARGIN_TYPE       = "ISOLATED"
 
 MIN_PROBABILITY_SCORE  = 68
-TRAILING_STOP_START_RR = 0.5   # V35: Trailing dès +0.5R (était 1.0R)
-BREAKEVEN_RR           = 0.3   # V35: Breakeven dès +0.3R (était 0.5R)
+TRAILING_STOP_START_RR = 1.0   # V36: Trailing dès +1.0R (après TP partiel)
+BREAKEVEN_RR           = 0.5   # V36: Breakeven dès +0.5R (assez de profit pour couvrir frais)
+BREAKEVEN_FEE_BUFFER   = 0.0012  # V36: 0.12% buffer au-dessus entry (frais maker+taker+marge)
 
 BTC_FILTER_ENABLED  = True
 MIN_SL_DISTANCE_PCT = 0.008    # V35: SL minimum 0.8% (adapté au 20x)
@@ -124,8 +125,8 @@ OB_LOOKBACK        = 10      # Lookback pour trouver l'Order Block avant BOS
 SWEEP_CLOSE_MARGIN = 0.002   # Le close doit revenir à 0.2% du niveau sweepé
 
 # ─── V34 : FILTRES HAUTE PROBABILITÉ ─────────────────────────────
-MIN_SETUP_SCORE          = 85      # V34-1 : Score minimum — ignore BOS_CONTINUATION si <85
-VOLUME_ENTRY_MULT        = 2.0     # V34-5 : Volume entrée renforcé (2.0× SMA20, était 1.5×)
+MIN_SETUP_SCORE          = 88      # V36: Score minimum 88 (était 85) — setups très haute probabilité seulement
+VOLUME_ENTRY_MULT        = 2.5     # V36: Volume 2.5× SMA20 (était 2.0×) — signal plus fort requis
 CONFLUENCE_HIGH          = 4       # V34-9 : Confluence élevée requise pour SWEEP_CHOCH_OB
 
 # V35-10 — Kill zone élargie : 7h-22h UTC (presque toute la journée)
@@ -144,8 +145,8 @@ SYMBOL_COOLDOWN_MINUTES  = 45      # 45 minutes de cooldown par symbole
 
 # V35-11 : TP partiel sécurisé rapidement
 PARTIAL_TP_ENABLED       = True
-PARTIAL_TP_RR            = 1.5     # V35: Ferme 40% dès RR 1:1.5
-PARTIAL_TP_CLOSE_PCT     = 0.40    # V35: 40% au TP partiel (était 50%)
+PARTIAL_TP_RR            = 1.0     # V36: Ferme 30% dès RR 1:1 (sécurise rapidement)
+PARTIAL_TP_CLOSE_PCT     = 0.30    # V36: 30% au TP partiel (70% laissé courir avec trailing)
 
 # V35-6 — PLUS DE PAUSE DRAWDOWN DURE (bloquait toute reprise)
 DAILY_HARD_DRAWDOWN_PCT  = 0.99   # Désactivé (seuil irréaliste)
@@ -1017,7 +1018,7 @@ def get_tp_from_liquidity(symbol: str, side: str, entry: float,
         # V35-FIX: distance minimale réduite (était 1.5× ATR 15m = énorme)
         min_wall_dist = atr * 0.5   # 0.5× ATR 1m = très accessible
         min_rr        = 1.0         # TP min = 1:1 (atteignable)
-        fallback_rr   = 1.5         # V35-FIX: était 2.5 → trop loin, jamais atteint
+        fallback_rr   = 3.0         # V36: TP = filet de sécurité lointain (trailing fait le vrai exit)
 
         if side == "BUY":
             candidates = sorted(walls.get("ask_walls", []), key=lambda x: x[0])
@@ -2365,17 +2366,109 @@ def _push_sl_to_binance(symbol: str, trade: dict, new_sl: float, info: dict):
         logger.error(f"_push_sl_to_binance {symbol}: {e}")
 
 
+def get_candle_swing(symbol: str, side: str, lookback: int = 5) -> float:
+    """
+    V36 — Détecte le dernier swing high/low sur bougies 1m pour placer le SL.
+
+    Pour un SELL : cherche le dernier swing HIGH (résistance locale)
+    Pour un BUY  : cherche le dernier swing LOW  (support local)
+
+    Un swing est validé si la bougie centrale a un high/low plus extrême
+    que ses N voisines (pivot simple).
+
+    Retourne le prix du swing ou 0 si non trouvé.
+    """
+    try:
+        klines = get_klines(symbol, "1m", lookback + 4)
+        if not klines or len(klines) < lookback + 2:
+            return 0.0
+
+        highs  = [float(k[2]) for k in klines]
+        lows   = [float(k[3]) for k in klines]
+        closes = [float(k[4]) for k in klines]
+        n = len(highs)
+
+        pivot_n = 2  # Doit être extrême sur 2 bougies de chaque côté
+
+        if side == "SELL":
+            # Swing high = résistance locale → SL doit être au-dessus
+            # On cherche le swing high le plus récent
+            for i in range(n - 2, pivot_n - 1, -1):
+                if all(highs[i] >= highs[i - j] for j in range(1, pivot_n + 1)) and                    all(highs[i] >= highs[i + j] for j in range(1, min(pivot_n + 1, n - i))):
+                    return highs[i]
+            # Fallback : max des N dernières bougies
+            return max(highs[-lookback:])
+
+        else:  # BUY
+            # Swing low = support local → SL doit être en-dessous
+            for i in range(n - 2, pivot_n - 1, -1):
+                if all(lows[i] <= lows[i - j] for j in range(1, pivot_n + 1)) and                    all(lows[i] <= lows[i + j] for j in range(1, min(pivot_n + 1, n - i))):
+                    return lows[i]
+            # Fallback : min des N dernières bougies
+            return min(lows[-lookback:])
+
+    except Exception as e:
+        logger.debug(f"get_candle_swing {symbol}: {e}")
+        return 0.0
+
+
+def detect_engulfing_candle(symbol: str, side: str) -> bool:
+    """
+    V36 — Détecte une bougie englobante (signal de continuation fort).
+
+    Engulfing haussier (pour BUY) : corps de la dernière bougie dépasse
+    entièrement le corps de l'avant-dernière bougie bearish.
+
+    Retourne True si engulfing détecté → trailing SL peut avancer plus vite.
+    """
+    try:
+        klines = get_klines(symbol, "1m", 3)
+        if not klines or len(klines) < 2:
+            return False
+
+        prev_open  = float(klines[-2][1])
+        prev_close = float(klines[-2][4])
+        curr_open  = float(klines[-1][1])
+        curr_close = float(klines[-1][4])
+
+        if side == "BUY":
+            # Bougie englobante haussière : close > prev_open et open < prev_close
+            return (curr_close > prev_open and
+                    curr_open  < prev_close and
+                    curr_close > curr_open and   # bougie verte
+                    prev_close < prev_open)       # bougie précédente rouge
+
+        else:  # SELL
+            # Bougie englobante baissière : close < prev_open et open > prev_close
+            return (curr_close < prev_open and
+                    curr_open  > prev_close and
+                    curr_close < curr_open and   # bougie rouge
+                    prev_close > prev_open)       # bougie précédente verte
+
+    except:
+        return False
+
+
 def update_trailing_sl(symbol: str, current_price: float):
     """
-    SL Suiveur (Trailing Stop) — v27.
+    V36 — SL Suiveur INTELLIGENT basé sur analyse des bougies.
+
+    Philosophie :
+      ► Laisser courir la position au maximum — pas de TP fixe comme objectif
+      ► SL basé sur les swings (pivots) des bougies 1m — pas sur prix spot
+      ► Ne déclenche PAS sur les mèches normales (shadow/wick)
+      ► Accélère si bougie englobante détectée (momentum confirmé)
 
     Phases :
-      Phase 1 — Breakeven : dès 0.5R → SL monte au prix d'entrée (zéro perte)
-      Phase 2 — Trailing  : dès 1R   → SL suit le prix à distance ATR × 0.5
-                            Le SL ne recule JAMAIS, il ne fait que monter (BUY) ou descendre (SELL)
-      Phase 3 — Verrouillage : si le prix s'éloigne encore, le SL continue à suivre
-
-    Le SL est mis à jour sur Binance à chaque mouvement significatif.
+      Phase 0 — Protection initiale : SL original (1-1.2% de distance)
+      Phase 1 — Breakeven avec buffer frais : dès +0.5R
+                 SL = entry + BREAKEVEN_FEE_BUFFER (0.12%)
+                 Garantit clôture légèrement profitable même en BE
+      Phase 2 — Trailing candle-based : dès +1R
+                 SL = swing_high/low + ATR × 0.3 (buffer anti-mèche)
+                 Mis à jour uniquement quand le swing avance
+      Phase 3 — Trailing accéléré si bougie englobante
+                 Buffer réduit à ATR × 0.15 pour verrouiller plus de profit
     """
     try:
         with trade_lock:
@@ -2412,141 +2505,192 @@ def update_trailing_sl(symbol: str, current_price: float):
                     trade["lowest_price"] = current_price
                     lwm = current_price
 
-            # ── ADAPT 1 : Profil trailing selon BTC composite ───
-            btc = get_btc_composite_score()
-            t_profile = get_trailing_profile(btc["score"])
-            t_start   = t_profile.get("start_rr",   TRAILING_START_RR)
-            t_step    = t_profile.get("step_atr",    TRAILING_STEP_ATR)
-            t_lock    = t_profile.get("lock_pct",    TRAILING_LOCK_PCT)
-            t_label   = t_profile.get("label", "")
-
-            atr      = calc_atr(symbol, timeframe="1m") or entry * 0.005  # V35: ATR M1
-            # V35: trailing serré — ATR M1 × 0.8
-            effective_mult = ATR_TRAIL_MULT * t_step   # ex: 0.8 × 0.5 = 0.4 en neutre
-            atr_step = max(atr * effective_mult, entry * t_lock)
+            # ── ATR 1m pour buffer anti-mèche ───────────────────
+            atr = calc_atr(symbol, timeframe="1m") or entry * 0.003
+            atr_3m = calc_atr(symbol, timeframe="3m") or atr * 1.5  # ATR 3m = confirmation
 
             new_sl = sl
 
-            # ── Phase 1 : Breakeven ──────────────────────────────
+            # ═══════════════════════════════════════════════════
+            # PHASE 1 — BREAKEVEN AVEC BUFFER FRAIS (dès +0.5R)
+            # ═══════════════════════════════════════════════════
             if rr >= BREAKEVEN_RR and not trade.get("breakeven_moved"):
-                be_sl = round(entry, pp)
-                if (side == "BUY" and be_sl > sl) or (side == "SELL" and be_sl < sl):
-                    new_sl = be_sl
-                    trade["breakeven_moved"] = True
-                    logger.info(f"🎯 {symbol} BREAKEVEN → {be_sl:.{pp}f} | BTC: {t_label}")
+                # Buffer = 0.12% pour couvrir maker (0.02%) + taker (0.04%) × 2 sides + marge
+                fee_buffer = entry * BREAKEVEN_FEE_BUFFER
+                if side == "BUY":
+                    be_sl = round(entry + fee_buffer, pp)
+                    if be_sl > sl:
+                        new_sl = be_sl
+                        trade["breakeven_moved"] = True
+                        logger.info(
+                            f"🎯 {symbol} BREAKEVEN+FRAIS → SL={be_sl:.{pp}f} "
+                            f"(entry+{BREAKEVEN_FEE_BUFFER*100:.2f}%) | RR={rr:.2f}R"
+                        )
+                else:
+                    be_sl = round(entry - fee_buffer, pp)
+                    if be_sl < sl:
+                        new_sl = be_sl
+                        trade["breakeven_moved"] = True
+                        logger.info(
+                            f"🎯 {symbol} BREAKEVEN+FRAIS → SL={be_sl:.{pp}f} "
+                            f"(entry-{BREAKEVEN_FEE_BUFFER*100:.2f}%) | RR={rr:.2f}R"
+                        )
 
-            # ── V34-7 : TP PARTIEL à RR 1:2 ─────────────────────
-            # FIX-1 : PARTIAL_TP_PCT n'existait pas → remplacé par PARTIAL_TP_CLOSE_PCT
-            # FIX-3 : Annule l'ancien TP Binance + repose avec qty restante
+            # ═══════════════════════════════════════════════════
+            # V34-7 : TP PARTIEL à RR 1.0 (30% seulement)
+            # ═══════════════════════════════════════════════════
             if (PARTIAL_TP_ENABLED and
                     rr >= PARTIAL_TP_RR and
                     not trade.get("partial_tp_done") and
                     trade.get("qty", 0) > 0):
-                sym_info   = get_symbol_info(symbol)
-                qty_prec   = sym_info.get("quantityPrecision", 3) if sym_info else 3
+                sym_info    = get_symbol_info(symbol)
+                qty_prec    = sym_info.get("quantityPrecision", 3) if sym_info else 3
                 partial_qty = round(trade["qty"] * PARTIAL_TP_CLOSE_PCT, qty_prec)
                 if partial_qty > 0:
-                    close_side = "SELL" if side == "BUY" else "BUY"
+                    close_side   = "SELL" if side == "BUY" else "BUY"
                     partial_order = place_order_with_fallback(symbol, close_side, partial_qty, current_price)
                     if partial_order:
-                        remaining_qty = round(trade["qty"] - partial_qty, qty_prec)
-                        pnl_partial   = profit * PARTIAL_TP_CLOSE_PCT
-                        trade["qty"]             = remaining_qty
-                        trade["partial_tp_done"] = True
+                        remaining_qty  = round(trade["qty"] - partial_qty, qty_prec)
+                        pnl_partial    = profit * PARTIAL_TP_CLOSE_PCT
+                        trade["qty"]              = remaining_qty
+                        trade["partial_tp_done"]  = True
                         logger.info(
                             f"💰 {symbol} TP PARTIEL {int(PARTIAL_TP_CLOSE_PCT*100)}% "
                             f"@ {current_price:.{pp}f} (RR={rr:.2f}R) "
                             f"| Reste: {remaining_qty} | +${pnl_partial:.4f}"
                         )
-                        # FIX-3 : Annuler le TP Binance complet et reposter pour la qty restante
+                        # Annuler TP Binance initial et reposer très loin (filet securité)
                         tp_order_id = trade.get("tp_order_id")
                         if tp_order_id:
                             try:
                                 request_binance("DELETE", "/fapi/v1/order",
                                                 {"symbol": symbol, "orderId": tp_order_id})
-                                logger.info(f"  [TP-PARTIAL] {symbol} ancien TP Binance annulé")
-                            except Exception as e:
-                                logger.warning(f"  [TP-PARTIAL] {symbol} annulation TP: {e}")
-                        # Repose le TP avec la quantité restante
+                            except:
+                                pass
+                        # TP de sécurité = entry ± 3× sl_distance (loin = trailing fait l'exit)
                         if remaining_qty > 0 and sym_info:
-                            tp_val    = trade.get("tp", 0)
-                            pp_info   = sym_info.get("pricePrecision", 4)
+                            sl_dist_orig = risk
+                            pp_info = sym_info.get("pricePrecision", 4)
+                            if side == "BUY":
+                                emergency_tp = round(entry + sl_dist_orig * 3.0, pp_info)
+                            else:
+                                emergency_tp = round(entry - sl_dist_orig * 3.0, pp_info)
                             new_tp_order = request_binance("POST", "/fapi/v1/order", {
                                 "symbol":        symbol,
                                 "side":          close_side,
                                 "type":          "TAKE_PROFIT_MARKET",
-                                "stopPrice":     round(tp_val, pp_info),
+                                "stopPrice":     emergency_tp,
                                 "closePosition": "true",
                                 "workingType":   "MARK_PRICE"
                             })
                             if new_tp_order and new_tp_order.get("orderId"):
-                                trade["tp_order_id"]  = new_tp_order["orderId"]
-                                trade["tp_on_binance"] = True
-                                logger.info(f"  [TP-PARTIAL] {symbol} nouveau TP Binance posé pour {remaining_qty}")
+                                trade["tp_order_id"]   = new_tp_order["orderId"]
+                                trade["tp_on_binance"]  = True
+                                trade["tp"]             = emergency_tp
+                                logger.info(f"  [TP-SECURITE] {symbol} TP filet loin @ {emergency_tp:.{pp}f} | Trailing gère la sortie")
                             else:
                                 trade["tp_on_binance"] = False
-                                logger.warning(f"  [TP-PARTIAL] {symbol} TP Binance re-pose échouée → logiciel")
                         send_telegram(
-                            f"💰 <b>{symbol}</b> TP PARTIEL {int(PARTIAL_TP_CLOSE_PCT*100)}%\n"
-                            f"Prix: ${current_price:.{pp}f} | RR={rr:.2f}R\n"
-                            f"Reste: {remaining_qty} | TP Binance reposé 🎯\n"
-                            f"SL trailing actif 🔁"
+                            f"💰 <b>{symbol}</b> TP PARTIEL {int(PARTIAL_TP_CLOSE_PCT*100)}%"
+                            f" @ {current_price:.{pp}f} | RR={rr:.2f}R | +${pnl_partial:.4f}"
+                            f" | Reste: {remaining_qty} — Trailing SL actif, laisse courir"
                         )
 
-            # ── Phase 2+3 : Trailing adaptatif ──────────────────
-            if TRAILING_ENABLED and rr >= t_start:
-                trade["trailing_stop_active"] = True
-                if side == "BUY":
-                    trail_sl = round(trade["highest_price"] - atr_step, pp)
-                    if trail_sl > sl:
-                        new_sl = trail_sl
-                else:
-                    trail_sl = round(trade["lowest_price"] + atr_step, pp)
-                    if trail_sl < sl:
-                        new_sl = trail_sl
+            # ═══════════════════════════════════════════════════
+            # PHASE 2+3 — TRAILING BASÉ SUR BOUGIES (dès +1R)
+            # ═══════════════════════════════════════════════════
+            btc      = get_btc_composite_score()
+            t_profile = get_trailing_profile(btc["score"])
+            t_label   = t_profile.get("label", "")
 
-            # ── ADAPT 5 : Anti-spam — seuil minimum de déplacement ──
-            # Ne push sur Binance que si le SL bouge d'au moins 3 ticks
-            # Évite de spammer l'API pour des micro-mouvements
+            if TRAILING_ENABLED and rr >= TRAILING_START_RR:
+                trade["trailing_stop_active"] = True
+
+                # Détecter bougie englobante → trail plus serré
+                engulfing = detect_engulfing_candle(symbol, side)
+
+                # Buffer anti-mèche : ATR × 0.3 normal, × 0.15 si engulfing
+                wick_buffer_mult = 0.15 if engulfing else 0.30
+                wick_buffer = atr * wick_buffer_mult
+
+                # Obtenir le swing (support/résistance locale des bougies 1m)
+                swing = get_candle_swing(symbol, side, lookback=5)
+
+                if side == "BUY":
+                    if swing > 0:
+                        # SL sous le swing low avec buffer anti-mèche
+                        trail_sl = round(swing - wick_buffer, pp)
+                        # Ne jamais reculer
+                        if trail_sl > sl:
+                            new_sl = trail_sl
+                            logger.debug(
+                                f"  [TRAIL-CANDLE] {symbol} BUY swing_low={swing:.{pp}f} "
+                                f"buffer={wick_buffer:.{pp}f} → SL={trail_sl:.{pp}f} "
+                                f"{'🔥ENGULFING' if engulfing else ''}"
+                            )
+                    else:
+                        # Fallback ATR si pas de swing trouvé
+                        trail_sl = round(trade["highest_price"] - atr * ATR_TRAIL_MULT, pp)
+                        if trail_sl > sl:
+                            new_sl = trail_sl
+
+                else:  # SELL
+                    if swing > 0:
+                        # SL au-dessus du swing high avec buffer anti-mèche
+                        trail_sl = round(swing + wick_buffer, pp)
+                        # Ne jamais reculer
+                        if trail_sl < sl:
+                            new_sl = trail_sl
+                            logger.debug(
+                                f"  [TRAIL-CANDLE] {symbol} SELL swing_high={swing:.{pp}f} "
+                                f"buffer={wick_buffer:.{pp}f} → SL={trail_sl:.{pp}f} "
+                                f"{'🔥ENGULFING' if engulfing else ''}"
+                            )
+                    else:
+                        # Fallback ATR si pas de swing trouvé
+                        trail_sl = round(trade["lowest_price"] + atr * ATR_TRAIL_MULT, pp)
+                        if trail_sl < sl:
+                            new_sl = trail_sl
+
+            # ── Anti-spam — seuil minimum de déplacement ─────────
             sl_delta  = abs(new_sl - sl)
             min_delta = tick_size * SL_MIN_UPDATE_TICKS
             sl_moved  = ((side == "BUY" and new_sl > sl) or
                          (side == "SELL" and new_sl < sl))
 
-            # FIX2-3 — Cooldown temps : ne pas pusher sur Binance plus d'1 fois / 30s
-            # last_sl_update était stocké mais jamais lu — maintenant utilisé
-            SL_UPDATE_COOLDOWN_SECS = 30
+            # Cooldown 45s entre push Binance
+            SL_UPDATE_COOLDOWN_SECS = 45  # V36: 45s entre updates (anti-spam + bougie complète)
             now_ts = time.time()
             sl_time_ok = (now_ts - trade.get("last_sl_update", 0)) >= SL_UPDATE_COOLDOWN_SECS
 
             if sl_moved and sl_delta >= min_delta and sl_time_ok:
                 old_sl = sl
                 trade["sl"]             = new_sl
-                trade["last_sl_update"] = time.time()   # FIX2-3 : reset cooldown 30s
-                tag = "🔁 TRAILING" if trade.get("trailing_stop_active") else "🎯 BREAKEVEN"
-                logger.info(f"{tag} [{t_label}] {symbol}: "
-                            f"{old_sl:.{pp}f} → {new_sl:.{pp}f} "
-                            f"(RR={rr:.2f}R, Δ={sl_delta:.{pp}f})")
+                trade["last_sl_update"] = time.time()
+                tag = "🔁 TRAILING-CANDLE" if trade.get("trailing_stop_active") else "🎯 BREAKEVEN"
+                rr_locked = (new_sl - entry) / risk if side == "BUY" and risk > 0 else (entry - new_sl) / risk if risk > 0 else 0
+                logger.info(
+                    f"{tag} [{t_label}] {symbol}: "
+                    f"{old_sl:.{pp}f} → {new_sl:.{pp}f} "
+                    f"(RR={rr:.2f}R | Verrouillé={rr_locked:.2f}R)"
+                )
                 _push_sl_to_binance(symbol, trade, new_sl, info)
                 pnl_pct = profit / entry * 100
                 send_telegram(
                     f"{tag} <b>{symbol}</b> [{t_label}]\n"
                     f"SL : ${old_sl:.{pp}f} → <b>${new_sl:.{pp}f}</b>\n"
-                    f"Profit : {pnl_pct:+.2f}% | RR={rr:.2f}R"
+                    f"Profit: {pnl_pct:+.2f}% | RR={rr:.2f}R | Verrouillé={rr_locked:.2f}R"
                 )
 
             elif sl_moved and sl_delta >= min_delta and not sl_time_ok:
-                logger.debug(f"⏸ {symbol} SL cooldown 30s — skip API (Δ={sl_delta:.{pp}f})")
-
+                logger.debug(f"⏸ {symbol} SL cooldown 45s — skip API (Δ={sl_delta:.{pp}f})")
             elif sl_moved and sl_delta < min_delta:
-                # Mouvement trop petit → ne spamme pas Binance, mais log en debug
                 logger.debug(f"⏸ {symbol} SL Δ={sl_delta:.{pp}f} < {min_delta:.{pp}f} — skip API")
 
     except Exception as e:
         logger.warning(f"update_trailing_sl {symbol}: {e}")
 
 
-# Alias pour compatibilité avec l'appel existant dans monitor_loop
 def update_breakeven(symbol: str, current_price: float):
     update_trailing_sl(symbol, current_price)
 
@@ -2707,11 +2851,16 @@ def scan_symbol(symbol: str) -> dict:
                     continue
                 # V35-12 : SL max 1% du prix d'entrée (capital limité)
                 atr_1m      = calc_atr(symbol, timeframe="1m") or entry * 0.005
-                sl_distance = min(atr_1m * 2.0, entry * 0.010)  # Max 1%
+                sl_distance = min(atr_1m * 2.5, entry * 0.015)  # V36: Max 1.5% — plus de room pour trailing
                 sl_distance = max(sl_distance, entry * MIN_SL_DISTANCE_PCT)
                 sl          = entry - sl_distance
                 tp          = get_tp_from_liquidity(symbol, "BUY", entry, sl_distance)
                 probability = calculate_probability(symbol, "BUY", setup["name"])
+                # V36: RR minimum 2.0 avant ouverture (pas de trade <2R)
+                rr_check = abs(tp - entry) / sl_distance if sl_distance > 0 else 0
+                if rr_check < 2.0:
+                    logger.debug(f"  [RR-FILTER] {symbol} BUY RR={rr_check:.2f} < 2.0 → skip")
+                    continue
                 if probability >= MIN_PROBABILITY_SCORE:
                     return {
                         "symbol": symbol, "side": "BUY",
@@ -2738,11 +2887,16 @@ def scan_symbol(symbol: str) -> dict:
                     continue
                 # V35-12 : SL max 1% du prix d'entrée
                 atr_1m      = calc_atr(symbol, timeframe="1m") or entry * 0.005
-                sl_distance = min(atr_1m * 2.0, entry * 0.010)  # Max 1%
+                sl_distance = min(atr_1m * 2.5, entry * 0.015)  # V36: Max 1.5% — plus de room pour trailing
                 sl_distance = max(sl_distance, entry * MIN_SL_DISTANCE_PCT)
                 sl          = entry + sl_distance
                 tp          = get_tp_from_liquidity(symbol, "SELL", entry, sl_distance)
                 probability = calculate_probability(symbol, "SELL", setup["name"])
+                # V36: RR minimum 2.0 avant ouverture
+                rr_check = abs(tp - entry) / sl_distance if sl_distance > 0 else 0
+                if rr_check < 2.0:
+                    logger.debug(f"  [RR-FILTER] {symbol} SELL RR={rr_check:.2f} < 2.0 → skip")
+                    continue
                 if probability >= MIN_PROBABILITY_SCORE:
                     return {
                         "symbol": symbol, "side": "SELL",
@@ -3110,7 +3264,7 @@ def dashboard_loop():
             dd_pct    = (ref_bal - account_balance) / ref_bal * 100 if ref_bal > 0 else 0
 
             logger.info("═" * 64)
-            logger.info(f"v35 ROBOTKING | ${account_balance:.2f} | {n_open}/{max_pos} pos | W:{total_w} L:{total_l}{pause_str}")
+            logger.info(f"v36 ROBOTKING | ${account_balance:.2f} | {n_open}/{max_pos} pos | W:{total_w} L:{total_l}{pause_str}")
             logger.info(f"Levier: {LEVERAGE_MIN}→{LEVERAGE_MAX}x | BTC: {btc_label} ({btc_score:+.2f}) | Daily: {'🔴 BEAR' if btc_full['daily_bear'] else '🟢 BULL'}")
             logger.info(f"SL Binance: {binance_sl} ✅ | SL logiciel: {software_sl} | Trailing: {trailing_active} 🔁")
             logger.info(f"Drawdown jour: {dd_pct:.1f}% | Ref: ${ref_bal:.2f}")
@@ -3188,13 +3342,13 @@ def dashboard_loop():
 # ─── MAIN ────────────────────────────────────────────────────────
 def main():
     logger.info("╔" + "═" * 60 + "╗")
-    logger.info("║" + "   ROBOTKING v35 — ANTI-LIQUIDATION TOTAL               ║")
+    logger.info("║" + "   ROBOTKING v36 — TRAILING SL INTELLIGENT + RR MAX      ║")
     logger.info("╚" + "═" * 60 + "╝\n")
 
     logger.warning("🔥 LIVE TRADING 🔥")
-    logger.info(f"✅ V35 : 1 pos max | 20x levier | SL 1% | Trailing M1 | Dashboard live 30s")
-    logger.info(f"✅ V35 : Breakeven dès +0.3R | Trailing dès +0.5R | TP partiel 40% à 1.5R")
-    logger.info(f"✅ V35 : Kill zone 7h-22h | Pause drawdown DÉSACTIVÉE | Double SL")
+    logger.info(f"✅ V36 : 1 pos max | 20x levier | SL 1.5% | Trailing CANDLE | Dashboard live 30s")
+    logger.info(f"✅ V36 : Breakeven+frais dès +0.5R | Trailing candle dès +1R | TP partiel 30% à 1R")
+    logger.info(f"✅ V36 : RR min 2.0 | TP filet loin (RR3) | Trailing candle = sortie intelligente")
 
     _init_journal()
 
