@@ -37,7 +37,7 @@ from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler("v33_robotking.log"), logging.StreamHandler()])
+    handlers=[logging.FileHandler("v37_robotking.log"), logging.StreamHandler()])
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
@@ -110,6 +110,7 @@ MIN_PROBABILITY_SCORE = 65.0  # Probabilité minimum
 CONFLUENCE_HIGH      = 4      # Confluence haute ≥ 4/5
 CONFLUENCE_MIN       = 3      # Confluence minimale
 VOLUME_ENTRY_MULT    = 2.0    # Volume spike multiplicateur
+VOLUME_SPIKE_MULT    = 2.0    # Alias utilisé dans has_volume_spike() (SMC detection)
 SIGNAL_COOLDOWN_SECS = 1800   # 30 min entre 2 signaux sur le même symbole
 ENABLE_TREND_FILTER  = True
 
@@ -129,11 +130,21 @@ ATR_SPIKE_MULT     = 3.0
 ATR_SPIKE_LOOKBACK = 50
 
 # ── Kill Zones ────────────────────────────────────────────────────
-KILL_ZONE_STRICT = True
+KILL_ZONE_STRICT = False   # H24 — adaptatif par session (seuils renforcés Asia/Off)
 LONDON_OPEN_H    = 7
 LONDON_CLOSE_H   = 11
 NY_OPEN_H        = 13
 NY_CLOSE_H       = 17
+
+# ── Seuils adaptatifs par session (H24) ───────────────────────────
+# London / NY   : seuils normaux
+# Asia / Off    : filtre plus sévère pour éviter faux signaux en range
+SESSION_SCORE_OVERRIDE = {
+    "LONDON":    {"min_score": 85,  "min_prob": 65.0, "min_confluence": CONFLUENCE_MIN},
+    "NEW_YORK":  {"min_score": 85,  "min_prob": 65.0, "min_confluence": CONFLUENCE_MIN},
+    "ASIA":      {"min_score": 90,  "min_prob": 72.0, "min_confluence": CONFLUENCE_HIGH},
+    "OFF_HOURS": {"min_score": 92,  "min_prob": 75.0, "min_confluence": CONFLUENCE_HIGH},
+}
 
 # ── BTC Filter ────────────────────────────────────────────────────
 BTC_FILTER_ENABLED = True
@@ -447,11 +458,17 @@ def start_health_server():
 # ─── SESSION ─────────────────────────────────────────────────────
 def get_current_session() -> str:
     hour = datetime.now(timezone.utc).hour
-    if 7 <= hour < 16:
-        return "LONDON"
-    elif 13 <= hour < 22:
+    # Overlap London/NY : 13h–16h → NEW_YORK (poids max identique, mais plus représentatif)
+    # London   : 7h–11h UTC (LONDON_OPEN_H → LONDON_CLOSE_H)
+    # New York  : 13h–17h UTC (NY_OPEN_H → NY_CLOSE_H)
+    # Overlap   : 13h–16h → classé NEW_YORK
+    in_london = LONDON_OPEN_H <= hour < LONDON_CLOSE_H   # 7–11
+    in_ny     = NY_OPEN_H     <= hour < NY_CLOSE_H       # 13–17
+    if in_ny:
         return "NEW_YORK"
-    elif hour >= 23 or hour < 8:
+    elif in_london:
+        return "LONDON"
+    elif hour >= 23 or hour < LONDON_OPEN_H:              # 23h–7h
         return "ASIA"
     else:
         return "OFF_HOURS"
@@ -2117,7 +2134,7 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float,
         if not info:
             return
 
-        # ── V32-6 : Levier FIXE 40x ISOLATED ──────────────────────
+        pp = info.get("pricePrecision", 4)  # Défini tôt pour usage dans les logs suivants
         # ── V32-5 : Marge FIXE 0.8$ par trade ─────────────────────
         btc_ctx       = get_btc_composite_score()
         btc_score_ctx = btc_ctx["score"]
@@ -2171,7 +2188,7 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float,
         if adjusted_qty != qty:
             qty = adjusted_qty
 
-        pp      = info["pricePrecision"]
+        pp      = info.get("pricePrecision", pp)  # Confirme la valeur (déjà défini au début)
         session = get_current_session()
 
         logger.info(f"🎯 {symbol} {side} | Prob: {probability}% | Marge: ${margin:.2f} | {adap_lev}x | Notionnel: ${notional:.2f}")
@@ -2788,10 +2805,14 @@ def scan_symbol(symbol: str) -> dict:
         if not is_spread_acceptable(symbol):
             return None
 
-        # ── V34-2 : Kill zones STRICTES London 7-11h / NY 13-17h UTC ──
-        if not is_in_strict_kill_zone():
-            logger.debug(f"⏸ {symbol} — hors kill zone → skip")
-            return None
+        # ── H24 : Seuils adaptatifs selon la session ─────────────────
+        session_now = get_current_session()
+        sess_cfg    = SESSION_SCORE_OVERRIDE.get(session_now, SESSION_SCORE_OVERRIDE["OFF_HOURS"])
+        eff_min_score   = sess_cfg["min_score"]
+        eff_min_prob    = sess_cfg["min_prob"]
+        eff_min_conf    = sess_cfg["min_confluence"]
+        if session_now in ("ASIA", "OFF_HOURS"):
+            logger.debug(f"⏰ {symbol} session={session_now} → seuils renforcés score≥{eff_min_score} prob≥{eff_min_prob}%")
 
         # ── V34-6 : Anti-overtrade — cooldown par symbole ───────────
         if is_symbol_on_cooldown(symbol):
@@ -2853,9 +2874,12 @@ def scan_symbol(symbol: str) -> dict:
                 return None
             setups_buy = detect_all_setups(symbol, "BUY")
             for setup in setups_buy:
-                # V34-1 : Score minimum 85 — ignore les setups faibles
-                if setup.get("score", 0) < MIN_SETUP_SCORE:
-                    logger.debug(f"  [SCORE-FILTER] {symbol} BUY {setup['name']} score={setup['score']} < {MIN_SETUP_SCORE} → skip")
+                # Seuil adaptatif selon session (plus strict Asia/Off-hours)
+                if setup.get("score", 0) < eff_min_score:
+                    logger.debug(f"  [SCORE-FILTER] {symbol} BUY {setup['name']} score={setup['score']} < {eff_min_score} ({session_now}) → skip")
+                    continue
+                if setup.get("confluence", 0) < eff_min_conf:
+                    logger.debug(f"  [CONF-FILTER] {symbol} BUY confluence={setup.get('confluence',0)} < {eff_min_conf} ({session_now}) → skip")
                     continue
                 # V37-2 : SL sur zone structurelle (OB bottom / swing low)
                 sl          = get_structural_sl(symbol, "BUY", setup, entry)
@@ -2870,7 +2894,7 @@ def scan_symbol(symbol: str) -> dict:
                 if rr_check < 2.0:
                     logger.debug(f"  [RR] {symbol} BUY RR={rr_check:.2f} < 2.0 → skip")
                     continue
-                if probability >= MIN_PROBABILITY_SCORE:
+                if probability >= eff_min_prob:
                     return {
                         "symbol": symbol, "side": "BUY",
                         "entry": entry, "sl": sl, "tp": tp,
@@ -2892,9 +2916,12 @@ def scan_symbol(symbol: str) -> dict:
                 return None
             setups_sell = detect_all_setups(symbol, "SELL")
             for setup in setups_sell:
-                # V34-1 : Score minimum 85
-                if setup.get("score", 0) < MIN_SETUP_SCORE:
-                    logger.debug(f"  [SCORE-FILTER] {symbol} SELL {setup['name']} score={setup['score']} < {MIN_SETUP_SCORE} → skip")
+                # Seuil adaptatif selon session (plus strict Asia/Off-hours)
+                if setup.get("score", 0) < eff_min_score:
+                    logger.debug(f"  [SCORE-FILTER] {symbol} SELL {setup['name']} score={setup['score']} < {eff_min_score} ({session_now}) → skip")
+                    continue
+                if setup.get("confluence", 0) < eff_min_conf:
+                    logger.debug(f"  [CONF-FILTER] {symbol} SELL confluence={setup.get('confluence',0)} < {eff_min_conf} ({session_now}) → skip")
                     continue
                 # V37-2 : SL sur zone structurelle (OB top / swing high)
                 sl          = get_structural_sl(symbol, "SELL", setup, entry)
@@ -2909,7 +2936,7 @@ def scan_symbol(symbol: str) -> dict:
                 if rr_check < 2.0:
                     logger.debug(f"  [RR] {symbol} SELL RR={rr_check:.2f} < 2.0 → skip")
                     continue
-                if probability >= MIN_PROBABILITY_SCORE:
+                if probability >= eff_min_prob:
                     return {
                         "symbol": symbol, "side": "SELL",
                         "entry": entry, "sl": sl, "tp": tp,
