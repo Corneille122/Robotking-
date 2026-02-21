@@ -262,6 +262,8 @@ symbol_cooldown_until = {}
 symbol_loss_streak  = defaultdict(int)
 btc_trend_cache     = {}
 fear_greed_cache    = {}
+# Mémoire des structures SMC utilisées par symbole — anti re-entry même structure
+structure_memory    = {}   # {symbol: {"bos_level": float, "sweep_level": float, "side": str, "ts": float}}
 
 def sync_binance_time():
     """V36 — Synchro horloge robuste (moyenne 3 mesures + compensation latence)."""
@@ -479,21 +481,15 @@ def get_session_weight() -> float:
 # ─── V30-3 : KILL-SWITCH DRAWDOWN ────────────────────────────────
 def check_drawdown_kill_switch() -> bool:
     """
-    Vérifie si la perte journalière dépasse DAILY_DRAWDOWN_LIMIT.
-    Si oui → pause trading DRAWDOWN_PAUSE_HOURS heures + alerte Telegram.
-    Retourne True si le trading est AUTORISÉ, False si pausé.
-
-    Protections :
-      • Anti-spam log : message "pausé" au maximum 1 fois par minute
-      • Anti-faux-positif au redémarrage : si balance_at_start_of_day n'est
-        pas encore initialisée (initialized=False), on autorise toujours
-        (main() appellera init_drawdown_reference() après sync_balance)
+    V38 — Drawdown : alerte Telegram uniquement, ne bloque plus le trading.
+    Les pauses sont supprimées — le bot tourne H24 sans interruption.
+    Le kill-switch absolu reste sur BALANCE_HARD_FLOOR ($1.50).
+    Retourne toujours True (trading autorisé).
     """
     global drawdown_state
 
     now = time.time()
 
-    # ── Pas encore initialisé → ne pas bloquer (redémarrage en cours) ──
     if not drawdown_state.get("initialized", False):
         return True
 
@@ -503,18 +499,8 @@ def check_drawdown_kill_switch() -> bool:
     if drawdown_state.get("last_reset", 0) < day_start:
         drawdown_state["balance_at_start_of_day"] = account_balance
         drawdown_state["last_reset"]              = now
-        drawdown_state["paused_until"]            = 0.0   # Lever la pause au reset
+        drawdown_state["paused_until"]            = 0.0
         logger.info(f"📅 Drawdown reset quotidien | Référence : ${account_balance:.2f}")
-
-    # ── Vérifier si toujours en pause ──────────────────────────────
-    if now < drawdown_state.get("paused_until", 0):
-        # Anti-spam : log max 1 fois par minute
-        last_log = drawdown_state.get("last_pause_log", 0)
-        if now - last_log >= 60:
-            remaining = (drawdown_state["paused_until"] - now) / 3600
-            logger.info(f"⏸ Trading pausé (drawdown) — encore {remaining:.1f}h")
-            drawdown_state["last_pause_log"] = now
-        return False
 
     # ── Calculer la perte journalière ──────────────────────────────
     ref_balance = drawdown_state.get("balance_at_start_of_day", 0)
@@ -522,42 +508,32 @@ def check_drawdown_kill_switch() -> bool:
         return True
 
     drawdown_pct = (ref_balance - account_balance) / ref_balance
-    if drawdown_pct >= DAILY_DRAWDOWN_LIMIT:
-        pause_until = now + DRAWDOWN_PAUSE_HOURS * 3600
-        drawdown_state["paused_until"]   = pause_until
-        drawdown_state["last_pause_log"] = now
-        msg = (
-            f"🚨 KILL-SWITCH — Drawdown {drawdown_pct:.1%} ≥ {DAILY_DRAWDOWN_LIMIT:.0%} "
-            f"| Référence ${ref_balance:.2f} → Actuel ${account_balance:.2f} "
-            f"| Pause {DRAWDOWN_PAUSE_HOURS}h"
-        )
-        logger.error(msg)
-        send_telegram(
-            f"🚨 <b>KILL-SWITCH ACTIVÉ</b>\n"
-            f"Perte journalière : <b>{drawdown_pct:.1%}</b> (limite : {DAILY_DRAWDOWN_LIMIT:.0%})\n"
-            f"Balance : ${account_balance:.2f} (début : ${ref_balance:.2f})\n"
-            f"⏸ Trading suspendu <b>{DRAWDOWN_PAUSE_HOURS}h</b>"
-        )
-        return False
 
-    # ── V34-8 : Pause DURE si drawdown >4% (1h off global) ─────
+    # Alerte 10% — warning sans blocage
     if drawdown_pct >= DAILY_HARD_DRAWDOWN_PCT:
-        pause_until = now + DAILY_HARD_PAUSE_HOURS * 3600
-        if now >= drawdown_state.get("paused_until", 0):  # évite le double déclenchement
-            drawdown_state["paused_until"]   = pause_until
+        last_log = drawdown_state.get("last_pause_log", 0)
+        if now - last_log >= 300:  # anti-spam 5 min
             drawdown_state["last_pause_log"] = now
-            logger.warning(
-                f"⚠️  Drawdown jour {drawdown_pct:.1%} ≥ {DAILY_HARD_DRAWDOWN_PCT:.0%} "
-                f"→ Pause dure {DAILY_HARD_PAUSE_HOURS}h"
-            )
+            logger.warning(f"⚠️  Drawdown jour {drawdown_pct:.1%} — scan continu (pas de pause)")
             send_telegram(
-                f"⚠️ <b>PAUSE DRAWDOWN JOUR</b>\n"
-                f"Perte : <b>{drawdown_pct:.1%}</b> / limite {DAILY_HARD_DRAWDOWN_PCT:.0%}\n"
-                f"⏸ Trading suspendu <b>{DAILY_HARD_PAUSE_HOURS}h</b>"
+                f"⚠️ <b>DRAWDOWN JOUR {drawdown_pct:.1%}</b>\n"
+                f"Balance : ${account_balance:.2f} (début : ${ref_balance:.2f})\n"
+                f"⚡ Trading continu — aucune pause"
             )
-            return False
 
-    return True
+    # Alerte 20% — warning fort sans blocage
+    if drawdown_pct >= DAILY_DRAWDOWN_LIMIT:
+        last_log = drawdown_state.get("last_pause_log", 0)
+        if now - last_log >= 300:
+            drawdown_state["last_pause_log"] = now
+            logger.error(f"🚨 Drawdown {drawdown_pct:.1%} ≥ {DAILY_DRAWDOWN_LIMIT:.0%} — alerte uniquement")
+            send_telegram(
+                f"🚨 <b>ALERTE DRAWDOWN {drawdown_pct:.1%}</b>\n"
+                f"Balance : ${account_balance:.2f} (début : ${ref_balance:.2f})\n"
+                f"⚡ Trading continu — surveillance renforcée"
+            )
+
+    return True  # Toujours True — pas de blocage
 
 
 def init_drawdown_reference():
@@ -1142,6 +1118,8 @@ def get_btc_trend_tf(tf: str) -> dict:
     btc_mtf_cache[tf] = {"data": data, "ts": now}
     return data
 
+btc_composite_lock = threading.Lock()
+
 def get_btc_composite_score() -> dict:
     """
     Score BTC composite sur 4 timeframes pondérés.
@@ -1154,55 +1132,61 @@ def get_btc_composite_score() -> dict:
     """
     global btc_trend_cache
     now = time.time()
-    # Cache composite 60s
+    # Cache composite 60s — lecture rapide sans lock
     if now - btc_trend_cache.get("timestamp", 0) < 60:
         return btc_trend_cache.get("composite", _default_btc_composite())
 
-    score    = 0.0
-    details  = {}
-    daily_dir = 0
+    # Recalcul nécessaire — lock pour éviter les rafales parallèles
+    with btc_composite_lock:
+        # Double-check après acquisition du lock (un autre thread a peut-être déjà recalculé)
+        if now - btc_trend_cache.get("timestamp", 0) < 60:
+            return btc_trend_cache.get("composite", _default_btc_composite())
 
-    for tf, cfg in BTC_TIMEFRAMES.items():
-        try:
-            td  = get_btc_trend_tf(tf)
-            dir = td["direction"]   # -1 / 0 / +1
-            str = td["strength"]    # 0.0 → 1.0
-            # Contribution : direction × force × poids
-            contribution = dir * (0.5 + str * 0.5) * cfg["weight"]
-            score += contribution
-            details[tf] = {
-                "direction": dir,
-                "strength":  round(str, 2),
-                "contrib":   round(contribution, 3),
-                "label":     cfg["label"]
-            }
-            if tf == "1d":
-                daily_dir = dir
-        except:
-            pass
+        score    = 0.0
+        details  = {}
+        daily_dir = 0
 
-    score = round(max(-1.0, min(1.0, score)), 3)
+        for tf, cfg in BTC_TIMEFRAMES.items():
+            try:
+                td  = get_btc_trend_tf(tf)
+                dir = td["direction"]   # -1 / 0 / +1
+                str = td["strength"]    # 0.0 → 1.0
+                # Contribution : direction × force × poids
+                contribution = dir * (0.5 + str * 0.5) * cfg["weight"]
+                score += contribution
+                details[tf] = {
+                    "direction": dir,
+                    "strength":  round(str, 2),
+                    "contrib":   round(contribution, 3),
+                    "label":     cfg["label"]
+                }
+                if tf == "1d":
+                    daily_dir = dir
+            except:
+                pass
 
-    if score > BTC_BULL_THRESHOLD:
-        label = "🟢 BULL"
-    elif score < BTC_BEAR_THRESHOLD:
-        label = "🔴 BEAR"
-    else:
-        label = "⚪ NEUTRE"
+        score = round(max(-1.0, min(1.0, score)), 3)
 
-    composite = {
-        "score":      score,
-        "label":      label,
-        "daily_bear": daily_dir == -1,
-        "daily_bull": daily_dir == 1,
-        "details":    details
-    }
+        if score > BTC_BULL_THRESHOLD:
+            label = "🟢 BULL"
+        elif score < BTC_BEAR_THRESHOLD:
+            label = "🔴 BEAR"
+        else:
+            label = "⚪ NEUTRE"
 
-    btc_trend_cache = {"composite": composite, "trend": int(score > 0) - int(score < 0), "timestamp": now}
-    logger.info(f"📊 BTC composite: {label} ({score:+.2f}) | "
-                + " | ".join(f"{d['label']}:{'▲' if d['direction']==1 else '▼' if d['direction']==-1 else '—'}"
-                             for d in details.values()))
-    return composite
+        composite = {
+            "score":      score,
+            "label":      label,
+            "daily_bear": daily_dir == -1,
+            "daily_bull": daily_dir == 1,
+            "details":    details
+        }
+
+        btc_trend_cache = {"composite": composite, "trend": int(score > 0) - int(score < 0), "timestamp": now}
+        logger.info(f"📊 BTC composite: {label} ({score:+.2f}) | "
+                    + " | ".join(f"{d['label']}:{'▲' if d['direction']==1 else '▼' if d['direction']==-1 else '—'}"
+                                 for d in details.values()))
+        return composite
 
 def _default_btc_composite() -> dict:
     return {"score": 0, "label": "⚪ NEUTRE", "daily_bear": False, "daily_bull": False, "details": {}}
@@ -1701,8 +1685,10 @@ def detect_sweep_choch_ob(symbol, side):
     bias_4h = get_htf_4h_bias(symbol)
 
     if side == "BUY":
-        # V34-4 : Bloque si 4H pas bullish
-        if bias_4h == "BEAR":
+        # Alignement obligatoire 4H + 1H sur le symbole — les deux doivent être BULL
+        if bias_4h != "BULL":
+            return None
+        if bias_1h != "BULL":
             return None
 
         # Pine bullSweep : low < lastLow AND close > lastLow
@@ -1743,8 +1729,11 @@ def detect_sweep_choch_ob(symbol, side):
                 "ob": ob, "fvg": fvg_ok}
 
     else:  # SELL
-        # V34-4 : Bloque si 4H pas bearish
-        if bias_4h == "BULL":
+        # Alignement obligatoire 4H + 1H sur le symbole — les deux doivent être BEAR
+        if bias_4h != "BEAR":
+            return None
+        # Filtre dur 1H — bloquer SELL si 1H haussier
+        if bias_1h != "BEAR":
             return None
 
         sweep_idx = -1
@@ -1786,12 +1775,15 @@ def detect_breaker_fvg(symbol, side):
     V34-4 : Bias 4H EMA50 strict intégré (bloque si 4H contraire).
     Ancien OB cassé → retest → FVG. Volume + EMA bias.
     """
-    # V34-4 : Vérification 4H en amont pour éviter les appels inutiles
+    # Alignement obligatoire 4H + 1H — les deux doivent confirmer la direction
     bias_4h = get_htf_4h_bias(symbol)
-    if side == "BUY" and bias_4h == "BEAR":
-        return None
-    if side == "SELL" and bias_4h == "BULL":
-        return None
+    bias_1h_check = get_htf_ema_bias(symbol)
+    if side == "BUY":
+        if bias_4h != "BULL" or bias_1h_check != "BULL":
+            return None
+    if side == "SELL":
+        if bias_4h != "BEAR" or bias_1h_check != "BEAR":
+            return None
 
     data = _get_klines_np(symbol, "15m", 100)
     if data is None:
@@ -1879,6 +1871,9 @@ def detect_bos_continuation(symbol, side):
     if side == "BUY":
         if not ph:
             return None
+        # Filtre dur 1H symbole — BUY interdit si 1H baissier
+        if get_htf_ema_bias(symbol) != "BULL":
+            return None
         last_ph   = max(ph)
         bos_level = h[last_ph]
         if not any(c[i] > bos_level for i in range(last_ph + 1, n - 2)):
@@ -1898,6 +1893,9 @@ def detect_bos_continuation(symbol, side):
 
     else:
         if not pl:
+            return None
+        # Filtre dur 1H symbole — SELL interdit si 1H haussier
+        if get_htf_ema_bias(symbol) != "BEAR":
             return None
         last_pl   = max(pl)
         bos_level = l[last_pl]
@@ -1930,6 +1928,180 @@ def detect_all_setups(symbol, side):
             logger.debug(f"  [SMC] {det.__name__} {symbol} {side}: {e}")
     found.sort(key=lambda x: x["score"], reverse=True)
     return found
+
+
+def check_chart_confirmations(symbol: str, side: str) -> bool:
+    """
+    ══════════════════════════════════════════════════════════════════
+    CONFIRMATIONS ICT/SMC STRICTES SUR M1 — 4 PILIERS OBLIGATOIRES
+    Aucune entrée sans validation complète des 4 conditions.
+    Leçon ZECUSDT encodée définitivement.
+
+    PILIER 1 — Structure validée (BOS ou CHoCH sur M1)
+    PILIER 2 — Liquidity sweep obligatoire
+    PILIER 3 — Zone Premium / Discount (equilibrium 50%)
+    PILIER 4 — Bougie d'entrée confirmée (engulf/pin/fvg/vol)
+    ══════════════════════════════════════════════════════════════════
+    """
+    try:
+        klines = get_klines(symbol, "1m", 60)
+        if not klines or len(klines) < 30:
+            logger.debug(f"  [ICT] {symbol} données M1 insuffisantes")
+            return False
+
+        o  = np.array([float(k[1]) for k in klines])
+        h  = np.array([float(k[2]) for k in klines])
+        l  = np.array([float(k[3]) for k in klines])
+        c  = np.array([float(k[4]) for k in klines])
+        v  = np.array([float(k[5]) for k in klines])
+        n  = len(c)
+
+        lb = 5
+        swing_highs = [i for i in range(lb, n - lb) if h[i] == max(h[i-lb:i+lb+1])]
+        swing_lows  = [i for i in range(lb, n - lb) if l[i] == min(l[i-lb:i+lb+1])]
+
+        # ── PILIER 1 : BOS / CHoCH sur M1 ────────────────────────────
+        structure_confirmed = False
+        bos_level = 0.0
+
+        if side == "BUY" and swing_highs:
+            recent_sh = [i for i in swing_highs if i < n - 3]
+            if recent_sh:
+                last_sh_level = h[recent_sh[-1]]
+                for i in range(recent_sh[-1] + 1, n):
+                    if c[i] > last_sh_level:
+                        structure_confirmed = True
+                        bos_level = last_sh_level
+                        break
+        elif side == "SELL" and swing_lows:
+            recent_sl = [i for i in swing_lows if i < n - 3]
+            if recent_sl:
+                last_sl_level = l[recent_sl[-1]]
+                for i in range(recent_sl[-1] + 1, n):
+                    if c[i] < last_sl_level:
+                        structure_confirmed = True
+                        bos_level = last_sl_level
+                        break
+
+        if not structure_confirmed:
+            logger.info(f"  [ICT-P1] {symbol} {side} \u274c Pas de BOS/CHoCH M1 \u2192 skip")
+            return False
+
+        # ── PILIER 2 : Liquidity sweep obligatoire ───────────────────
+        liquidity_swept = False
+        sweep_level = 0.0
+
+        if side == "BUY" and swing_lows:
+            for sl_idx in reversed([i for i in swing_lows if i > n - 30]):
+                sl_level = l[sl_idx]
+                for j in range(sl_idx + 1, n - 1):
+                    if l[j] < sl_level and c[j] > sl_level:
+                        liquidity_swept = True
+                        sweep_level = sl_level
+                        break
+                if liquidity_swept:
+                    break
+        elif side == "SELL" and swing_highs:
+            for sh_idx in reversed([i for i in swing_highs if i > n - 30]):
+                sh_level = h[sh_idx]
+                for j in range(sh_idx + 1, n - 1):
+                    if h[j] > sh_level and c[j] < sh_level:
+                        liquidity_swept = True
+                        sweep_level = sh_level
+                        break
+                if liquidity_swept:
+                    break
+
+        if not liquidity_swept:
+            logger.info(f"  [ICT-P2] {symbol} {side} \u274c Pas de liquidity sweep M1 \u2192 skip")
+            return False
+
+        # ── PILIER 3 : Zone Premium / Discount ───────────────────────
+        premium_discount_valid = False
+        if swing_highs and swing_lows:
+            sh_indices = swing_highs[-3:] if len(swing_highs) >= 3 else swing_highs
+            sl_indices = swing_lows[-3:]  if len(swing_lows)  >= 3 else swing_lows
+            range_high  = max(h[i] for i in sh_indices)
+            range_low   = min(l[i] for i in sl_indices)
+            equilibrium = (range_high + range_low) / 2
+            cur = c[-1]
+            if side == "BUY":
+                premium_discount_valid = cur <= equilibrium * 1.005
+            else:
+                premium_discount_valid = cur >= equilibrium * 0.995
+
+        if not premium_discount_valid:
+            logger.info(f"  [ICT-P3] {symbol} {side} \u274c Zone premium/discount invalide \u2192 skip")
+            return False
+
+        # ── PILIER 4 : Bougie d'entrée confirmée ─────────────────────
+        entry_candle_confirmed = False
+        confirm_type = ""
+        last_o = o[-1]; last_c = c[-1]; last_h = h[-1]; last_l = l[-1]
+        prev_o = o[-2]; prev_c = c[-2]; prev_h = h[-2]; prev_l = l[-2]
+        full_range = last_h - last_l
+        avg_vol = np.mean(v[-11:-1]) if len(v) > 10 else v[-1]
+
+        # a) Engulfing
+        if side == "BUY" and last_c > prev_h and last_o < prev_l:
+            entry_candle_confirmed = True; confirm_type = "ENGULFING\U0001f7e2"
+        elif side == "SELL" and last_c < prev_l and last_o > prev_h:
+            entry_candle_confirmed = True; confirm_type = "ENGULFING\U0001f534"
+
+        # b) Rejection / Pin bar — mèche >= 60%
+        if not entry_candle_confirmed and full_range > 0:
+            if side == "BUY":
+                lower_wick = min(last_o, last_c) - last_l
+                if lower_wick / full_range >= 0.60:
+                    entry_candle_confirmed = True; confirm_type = "REJECTION_PIN\U0001f7e2"
+            else:
+                upper_wick = last_h - max(last_o, last_c)
+                if upper_wick / full_range >= 0.60:
+                    entry_candle_confirmed = True; confirm_type = "REJECTION_PIN\U0001f534"
+
+        # c) Imbalance tap + réaction (FVG M1)
+        if not entry_candle_confirmed and n >= 3:
+            if side == "BUY" and l[-1] > h[-3] and c[-1] > l[-1]:
+                entry_candle_confirmed = True; confirm_type = "FVG_TAP\U0001f7e2"
+            elif side == "SELL" and h[-1] < l[-3] and c[-1] < h[-1]:
+                entry_candle_confirmed = True; confirm_type = "FVG_TAP\U0001f534"
+
+        # d) Volume spike >= 2x moyenne
+        if not entry_candle_confirmed:
+            if v[-1] >= avg_vol * 2.0:
+                if side == "BUY" and last_c > last_o:
+                    entry_candle_confirmed = True; confirm_type = "VOL_SPIKE\U0001f7e2"
+                elif side == "SELL" and last_c < last_o:
+                    entry_candle_confirmed = True; confirm_type = "VOL_SPIKE\U0001f534"
+
+        if not entry_candle_confirmed:
+            logger.info(f"  [ICT-P4] {symbol} {side} \u274c Aucune bougie de confirmation (engulf/pin/fvg/vol) \u2192 skip")
+            return False
+
+        # ── Anti re-entry même structure ─────────────────────────────
+        mem = structure_memory.get(symbol)
+        if mem and mem.get("side") == side and bos_level > 0:
+            age = time.time() - mem.get("ts", 0)
+            prev_bos = mem.get("bos_level", 0)
+            if age < 1800 and prev_bos > 0 and abs(bos_level - prev_bos) / prev_bos < 0.003:
+                logger.info(f"  [ICT-REENTRY] {symbol} {side} \u274c Même structure BOS@{bos_level:.4f} \u2192 skip")
+                return False
+
+        structure_memory[symbol] = {"side": side, "bos_level": bos_level, "sweep_level": sweep_level, "ts": time.time()}
+        logger.info(f"  [ICT] {symbol} {side} \u2705 BOS@{bos_level:.4f} | SWEEP@{sweep_level:.4f} | ZONE={'DISCOUNT' if side=='BUY' else 'PREMIUM'} | {confirm_type}")
+        return True
+
+    except Exception as e:
+        logger.debug(f"  [ICT] {symbol} erreur: {e}")
+        return False
+
+
+def reset_structure(symbol: str):
+    """Appelé à la clôture d'un trade — libère la structure pour re-entry sur nouvelle structure."""
+    if symbol in structure_memory:
+        del structure_memory[symbol]
+        logger.debug(f"  [STRUCTURE] {symbol} reset — nouvelle structure requise")
+
 
 def _round_step(qty: float, step_size: float) -> float:
     """
@@ -2794,9 +2966,9 @@ def scan_symbol(symbol: str) -> dict:
         if not can_afford_position(account_balance, n_open):
             return None
 
-        # V30-3 — Kill-switch drawdown : vérifier avant chaque scan
-        if not check_drawdown_kill_switch():
-            return None
+        # V30-3 — Kill-switch drawdown : log seulement, ne bloque plus le scan
+        # Les pauses drawdown sont supprimées — le bot tourne H24 sans interruption
+        check_drawdown_kill_switch()  # alerte Telegram seulement
 
         # FIX2-6 : Funding maintenant directionnel (appliqué per-side BUY/SELL plus bas)
         # is_funding_safe(symbol) ← remplacé par is_funding_safe(symbol, side="BUY/SELL")
@@ -2858,6 +3030,27 @@ def scan_symbol(symbol: str) -> dict:
             else:
                 allow_buy  = True
                 allow_sell = True
+
+            # ══════════════════════════════════════════════════════════
+            # RÈGLE ANTI CONTRE-TENDANCE — INVIOLABLE
+            # Les 3 timeframes doivent être alignés avec le trade :
+            #   BTC 1H direction + Symbole 1H EMA50 + Symbole 4H EMA50
+            # Si l'un contredit → trade interdit, point final.
+            # C'est la leçon du trade ZECUSDT (short avec BTC 1H haussier)
+            # ══════════════════════════════════════════════════════════
+            btc_1h_dir = get_btc_trend_tf("1h")["direction"]  # -1 / 0 / +1
+
+            if allow_sell:
+                # SELL interdit si BTC 1H haussier (rebond en cours)
+                if btc_1h_dir == 1:
+                    logger.info(f"🚫 {symbol} SELL bloqué — BTC 1H ▲ haussier (anti contre-tendance)")
+                    allow_sell = False
+
+            if allow_buy:
+                # BUY interdit si BTC 1H baissier (dump en cours)
+                if btc_1h_dir == -1:
+                    logger.info(f"🚫 {symbol} BUY bloqué — BTC 1H ▼ baissier (anti contre-tendance)")
+                    allow_buy = False
         else:
             btc       = get_btc_composite_score()
             btc_score = btc["score"]
@@ -2871,6 +3064,12 @@ def scan_symbol(symbol: str) -> dict:
 
         if allow_buy:
             if is_atr_spike(symbol, side="BUY"):
+                return None
+            # ══════════════════════════════════════════════════════════
+            # CONFIRMATIONS GRAPHIQUES OBLIGATOIRES — ANTI ZECUSDT
+            # Bougie confirmée + corps solide + RSI + EMA21 + volume
+            # ══════════════════════════════════════════════════════════
+            if not check_chart_confirmations(symbol, "BUY"):
                 return None
             setups_buy = detect_all_setups(symbol, "BUY")
             for setup in setups_buy:
@@ -2913,6 +3112,12 @@ def scan_symbol(symbol: str) -> dict:
 
         if allow_sell:
             if is_atr_spike(symbol, side="SELL"):
+                return None
+            # ══════════════════════════════════════════════════════════
+            # CONFIRMATIONS GRAPHIQUES OBLIGATOIRES — ANTI ZECUSDT
+            # Bougie confirmée + corps solide + RSI + EMA21 + volume
+            # ══════════════════════════════════════════════════════════
+            if not check_chart_confirmations(symbol, "SELL"):
                 return None
             setups_sell = detect_all_setups(symbol, "SELL")
             for setup in setups_sell:
@@ -3300,6 +3505,7 @@ def monitor_positions_loop():
                                         logger.info(f"🔴 {symbol} LOSS ${real_pnl:.4f} (SL déclenché)")
                                         send_telegram(f"🔴 <b>{symbol}</b> SL LOSS ${real_pnl:.4f}")
                                     trade_log[symbol]["status"] = "CLOSED"
+                                    reset_structure(symbol)   # Libère la structure — re-entry sur nouvelle structure uniquement
                                     cleanup_orders(symbol)
             time.sleep(sleep_interval)
         except:
