@@ -3,15 +3,23 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
 ║   ROBOTKING v37 — SL STRUCTUREL + RISQUE $0.30 FIXE       ║
-║   v4.5 — BTC M15 | Setups M5 | Trigger M1                 ║
+║   v4.6 — BTC M15 | Setup M5 | Trigger M1 | Levier adaptatif ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-v4.5 (ce fichier) :
+v4.6 (ce fichier) :
+🆕 V37-4.6 — Levier & marge adaptatifs au setup M5 :
+             SWEEP_CHOCH_OB  (score 92) → 40x | marge 40% balance
+             BREAKER_FVG     (score 85) → 30x | marge 35% balance
+             BOS_CONTINUATION(score 78) → 20x | marge 30% balance
+             Bonus +5x si probabilité ≥ 75% (plafonné 40x)
+             2 positions max inchangé.
+
+v4.5 (précédent) :
 🆕 V37-4.5 — Architecture 3 timeframes :
              BTC tendance    → M15 (inchangé)
              Signal symbole  → M5  (setups, BOS/CHoCH, sweep, zone, SL fallback)
              Trigger entrée  → M1  (bougie confirmation P4)
-             SIGNAL_TIMEFRAME = "5m" ajouté en config.
+             SIGNAL_TIMEFRAME = "15m"  # v4.6 — Signal sur M15 ajouté en config.
 
 v4.4 (précédent) :
 🆕 V37-4.4 — Dual Timeframe ICT : P1/P2/P3 sur M15, P4 (trigger) sur M1
@@ -85,10 +93,22 @@ _binance_time_offset = 0  # décalage ms entre horloge locale et Binance
 
 # ── Risque & Sizing ───────────────────────────────────────────────
 FIXED_RISK_USDT    = 0.30    # V37-1 : risque fixe $0.30 par trade
-LEVERAGE           = 40      # Levier fixe
+LEVERAGE           = 40      # Levier max (SWEEP_CHOCH_OB)
 LEVERAGE_MIN       = 10
 LEVERAGE_MAX       = 40
-MARGIN_FIXED_USDT  = 0.80    # Conservé pour can_afford_position() uniquement
+# v4.6 — Levier & marge adaptatifs au setup
+LEVERAGE_BY_SETUP  = {
+    "SWEEP_CHOCH_OB":   40,   # Setup le plus fort  → levier max
+    "BREAKER_FVG":      30,   # Setup intermédiaire → levier modéré
+    "BOS_CONTINUATION": 20,   # Setup de base       → levier prudent
+}
+MARGIN_PCT_BY_SETUP = {
+    "SWEEP_CHOCH_OB":   0.40, # 40% balance max en marge
+    "BREAKER_FVG":      0.35,
+    "BOS_CONTINUATION": 0.30,
+}
+PROB_BONUS_THRESHOLD = 75.0  # Si prob ≥ 75% → +5x levier (capped LEVERAGE_MAX)
+MARGIN_FIXED_USDT  = 0.80    # Conservé comme fallback uniquement
 MARGIN_TYPE        = "ISOLATED"
 MIN_NOTIONAL       = 5.0     # Notionnel minimum Binance Futures
 
@@ -134,7 +154,7 @@ SWEEP_CLOSE_MARGIN = 0.002  # Marge de clôture sweep (0.2%)
 HTF_EMA_LEN  = 50          # EMA bias HTF
 HTF_BIAS_TF  = "1h"        # Timeframe HTF 1H
 TREND_TIMEFRAME = "15m"   # BTC tendance de fond — NE PAS CHANGER
-SIGNAL_TIMEFRAME = "5m"   # v4.5 — Référence signal symbole (setups, structure, SL)
+SIGNAL_TIMEFRAME = "15m"  # v4.6 — Signal sur M15   # v4.5 — Référence signal symbole (setups, structure, SL)
 
 # ── ATR Spike filter ─────────────────────────────────────────────
 ATR_SPIKE_FILTER   = True
@@ -626,21 +646,31 @@ def is_spread_acceptable(symbol: str) -> bool:
         return True
 
 
-# ─── V30-1 : LEVIER ADAPTATIF ────────────────────────────────────
-def calculate_adaptive_leverage(btc_score: float, probability: float,
-                                atr_ratio: float) -> int:
-    """V32-6 — Levier FIXE 40x (paramètres ignorés, interface conservée)."""
-    return LEVERAGE
+# ─── V4.6 : LEVIER & MARGE ADAPTATIFS AU SETUP ───────────────────
+def calculate_adaptive_leverage(setup_name: str, probability: float) -> int:
+    """
+    v4.6 — Levier adaptatif selon la qualité du setup détecté sur M5.
+    SWEEP_CHOCH_OB (92) → 40x | BREAKER_FVG (85) → 30x | BOS (78) → 20x
+    Bonus +5x si probabilité ≥ 75%, plafonné à LEVERAGE_MAX.
+    """
+    base_lev = LEVERAGE_BY_SETUP.get(setup_name, LEVERAGE_MIN)
+    if probability >= PROB_BONUS_THRESHOLD:
+        base_lev = min(base_lev + 5, LEVERAGE_MAX)
+    return max(base_lev, LEVERAGE_MIN)
+
+def calculate_adaptive_margin_pct(setup_name: str) -> float:
+    """v4.6 — % de balance alloué en marge selon le setup."""
+    return MARGIN_PCT_BY_SETUP.get(setup_name, 0.30)
 
 # ─── POSITION SIZING ─────────────────────────────────────────────
 def calculate_max_positions(balance: float) -> int:
     """V37 : 2 positions max — chacune limitée à 40% de la balance en marge."""
     return 2
 
-def calculate_margin_for_trade(balance: float, probability: float = 68.0,
-                               setup_score: float = 70.0) -> float:
-    """V32-5 — Marge FIXE 0.8$ par trade (indépendant de la balance)."""
-    return MARGIN_FIXED_USDT
+def calculate_margin_for_trade(balance: float, setup_name: str = "BOS_CONTINUATION") -> float:
+    """v4.6 — Marge adaptative selon setup (% de la balance)."""
+    pct = calculate_adaptive_margin_pct(setup_name)
+    return round(balance * pct, 4)
 
 def can_afford_position(balance: float, existing_positions: int) -> bool:
     """
@@ -2335,14 +2365,21 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float,
         if not info:
             return
 
-        pp = info.get("pricePrecision", 4)  # Défini tôt pour usage dans les logs suivants
-        # ── V32-5 : Marge FIXE 0.8$ par trade ─────────────────────
+        pp = info.get("pricePrecision", 4)
+
+        # ── v4.6 : Levier & marge adaptatifs au setup M5 ─────────
         btc_ctx       = get_btc_composite_score()
         btc_score_ctx = btc_ctx["score"]
         profile_ctx   = get_btc_profile(btc_score_ctx, SIZING_PROFILES)
 
-        adap_lev = LEVERAGE          # 40x fixe
-        margin   = MARGIN_FIXED_USDT # 0.8$ fixe
+        adap_lev   = calculate_adaptive_leverage(setup_name, probability)
+        margin_pct = calculate_adaptive_margin_pct(setup_name)
+        margin     = round(account_balance * margin_pct, 4)
+
+        logger.info(
+            f"  [ADAPTIVE] {symbol} setup={setup_name} prob={probability:.1f}% "
+            f"→ levier={adap_lev}x | marge={margin:.3f}$ ({margin_pct*100:.0f}% balance)"
+        )
 
         set_leverage(symbol, adap_lev)
         set_margin_type(symbol, MARGIN_TYPE)
@@ -2366,15 +2403,14 @@ def open_position(symbol: str, side: str, entry: float, sl: float, tp: float,
         step_size = info.get("stepSize", 0.001)
         qty = _round_step(qty_from_risk, step_size)
 
-        # ── V37-SAFE : Cap marge = 40% balance max par trade ─────────
-        # Évite la liquidation si 2 trades simultanés épuisent la balance
-        max_margin_allowed = account_balance * MAX_MARGIN_PER_TRADE_PCT
+        # ── V37-SAFE : Cap marge = % balance adaptatif par setup ─────
+        max_margin_allowed = account_balance * margin_pct
         max_qty_margin     = _round_step((max_margin_allowed * adap_lev) / entry, step_size)
         if qty > max_qty_margin and max_qty_margin > 0:
             logger.warning(
                 f"  [MARGIN-CAP] {symbol} qty {qty}→{max_qty_margin} "
                 f"(marge ${qty*entry/adap_lev:.2f}→${max_qty_margin*entry/adap_lev:.2f} "
-                f"≤ {MAX_MARGIN_PER_TRADE_PCT*100:.0f}% × ${account_balance:.2f})"
+                f"≤ {margin_pct*100:.0f}% × ${account_balance:.2f})"
             )
             qty = max_qty_margin
 
@@ -3296,7 +3332,7 @@ def recover_existing_positions():
             tp = get_tp_from_liquidity(symbol, side, entry_price, sl_distance)
 
             # Forcer le levier à 20x sur cette position récupérée
-            set_leverage(symbol, LEVERAGE)
+            set_leverage(symbol, LEVERAGE_BY_SETUP.get("BREAKER_FVG", 30))  # v4.6 : levier modéré pour positions récupérées
 
             # Annuler d'éventuels ordres orphelins avant de reposer SL/TP
             cleanup_orders(symbol)
