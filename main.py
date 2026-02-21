@@ -3387,7 +3387,7 @@ def recover_existing_positions():
             send_telegram(
                 f"🔄 <b>Position {'externe' if source == 'MANUELLE' else 'récupérée'} adoptée</b>\n"
                 f"<b>{symbol}</b> {side} qty={qty}\n"
-                f"Entry: ${entry_price:.{pp}f} | Levier: {LEVERAGE}x\n"
+                f"Entry: ${entry_price:.{pp}f} | Levier: {LEVERAGE_BY_SETUP.get('BREAKER_FVG', 30)}x (recover)\n"
                 f"SL: ${sl:.{pp}f} {sl_status}\n"
                 f"TP: ${tp:.{pp}f} {tp_status} (zones liquidité)\n"
                 f"Trailing SL actif dès +1R de profit 🔁"
@@ -3604,7 +3604,7 @@ def dashboard_loop():
 
             logger.info("═" * 64)
             logger.info(f"v37 ROBOTKING | ${account_balance:.2f} | {n_open}/{max_pos} pos | W:{total_w} L:{total_l}{pause_str}")
-            logger.info(f"Risque/trade: ${FIXED_RISK_USDT} | Levier: {LEVERAGE}x | BTC: {btc_label} ({btc_score:+.2f}) | Daily: {'🔴 BEAR' if btc_full['daily_bear'] else '🟢 BULL'}")
+            logger.info(f"Risque/trade: ${FIXED_RISK_USDT} | Levier: {LEVERAGE_BY_SETUP['BOS_CONTINUATION']}x-{LEVERAGE_BY_SETUP['SWEEP_CHOCH_OB']}x adaptatif | BTC: {btc_label} ({btc_score:+.2f}) | Daily: {'🔴 BEAR' if btc_full['daily_bear'] else '🟢 BULL'}")
             logger.info(f"SL Binance: {binance_sl} ✅ | SL logiciel: {software_sl} | Trailing: {trailing_active} 🔁 | TP filet RR{TP_SAFETY_NET_RR}")
             logger.info(f"Drawdown jour: {dd_pct:.1f}% | Ref: ${ref_bal:.2f}")
 
@@ -3681,14 +3681,16 @@ def dashboard_loop():
 # ─── MAIN ────────────────────────────────────────────────────────
 def main():
     logger.info("╔" + "═" * 60 + "╗")
-    logger.info("║" + "   ROBOTKING v37 — SL STRUCTUREL + RISQUE $0.30 FIXE      ║")
+    logger.info("║" + "   ROBOTKING v37 — BTC M15 | Setup M5 | Trigger M1       ║")
+    logger.info("║" + f"   v4.6 — Levier adaptatif | 2 positions max              ║")
     logger.info("╚" + "═" * 60 + "╝\n")
 
     logger.warning("🔥 LIVE TRADING 🔥")
     logger.info(f"✅ V37-1 : Risque FIXE ${FIXED_RISK_USDT} | qty = risk / sl_dist | Pas de lot % capital")
-    logger.info(f"✅ V37-2 : SL structurel (OB zone, swing pivot 15m) — pas ATR arbitraire")
+    logger.info(f"✅ V37-2 : SL structurel (OB zone M5, swing pivot M5) — pas ATR arbitraire")
     logger.info(f"✅ V37-3 : TP partiel DÉSACTIVÉ — trailing SL = seul mécanisme de sortie")
     logger.info(f"✅ V37-4 : TP filet RR{TP_SAFETY_NET_RR} (anti-pompe soudaine uniquement)")
+    logger.info(f"🆕 v4.6  : Levier adaptatif SWEEP={LEVERAGE_BY_SETUP['SWEEP_CHOCH_OB']}x | BREAKER={LEVERAGE_BY_SETUP['BREAKER_FVG']}x | BOS={LEVERAGE_BY_SETUP['BOS_CONTINUATION']}x")
     logger.info(f"🆕 V37-FLOOR : Hard floor ${BALANCE_HARD_FLOOR} — trading gelé si balance critique (Telegram alert)")
     logger.info(f"🆕 V37-FIX401 : HTTP 401/403 → arrêt immédiat sans retry + alerte Telegram")
 
@@ -3706,7 +3708,7 @@ def main():
     max_pos = calculate_max_positions(account_balance)
 
     logger.info(f"💰 Balance:  ${account_balance:.2f}")
-    logger.info(f"🎯 Risque/trade: ${FIXED_RISK_USDT} | Levier: {LEVERAGE}x | Sizing: qty = ${FIXED_RISK_USDT} / sl_dist")
+    logger.info(f"🎯 Risque/trade: ${FIXED_RISK_USDT} | Levier: adaptatif {LEVERAGE_BY_SETUP['BOS_CONTINUATION']}x→{LEVERAGE_BY_SETUP['SWEEP_CHOCH_OB']}x | Sizing: qty = ${FIXED_RISK_USDT} / sl_dist")
     logger.info(f"🛡️  Kill-switch: -{DAILY_DRAWDOWN_LIMIT*100:.0f}% / 24h | Funding filter: {MAX_FUNDING_RATE_ABS*100:.2f}%")
     logger.info(f"📐 SL structurel: OB zone → swing pivot → ATR fallback | TP filet RR{TP_SAFETY_NET_RR}\n")
 
