@@ -3,7 +3,18 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
 ║   ROBOTKING v37 — SL STRUCTUREL + RISQUE $0.30 FIXE       ║
+║   v4.5 — BTC M15 | Setups M5 | Trigger M1                 ║
 ╚══════════════════════════════════════════════════════════════════╝
+
+v4.5 (ce fichier) :
+🆕 V37-4.5 — Architecture 3 timeframes :
+             BTC tendance    → M15 (inchangé)
+             Signal symbole  → M5  (setups, BOS/CHoCH, sweep, zone, SL fallback)
+             Trigger entrée  → M1  (bougie confirmation P4)
+             SIGNAL_TIMEFRAME = "5m" ajouté en config.
+
+v4.4 (précédent) :
+🆕 V37-4.4 — Dual Timeframe ICT : P1/P2/P3 sur M15, P4 (trigger) sur M1
 
 v37 vs v36 :
 🟢 V37-1 — Risque FIXE $0.30 par trade
@@ -122,7 +133,8 @@ SWEEP_CLOSE_MARGIN = 0.002  # Marge de clôture sweep (0.2%)
 # ── HTF Bias ─────────────────────────────────────────────────────
 HTF_EMA_LEN  = 50          # EMA bias HTF
 HTF_BIAS_TF  = "1h"        # Timeframe HTF 1H
-TREND_TIMEFRAME = "15m"
+TREND_TIMEFRAME = "15m"   # BTC tendance de fond — NE PAS CHANGER
+SIGNAL_TIMEFRAME = "5m"   # v4.5 — Référence signal symbole (setups, structure, SL)
 
 # ── ATR Spike filter ─────────────────────────────────────────────
 ATR_SPIKE_FILTER   = True
@@ -1079,7 +1091,7 @@ def calculate_liquidity_score(symbol: str) -> float:
         return 0.50
 
 # ─── FIX 3: DÉTECTION TENDANCE AVEC VRAIE EMA ───────────────────
-def detect_trend(symbol: str, timeframe: str = "15m") -> dict:
+def detect_trend(symbol: str, timeframe: str = "5m") -> dict:
     try:
         klines = get_klines(symbol, timeframe, 60)
         if not klines or len(klines) < 50:
@@ -1389,7 +1401,7 @@ def is_atr_spike(symbol: str, side: str = None) -> bool:
     if not ATR_SPIKE_FILTER:
         return False
     try:
-        data = _get_klines_np(symbol, "15m", ATR_SPIKE_LOOKBACK + 2)
+        data = _get_klines_np(symbol, "5m", ATR_SPIKE_LOOKBACK + 2)
         if data is None:
             return False
         _, h, l, c, _ = data
@@ -1665,8 +1677,9 @@ def detect_sweep_choch_ob(symbol, side):
     V34-4 : Bias 4H EMA50 strict intégré (en plus du 1H).
     V34-5 : Volume 2.0× (renforcé).
     V34-9 : Confluence élevée requise ≥ CONFLUENCE_HIGH (4/5).
+    v4.5  : Données M5 (signal timeframe).
     """
-    data = _get_klines_np(symbol, "15m", 80)
+    data = _get_klines_np(symbol, "5m", 100)
     if data is None:
         return None
     o, h, l, c, v = data
@@ -1774,6 +1787,7 @@ def detect_breaker_fvg(symbol, side):
     V34 — Breaker Block + FVG  [Score 85]
     V34-4 : Bias 4H EMA50 strict intégré (bloque si 4H contraire).
     Ancien OB cassé → retest → FVG. Volume + EMA bias.
+    v4.5  : Données M5 (signal timeframe).
     """
     # Alignement obligatoire 4H + 1H — les deux doivent confirmer la direction
     bias_4h = get_htf_4h_bias(symbol)
@@ -1785,7 +1799,7 @@ def detect_breaker_fvg(symbol, side):
         if bias_4h != "BEAR" or bias_1h_check != "BEAR":
             return None
 
-    data = _get_klines_np(symbol, "15m", 100)
+    data = _get_klines_np(symbol, "5m", 120)
     if data is None:
         return None
     o, h, l, c, v = data
@@ -1843,7 +1857,8 @@ def detect_breaker_fvg(symbol, side):
 def detect_bos_continuation(symbol, side):
     """
     V33-3 — BOS Continuation + FVG/Mitigation  [Score 78]
-    Bias 4H EMA50 obligatoire. Structure 15m intacte.
+    Bias 4H EMA50 obligatoire. Structure M5 intacte.
+    v4.5  : Données M5 (signal timeframe).
     """
     # Bias 4H EMA50 strict
     htf4h = _get_klines_np(symbol, "4h", 60)
@@ -1859,7 +1874,7 @@ def detect_bos_continuation(symbol, side):
     if side == "SELL" and hc4[-1] > ema4:
         return None
 
-    data = _get_klines_np(symbol, "15m", 60)
+    data = _get_klines_np(symbol, "5m", 80)
     if data is None:
         return None
     o, h, l, c, v = data
@@ -1933,79 +1948,80 @@ def detect_all_setups(symbol, side):
 def check_chart_confirmations(symbol: str, side: str) -> bool:
     """
     ══════════════════════════════════════════════════════════════════
-    CONFIRMATIONS ICT/SMC STRICTES SUR M1 — 4 PILIERS OBLIGATOIRES
-    Aucune entrée sans validation complète des 4 conditions.
-    Leçon ZECUSDT encodée définitivement.
+    CONFIRMATIONS ICT/SMC — DUAL TIMEFRAME M5 → M1
+    Logique Top-Down ICT : référence M5, trigger M1.
 
-    PILIER 1 — Structure validée (BOS ou CHoCH sur M1)
-    PILIER 2 — Liquidity sweep obligatoire
-    PILIER 3 — Zone Premium / Discount (equilibrium 50%)
-    PILIER 4 — Bougie d'entrée confirmée (engulf/pin/fvg/vol)
+    PILIER 1 — Structure validée (BOS ou CHoCH sur M5)  ← référence
+    PILIER 2 — Liquidity sweep obligatoire (M5)          ← référence
+    PILIER 3 — Zone Premium / Discount (equilibrium M5)  ← référence
+    PILIER 4 — Bougie d'entrée confirmée sur M1           ← trigger
+
+    MAX 2 positions simultanées (can_afford_position).
     ══════════════════════════════════════════════════════════════════
     """
     try:
-        klines = get_klines(symbol, "1m", 60)
-        if not klines or len(klines) < 30:
-            logger.debug(f"  [ICT] {symbol} données M1 insuffisantes")
+        # ── Données M5 — référence structurelle ──────────────────────
+        klines_15 = get_klines(symbol, "5m", 100)
+        if not klines_15 or len(klines_15) < 30:
+            logger.debug(f"  [ICT] {symbol} données M5 insuffisantes")
             return False
 
-        o  = np.array([float(k[1]) for k in klines])
-        h  = np.array([float(k[2]) for k in klines])
-        l  = np.array([float(k[3]) for k in klines])
-        c  = np.array([float(k[4]) for k in klines])
-        v  = np.array([float(k[5]) for k in klines])
-        n  = len(c)
+        o15 = np.array([float(k[1]) for k in klines_15])
+        h15 = np.array([float(k[2]) for k in klines_15])
+        l15 = np.array([float(k[3]) for k in klines_15])
+        c15 = np.array([float(k[4]) for k in klines_15])
+        n15 = len(c15)
 
-        lb = 5
-        swing_highs = [i for i in range(lb, n - lb) if h[i] == max(h[i-lb:i+lb+1])]
-        swing_lows  = [i for i in range(lb, n - lb) if l[i] == min(l[i-lb:i+lb+1])]
+        lb15 = 5
+        swing_highs_15 = [i for i in range(lb15, n15 - lb15) if h15[i] == max(h15[i-lb15:i+lb15+1])]
+        swing_lows_15  = [i for i in range(lb15, n15 - lb15) if l15[i] == min(l15[i-lb15:i+lb15+1])]
 
-        # ── PILIER 1 : BOS / CHoCH sur M1 ────────────────────────────
+        # ── PILIER 1 : BOS / CHoCH sur M15 ───────────────────────────
         structure_confirmed = False
         bos_level = 0.0
 
-        if side == "BUY" and swing_highs:
-            recent_sh = [i for i in swing_highs if i < n - 3]
+        if side == "BUY" and swing_highs_15:
+            recent_sh = [i for i in swing_highs_15 if i < n15 - 3]
             if recent_sh:
-                last_sh_level = h[recent_sh[-1]]
-                for i in range(recent_sh[-1] + 1, n):
-                    if c[i] > last_sh_level:
+                last_sh_level = h15[recent_sh[-1]]
+                for i in range(recent_sh[-1] + 1, n15):
+                    if c15[i] > last_sh_level:
                         structure_confirmed = True
                         bos_level = last_sh_level
                         break
-        elif side == "SELL" and swing_lows:
-            recent_sl = [i for i in swing_lows if i < n - 3]
+        elif side == "SELL" and swing_lows_15:
+            recent_sl = [i for i in swing_lows_15 if i < n15 - 3]
             if recent_sl:
-                last_sl_level = l[recent_sl[-1]]
-                for i in range(recent_sl[-1] + 1, n):
-                    if c[i] < last_sl_level:
+                last_sl_level = l15[recent_sl[-1]]
+                for i in range(recent_sl[-1] + 1, n15):
+                    if c15[i] < last_sl_level:
                         structure_confirmed = True
                         bos_level = last_sl_level
                         break
 
         if not structure_confirmed:
-            logger.info(f"  [ICT-P1] {symbol} {side} \u274c Pas de BOS/CHoCH M1 \u2192 skip")
+            logger.info(f"  [ICT-P1] {symbol} {side} \u274c Pas de BOS/CHoCH M5 \u2192 skip")
             return False
 
-        # ── PILIER 2 : Liquidity sweep obligatoire ───────────────────
+        # ── PILIER 2 : Liquidity sweep M15 ───────────────────────────
         liquidity_swept = False
         sweep_level = 0.0
 
-        if side == "BUY" and swing_lows:
-            for sl_idx in reversed([i for i in swing_lows if i > n - 30]):
-                sl_level = l[sl_idx]
-                for j in range(sl_idx + 1, n - 1):
-                    if l[j] < sl_level and c[j] > sl_level:
+        if side == "BUY" and swing_lows_15:
+            for sl_idx in reversed([i for i in swing_lows_15 if i > n15 - 40]):
+                sl_level = l15[sl_idx]
+                for j in range(sl_idx + 1, n15 - 1):
+                    if l15[j] < sl_level and c15[j] > sl_level:
                         liquidity_swept = True
                         sweep_level = sl_level
                         break
                 if liquidity_swept:
                     break
-        elif side == "SELL" and swing_highs:
-            for sh_idx in reversed([i for i in swing_highs if i > n - 30]):
-                sh_level = h[sh_idx]
-                for j in range(sh_idx + 1, n - 1):
-                    if h[j] > sh_level and c[j] < sh_level:
+        elif side == "SELL" and swing_highs_15:
+            for sh_idx in reversed([i for i in swing_highs_15 if i > n15 - 40]):
+                sh_level = h15[sh_idx]
+                for j in range(sh_idx + 1, n15 - 1):
+                    if h15[j] > sh_level and c15[j] < sh_level:
                         liquidity_swept = True
                         sweep_level = sh_level
                         break
@@ -2013,42 +2029,55 @@ def check_chart_confirmations(symbol: str, side: str) -> bool:
                     break
 
         if not liquidity_swept:
-            logger.info(f"  [ICT-P2] {symbol} {side} \u274c Pas de liquidity sweep M1 \u2192 skip")
+            logger.info(f"  [ICT-P2] {symbol} {side} \u274c Pas de liquidity sweep M5 \u2192 skip")
             return False
 
-        # ── PILIER 3 : Zone Premium / Discount ───────────────────────
+        # ── PILIER 3 : Zone Premium / Discount M15 ───────────────────
         premium_discount_valid = False
-        if swing_highs and swing_lows:
-            sh_indices = swing_highs[-3:] if len(swing_highs) >= 3 else swing_highs
-            sl_indices = swing_lows[-3:]  if len(swing_lows)  >= 3 else swing_lows
-            range_high  = max(h[i] for i in sh_indices)
-            range_low   = min(l[i] for i in sl_indices)
+        if swing_highs_15 and swing_lows_15:
+            sh_idx = swing_highs_15[-3:] if len(swing_highs_15) >= 3 else swing_highs_15
+            sl_idx = swing_lows_15[-3:]  if len(swing_lows_15)  >= 3 else swing_lows_15
+            range_high  = max(h15[i] for i in sh_idx)
+            range_low   = min(l15[i] for i in sl_idx)
             equilibrium = (range_high + range_low) / 2
-            cur = c[-1]
+            cur = c15[-1]  # prix courant vu depuis M15
             if side == "BUY":
                 premium_discount_valid = cur <= equilibrium * 1.005
             else:
                 premium_discount_valid = cur >= equilibrium * 0.995
 
         if not premium_discount_valid:
-            logger.info(f"  [ICT-P3] {symbol} {side} \u274c Zone premium/discount invalide \u2192 skip")
+            logger.info(f"  [ICT-P3] {symbol} {side} \u274c Zone premium/discount M5 invalide \u2192 skip")
             return False
 
-        # ── PILIER 4 : Bougie d'entrée confirmée ─────────────────────
+        # ── PILIER 4 : Bougie d'entrée confirmée sur M1 ──────────────
+        # Trigger de précision : on zoome sur M1 pour l'exécution
+        klines_1 = get_klines(symbol, "1m", 15)
+        if not klines_1 or len(klines_1) < 5:
+            logger.debug(f"  [ICT-P4] {symbol} données M1 insuffisantes")
+            return False
+
+        o1 = np.array([float(k[1]) for k in klines_1])
+        h1 = np.array([float(k[2]) for k in klines_1])
+        l1 = np.array([float(k[3]) for k in klines_1])
+        c1 = np.array([float(k[4]) for k in klines_1])
+        v1 = np.array([float(k[5]) for k in klines_1])
+        n1 = len(c1)
+
         entry_candle_confirmed = False
         confirm_type = ""
-        last_o = o[-1]; last_c = c[-1]; last_h = h[-1]; last_l = l[-1]
-        prev_o = o[-2]; prev_c = c[-2]; prev_h = h[-2]; prev_l = l[-2]
+        last_o = o1[-1]; last_c = c1[-1]; last_h = h1[-1]; last_l = l1[-1]
+        prev_o = o1[-2]; prev_c = c1[-2]; prev_h = h1[-2]; prev_l = l1[-2]
         full_range = last_h - last_l
-        avg_vol = np.mean(v[-11:-1]) if len(v) > 10 else v[-1]
+        avg_vol = np.mean(v1[-11:-1]) if len(v1) > 10 else v1[-1]
 
-        # a) Engulfing
+        # a) Engulfing M1
         if side == "BUY" and last_c > prev_h and last_o < prev_l:
             entry_candle_confirmed = True; confirm_type = "ENGULFING\U0001f7e2"
         elif side == "SELL" and last_c < prev_l and last_o > prev_h:
             entry_candle_confirmed = True; confirm_type = "ENGULFING\U0001f534"
 
-        # b) Rejection / Pin bar — mèche >= 60%
+        # b) Rejection / Pin bar M1 — mèche >= 60%
         if not entry_candle_confirmed and full_range > 0:
             if side == "BUY":
                 lower_wick = min(last_o, last_c) - last_l
@@ -2059,23 +2088,23 @@ def check_chart_confirmations(symbol: str, side: str) -> bool:
                 if upper_wick / full_range >= 0.60:
                     entry_candle_confirmed = True; confirm_type = "REJECTION_PIN\U0001f534"
 
-        # c) Imbalance tap + réaction (FVG M1)
-        if not entry_candle_confirmed and n >= 3:
-            if side == "BUY" and l[-1] > h[-3] and c[-1] > l[-1]:
+        # c) FVG tap M1
+        if not entry_candle_confirmed and n1 >= 3:
+            if side == "BUY" and l1[-1] > h1[-3] and c1[-1] > l1[-1]:
                 entry_candle_confirmed = True; confirm_type = "FVG_TAP\U0001f7e2"
-            elif side == "SELL" and h[-1] < l[-3] and c[-1] < h[-1]:
+            elif side == "SELL" and h1[-1] < l1[-3] and c1[-1] < h1[-1]:
                 entry_candle_confirmed = True; confirm_type = "FVG_TAP\U0001f534"
 
-        # d) Volume spike >= 2x moyenne
+        # d) Volume spike M1 >= 2x moyenne
         if not entry_candle_confirmed:
-            if v[-1] >= avg_vol * 2.0:
+            if v1[-1] >= avg_vol * 2.0:
                 if side == "BUY" and last_c > last_o:
                     entry_candle_confirmed = True; confirm_type = "VOL_SPIKE\U0001f7e2"
                 elif side == "SELL" and last_c < last_o:
                     entry_candle_confirmed = True; confirm_type = "VOL_SPIKE\U0001f534"
 
         if not entry_candle_confirmed:
-            logger.info(f"  [ICT-P4] {symbol} {side} \u274c Aucune bougie de confirmation (engulf/pin/fvg/vol) \u2192 skip")
+            logger.info(f"  [ICT-P4] {symbol} {side} \u274c Aucune bougie M1 de confirmation (engulf/pin/fvg/vol) \u2192 skip")
             return False
 
         # ── Anti re-entry même structure ─────────────────────────────
@@ -2084,11 +2113,11 @@ def check_chart_confirmations(symbol: str, side: str) -> bool:
             age = time.time() - mem.get("ts", 0)
             prev_bos = mem.get("bos_level", 0)
             if age < 1800 and prev_bos > 0 and abs(bos_level - prev_bos) / prev_bos < 0.003:
-                logger.info(f"  [ICT-REENTRY] {symbol} {side} \u274c Même structure BOS@{bos_level:.4f} \u2192 skip")
+                logger.info(f"  [ICT-REENTRY] {symbol} {side} \u274c Même structure M5 BOS@{bos_level:.4f} \u2192 skip")
                 return False
 
         structure_memory[symbol] = {"side": side, "bos_level": bos_level, "sweep_level": sweep_level, "ts": time.time()}
-        logger.info(f"  [ICT] {symbol} {side} \u2705 BOS@{bos_level:.4f} | SWEEP@{sweep_level:.4f} | ZONE={'DISCOUNT' if side=='BUY' else 'PREMIUM'} | {confirm_type}")
+        logger.info(f"  [ICT] {symbol} {side} \u2705 M5:BOS@{bos_level:.4f}|SWEEP@{sweep_level:.4f}|ZONE={'DISCOUNT' if side=='BUY' else 'PREMIUM'} → M1:{confirm_type}")
         return True
 
     except Exception as e:
@@ -2921,8 +2950,8 @@ def get_structural_sl(symbol: str, side: str, setup: dict, entry: float) -> floa
                 if sl_dist >= entry * MIN_SL_DISTANCE_PCT:
                     return sl_raw
 
-        # ── Fallback : dernier swing pivot 15m ──────────────────
-        data = _get_klines_np(symbol, "15m", 40)
+        # ── Fallback : dernier swing pivot M5 ───────────────────
+        data = _get_klines_np(symbol, "5m", 60)
         if data is not None:
             _, h, l, _, _ = data
             if side == "BUY":
@@ -2945,8 +2974,8 @@ def get_structural_sl(symbol: str, side: str, setup: dict, entry: float) -> floa
     except Exception as e:
         logger.debug(f"get_structural_sl {symbol}: {e}")
 
-    # ── Fallback ultime : ATR 15m × 1.5 ─────────────────────────
-    atr_fallback = calc_atr(symbol, period=14, timeframe="15m") or entry * 0.01
+    # ── Fallback ultime : ATR M5 × 1.5 ──────────────────────────
+    atr_fallback = calc_atr(symbol, period=14, timeframe="5m") or entry * 0.01
     dist = max(atr_fallback * 1.5, entry * MIN_SL_DISTANCE_PCT)
     info = get_symbol_info(symbol)
     pp = info["pricePrecision"] if info else 4
