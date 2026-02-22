@@ -123,9 +123,9 @@ TIER2_LIMIT      = 6.0      # Palier 2 jusqu'à $6
 
 # Paramètres par palier : (risk_pct, max_risk_usdt, max_margin_pct, max_sl_pct)
 TIER_PARAMS = {
-    1: {"risk_pct": 0.07, "max_risk": 0.21, "max_margin": 0.20, "max_sl": 0.008},
-    2: {"risk_pct": 0.06, "max_risk": 0.36, "max_margin": 0.25, "max_sl": 0.010},
-    3: {"risk_pct": 0.05, "max_risk": 0.50, "max_margin": 0.30, "max_sl": 0.010},
+    1: {"risk_pct": 0.09, "max_risk": 0.27, "max_margin": 0.25, "max_sl": 0.008},
+    2: {"risk_pct": 0.08, "max_risk": 0.48, "max_margin": 0.30, "max_sl": 0.010},
+    3: {"risk_pct": 0.06, "max_risk": 0.60, "max_margin": 0.35, "max_sl": 0.010},
 }
 
 # Levier par palier (score_min → levier)
@@ -144,9 +144,10 @@ MARGIN_PCT_BY_LEV = {
 }
 
 MIN_NOTIONAL      = 5.0     # Binance min notional ($5)
-MAX_NOTIONAL_RISK = 0.25    # Skip si min notional exige > 25% balance
+MAX_NOTIONAL_RISK = 0.30    # Skip si min notional exige > 30% balance
 MIN_SL_PCT        = 0.002   # SL min 0.2%
-MAX_POSITIONS     = 1       # 1 seule position jusqu'à $10
+MAX_SL_PCT        = 0.015   # SL max 1.5%
+MAX_POSITIONS     = 2       # 2 positions simultanées max
 MARGIN_TYPE       = "ISOLATED"
 
 # ── SL / TP / Trailing ──────────────────────────────────────────
