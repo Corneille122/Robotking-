@@ -2154,7 +2154,9 @@ def main():
     drawdown_state["ref_balance"] = account_balance
 
     logger.info(f"💰 Balance de départ : ${account_balance:.4f}")
-    logger.info(f"🎯 Risque/trade : ${get_risk_usdt():.4f} ({RISK_PCT*100:.0f}% balance)")
+    tier = get_tier()
+    p = TIER_PARAMS[tier]
+    logger.info(f"🎯 Risque/trade : ${get_risk_usdt():.4f} ({p['risk_pct']*100:.0f}% balance | palier {tier})")
     logger.info(f"📋 Symboles : {symbols_list}")
 
     # Direction BTC initiale
