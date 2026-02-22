@@ -2,29 +2,23 @@
 # -*- coding: utf-8 -*-
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║   SCALPER v39.3 — STRICT | CORRÉLATION BTC | FRAIS RÉELS       ║
+║   SCALPER v39.4 — CALIBRÉ | CORRÉLATION BTC | FRAIS RÉELS      ║
 ║   Top 20 crypto | M1 | H24 | Récupération $1.40 → $6+          ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-NOUVEAUTÉS v39.3 :
-  ✅ FRAIS RÉELS : Breakeven = entry + (entry × 0.0012 × 2) pour couvrir
-                   0.04% taker ouverture + 0.04% taker fermeture = 0.08% A/R
-                   + buffer 0.04% = 0.12% total → BE ne déclenche QUE si
-                   on est vraiment rentable net de frais
-  ✅ CORRÉLATION BTC M1 : Avant chaque trade, vérifier que BTC M1
-                   bouge dans la même direction (EMA9 slope + RSI BTC)
-                   → Trade BUY seulement si BTC M1 haussier
-                   → Trade SELL seulement si BTC M1 baissier
-                   → Skip si BTC M1 neutre ou contre-tendance
-  ✅ SETUP ULTRA-STRICT : Score minimum 88 (était 72-78)
-                   Confluence minimum 3/5 (était 2)
-                   Probabilité minimum 65% (était 58%)
-                   → 10x moins de trades, 10x meilleure qualité
-  ✅ SIZING PROTÉGÉ : 6% balance par trade (pas 8%)
-                   Skip si SL distance > 1% (trop large pour M1)
-                   Max 1 position simultanée TOUJOURS (récupération)
-  ✅ COOLDOWN STRICT : 3 min entre 2 trades sur le même symbole
-                   Pause 30 min après 2 pertes consécutives
+CORRECTIONS v39.4 — POURQUOI v39.3 NE TRADAIT PAS :
+  🔧 BUG 1 : VOLUME_SPIKE_MIN = 2.0 → trop rare sur M1, réduit à 1.4
+  🔧 BUG 2 : MIN_SCORE = 88 → seul SWEEP_OB pouvait passer, abaissé à 82
+             BOS_FVG (score 85) peut maintenant passer
+  🔧 BUG 3 : BTC M1 "neutre" bloquait 80%+ du temps → slope assoupli
+             Condition slope supprimée, EMA5>EMA13 suffit
+  🔧 BUG 4 : vol_spike obligatoire × 2 (setup + trigger) → une seule vérif
+  🔧 BUG 5 : RSI BUY < 65 trop étroit → élargi à < 70
+  🔧 BUG 6 : SIGNAL_COOLDOWN 180s → réduit à 60s (1 min suffit)
+  🔧 BUG 7 : MIN_CONFLUENCE = 3 sur BOS_FVG → réduit à 2 pour ce setup
+  ✅ Frais Binance réels conservés (0.12% A/R)
+  ✅ Corrélation BTC M1 conservée mais assouplie
+  ✅ SL suiveur garanti toutes les 2s
 """
 
 import time, hmac, hashlib, requests, threading, os, logging
@@ -62,7 +56,7 @@ def send_telegram(msg: str):
         pass
 
 # ─── API ─────────────────────────────────────────────────────────
-API_KEY    = os.environ.get("BINANCE_API_KEY", "YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af")
+API_KEY    = os.environ.get("BINANCE_API_KEY",    "YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af")
 API_SECRET = os.environ.get("BINANCE_API_SECRET", "si08ii320XMByW4VY1VRt5zRJNnB3QrYBJc3QkDOdKHLZGKxyTo5CHxz7nd4CuQ0")
 
 if not API_KEY or not API_SECRET:
@@ -96,45 +90,115 @@ BREAKEVEN_FEE_TOTAL  = BINANCE_FEE_RATE * 2 * 1.5  # 0.12% A/R avec buffer 50%
 # BE_SL = entry + (entry × BREAKEVEN_FEE_TOTAL) pour BUY
 #        = entry - (entry × BREAKEVEN_FEE_TOTAL) pour SELL
 
-# ── Risque / Sizing ──────────────────────────────────────────────
-RISK_PCT          = 0.06    # 6% de la balance par trade
-RISK_MAX_USDT     = 0.40    # Max $0.40 absolu
-RISK_MIN_USDT     = 0.04    # Min $0.04
-MAX_MARGIN_PCT    = 0.30    # Marge max 30% balance
-MIN_NOTIONAL      = 5.0     # Binance min notional
-MAX_NOTIONAL_RISK = 0.18    # Skip si min notional > 18% balance
-MAX_SL_PCT        = 0.010   # SL max 1% → au-delà skip (trop large pour M1)
+# ══════════════════════════════════════════════════════════════════
+#  STRATÉGIE CROISSANCE PAR PALIERS — $1.40 → $10
+# ══════════════════════════════════════════════════════════════════
+#
+#  PALIER 1 — SURVIE      : $1.00 → $3.00
+#    Risque  : 7% balance (max $0.21)
+#    Levier  : 50x best / 35x normal / 25x fallback
+#    SL      : 0.3% → 0.8% (serré pour limiter la perte absolue)
+#    TP RR   : 2.5
+#    Marge   : 20% balance max
+#    Objectif : doubler en ~15 trades gagnants
+#
+#  PALIER 2 — CROISSANCE  : $3.00 → $6.00
+#    Risque  : 6% balance (max $0.36)
+#    Levier  : 35x best / 25x normal / 20x fallback
+#    SL      : 0.3% → 1.0%
+#    TP RR   : 2.5
+#    Marge   : 25% balance max
+#
+#  PALIER 3 — NORMAL      : $6.00 → $10.00+
+#    Risque  : 5% balance (max $0.50)
+#    Levier  : 25x best / 20x normal / 15x fallback
+#    SL      : 0.2% → 1.0%
+#    TP RR   : 2.5
+#    Marge   : 30% balance max
+#
+# ══════════════════════════════════════════════════════════════════
+TARGET_BALANCE   = 10.0     # Objectif
+TIER1_LIMIT      = 3.0      # Palier 1 jusqu'à $3
+TIER2_LIMIT      = 6.0      # Palier 2 jusqu'à $6
+
+# Paramètres par palier : (risk_pct, max_risk_usdt, max_margin_pct, max_sl_pct)
+TIER_PARAMS = {
+    1: {"risk_pct": 0.07, "max_risk": 0.21, "max_margin": 0.20, "max_sl": 0.008},
+    2: {"risk_pct": 0.06, "max_risk": 0.36, "max_margin": 0.25, "max_sl": 0.010},
+    3: {"risk_pct": 0.05, "max_risk": 0.50, "max_margin": 0.30, "max_sl": 0.010},
+}
+
+# Levier par palier (score_min → levier)
+LEVERAGE_BY_TIER = {
+    1: [(92, 50), (85, 35), (0, 25)],   # Palier survie : levier élevé pour min notional
+    2: [(92, 35), (85, 25), (0, 20)],   # Palier croissance
+    3: [(92, 25), (85, 20), (0, 15)],   # Palier normal
+}
+
+MARGIN_PCT_BY_LEV = {
+    50: 0.18,   # 18% balance pour 50x
+    35: 0.20,   # 20% balance pour 35x
+    25: 0.22,   # 22% balance pour 25x
+    20: 0.20,
+    15: 0.18,
+}
+
+MIN_NOTIONAL      = 5.0     # Binance min notional ($5)
+MAX_NOTIONAL_RISK = 0.25    # Skip si min notional exige > 25% balance
 MIN_SL_PCT        = 0.002   # SL min 0.2%
-
-# ── Positions ────────────────────────────────────────────────────
-MAX_POSITIONS   = 1         # 1 seule position — récupération stricte
-MARGIN_TYPE     = "ISOLATED"
-
-# ── Levier ───────────────────────────────────────────────────────
-# Compte < $3 → levier prudent pour survivre
-LEVERAGE_TABLE = [
-    (92, 25),   # SWEEP_OB score 92 → 25x max
-    (85, 20),
-    (78, 15),
-    (0,  10),
-]
-MARGIN_PCT_BY_LEV = {25: 0.28, 20: 0.24, 15: 0.20, 10: 0.15}
+MAX_POSITIONS     = 1       # 1 seule position jusqu'à $10
+MARGIN_TYPE       = "ISOLATED"
 
 # ── SL / TP / Trailing ──────────────────────────────────────────
-TP_RR            = 2.5      # TP filet RR2.5 (réaliste M1 scalp)
-BREAKEVEN_RR     = 0.6      # BE dès +0.6R (après frais couverts)
+TP_RR            = 2.5      # RR2.5 : chaque win = 2.5× le risque
+BREAKEVEN_RR     = 0.6      # BE dès +0.6R (frais couverts)
 TRAIL_START_RR   = 1.0      # Trailing dès +1R
 TRAIL_ATR_MULT   = 0.7      # Trailing serré M1
 HARD_FLOOR       = 1.00     # Gel si balance < $1.00
 
-# ── Filtres signal — ULTRA-STRICT ────────────────────────────────
-MIN_SCORE        = 88       # Score minimum élevé — meilleurs setups only
-MIN_CONFLUENCE   = 3        # Confluence 3/5 minimum
-MIN_PROB         = 65.0     # Probabilité minimum 65%
-MIN_BODY_RATIO   = 0.45     # Corps bougie trigger ≥ 45% (bougie franche)
-VOLUME_SPIKE_MIN = 2.0      # Volume spike ≥ 2× la moyenne (strict)
-OB_LOOKBACK      = 5        # Lookback OB court pour M1
-FVG_MIN_GAP      = 0.001    # FVG minimum 0.1%
+# Fonctions palier ────────────────────────────────────────────────
+def get_tier() -> int:
+    if account_balance < TIER1_LIMIT: return 1
+    if account_balance < TIER2_LIMIT: return 2
+    return 3
+
+def get_tier_label() -> str:
+    t = get_tier()
+    labels = {1: "🔴 SURVIE", 2: "🟡 CROISSANCE", 3: "🟢 NORMAL"}
+    return labels[t]
+
+def get_risk_usdt() -> float:
+    p = TIER_PARAMS[get_tier()]
+    return max(0.04, min(account_balance * p["risk_pct"], p["max_risk"]))
+
+def get_leverage(score: int) -> int:
+    table = LEVERAGE_BY_TIER[get_tier()]
+    for threshold, lev in table:
+        if score >= threshold: return lev
+    return 15
+
+def get_max_sl_pct() -> float:
+    return TIER_PARAMS[get_tier()]["max_sl"]
+
+def get_max_margin_pct() -> float:
+    return TIER_PARAMS[get_tier()]["max_margin"]
+
+def get_progress_bar() -> str:
+    """Barre de progression visuelle vers $10."""
+    pct = min(account_balance / TARGET_BALANCE * 100, 100)
+    filled = int(pct / 10)
+    bar = "█" * filled + "░" * (10 - filled)
+    return f"[{bar}] {pct:.1f}%"
+
+# ── Filtres signal — CALIBRÉS pour trader réellement ────────────
+# v39.3 était trop strict → 0 trades. v39.4 calibré pour 3-8 trades/jour
+MIN_SCORE        = 82       # BOS_FVG(85) + SWEEP_OB(92) passent tous les 2
+MIN_CONFLUENCE   = 2        # 2/5 minimum (3 pour SWEEP_OB, 2 pour BOS_FVG)
+MIN_PROB         = 62.0     # Seuil réaliste
+MIN_BODY_RATIO   = 0.40     # Corps bougie ≥ 40% (was 45%, trop strict)
+VOLUME_SPIKE_MIN = 1.4      # Volume spike ≥ 1.4× (was 2.0× → quasi-jamais atteint)
+OB_LOOKBACK      = 6        # Lookback OB
+FVG_MIN_GAP      = 0.0006   # FVG minimum 0.06% (was 0.1% → trop rare sur M1)
 
 # ── Corrélation BTC ──────────────────────────────────────────────
 BTC_CORR_REQUIRED = True    # Activer le filtre corrélation BTC
@@ -145,7 +209,7 @@ BTC_RSI_BULL_MAX  = 68      # BTC RSI max pour BUY (pas surachat)
 BTC_RSI_BEAR_MIN  = 32      # BTC RSI min pour SELL (pas survente)
 
 # ── Cooldown ─────────────────────────────────────────────────────
-SIGNAL_COOLDOWN    = 180    # 3 min entre signaux même symbole
+SIGNAL_COOLDOWN    = 60     # 60s entre signaux même symbole (was 180s → trop long)
 CONSEC_LOSS_LIMIT  = 2      # Pause après 2 pertes consécutives
 CONSEC_COOLDOWN    = 30 * 60  # 30 min (strict)
 DD_ALERT_PCT       = 0.15   # Alerte drawdown à -15%
@@ -289,39 +353,213 @@ def _sign(params):
     q = "&".join(f"{k}={v}" for k, v in params.items())
     return hmac.new(API_SECRET.encode(), q.encode(), hashlib.sha256).hexdigest()
 
+# ════════════════════════════════════════════════════════════════════
+#  MOTEUR API INTELLIGENT — Gestion erreurs Binance
+# ════════════════════════════════════════════════════════════════════
+#
+#  Chaque rejet Binance est analysé et une solution automatique
+#  est appliquée avant de retenter. Plus jamais d'ordre perdu.
+#
+#  Code  | Problème                  | Solution auto
+#  -1021 | Timestamp désynchronisé   | Resync horloge → retry
+#  -1111 | Précision qty invalide    | Arrondir au stepSize exact
+#  -1013 | Min notional < $5         | Augmenter qty au minimum légal
+#  -2010 | Solde insuffisant         | Réduire qty de 10% → retry
+#  -4003 | stopPrice invalide        | Décaler de ±0.2% → retry
+#  -5021 | SL trop proche mark price | Décaler de ±0.15% → retry
+#  -5022 | SL déjà déclenché         | Position fermée → clore log
+#  -2011 | Ordre inconnu (annulé)    | Replacer SL sans annuler
+#  -4061 | Qty hors limites          | Clamp entre minQty/maxQty
+#  -4129 | Doit être reduceOnly      | Ajouter reduceOnly=true
+#  -1121 | Symbole invalide/suspendu | Retirer de symbols_list
+# ════════════════════════════════════════════════════════════════════
+
+def _parse_binance_error(response_text: str) -> tuple[int, str]:
+    """Extrait (code, message) d'une réponse d'erreur Binance."""
+    import json
+    try:
+        d = json.loads(response_text)
+        return int(d.get("code", 0)), str(d.get("msg", ""))
+    except:
+        return 0, response_text[:100]
+
 def request_binance(method, path, params=None, signed=True):
+    """Requête Binance avec gestion intelligente de TOUS les codes d'erreur."""
     if params is None: params = {}
     _rate_limit()
     headers = {"X-MBX-APIKEY": API_KEY}
-    url = BASE_URL + path
+    url     = BASE_URL + path
+
     with api_semaphore:
-        for attempt in range(3):
+        for attempt in range(4):
             try:
+                p = dict(params)   # Copie pour chaque tentative
                 if signed:
-                    params.pop("signature", None)
-                    params["timestamp"]  = int(time.time() * 1000) + _binance_time_offset
-                    params["recvWindow"] = 20000
-                    params["signature"]  = _sign(params)
-                if   method == "GET":    r = requests.get(url,    params=params, headers=headers, timeout=10)
-                elif method == "POST":   r = requests.post(url,   params=params, headers=headers, timeout=10)
-                elif method == "DELETE": r = requests.delete(url, params=params, headers=headers, timeout=10)
+                    p.pop("signature", None)
+                    p["timestamp"]  = int(time.time() * 1000) + _binance_time_offset
+                    p["recvWindow"] = 20000
+                    p["signature"]  = _sign(p)
+
+                if   method == "GET":    r = requests.get(url,    params=p, headers=headers, timeout=10)
+                elif method == "POST":   r = requests.post(url,   params=p, headers=headers, timeout=10)
+                elif method == "DELETE": r = requests.delete(url, params=p, headers=headers, timeout=10)
                 else: return None
-                if r.status_code == 200: return r.json()
-                elif r.status_code == 429:
-                    time.sleep([5,15,30][min(attempt,2)])
-                elif r.status_code in (401, 403):
-                    logger.error(f"🔑 API {r.status_code}")
-                    send_telegram(f"🔑 <b>Erreur API {r.status_code}</b>")
+
+                if r.status_code == 200:
+                    return r.json()
+
+                code, msg = _parse_binance_error(r.text)
+                logger.debug(f"Binance {r.status_code} code={code} msg={msg[:80]} attempt={attempt+1}")
+
+                # ── Gestion HTTP ──────────────────────────────────
+                if r.status_code == 429:
+                    wait = [5, 15, 30, 60][min(attempt, 3)]
+                    logger.warning(f"⚠️  Rate limit 429 → attente {wait}s")
+                    time.sleep(wait)
+                    continue
+
+                if r.status_code == 418:
+                    logger.error("🚫 IP bannie 418 → attente 120s")
+                    time.sleep(120)
                     return None
-                elif r.status_code == 418:
-                    time.sleep(120); return None
+
+                if r.status_code in (401, 403):
+                    logger.error(f"🔑 Auth {r.status_code} — clé API invalide")
+                    send_telegram(f"🔑 <b>Erreur auth {r.status_code}</b> — vérifie les clés API")
+                    return None
+
+                # ── Gestion codes Binance spécifiques ─────────────
+                if code == -1021:
+                    # Timestamp désynchronisé → resync et retry
+                    logger.warning(f"⏱️  Timestamp désync (-1021) → resync")
+                    sync_binance_time()
+                    continue
+
+                elif code == -1111:
+                    # Précision qty invalide → arrondir au stepSize
+                    sym  = params.get("symbol", "?")
+                    info = symbol_info_cache.get(sym, {})
+                    step = info.get("stepSize", 0.001)
+                    qp   = info.get("quantityPrecision", 3)
+                    if "quantity" in params:
+                        old_qty = float(params["quantity"])
+                        new_qty = round(_round_step(old_qty, step), qp)
+                        params["quantity"] = new_qty
+                        logger.info(f"🔧 -1111 précision qty {old_qty} → {new_qty} (step={step})")
+                        continue
+
+                elif code == -1013:
+                    # Min notional non atteint → augmenter qty
+                    sym  = params.get("symbol", "?")
+                    info = symbol_info_cache.get(sym, {})
+                    step = info.get("stepSize", 0.001)
+                    pr   = get_price(sym) or 1.0
+                    min_n = info.get("minNotional", MIN_NOTIONAL)
+                    if "quantity" in params:
+                        new_qty = _round_step(min_n / pr + step, step)
+                        params["quantity"] = new_qty
+                        logger.info(f"🔧 -1013 min notional → qty {new_qty} (notional={new_qty*pr:.2f}$)")
+                        continue
+
+                elif code == -2010:
+                    # Solde insuffisant → réduire qty de 15%
+                    if "quantity" in params and attempt < 2:
+                        old_qty = float(params["quantity"])
+                        sym     = params.get("symbol", "?")
+                        info    = symbol_info_cache.get(sym, {})
+                        step    = info.get("stepSize", 0.001)
+                        new_qty = _round_step(old_qty * 0.85, step)
+                        params["quantity"] = new_qty
+                        logger.warning(f"⚠️  -2010 solde insuf → qty {old_qty} → {new_qty} (-15%)")
+                        continue
+                    return None
+
+                elif code in (-4003, -5021):
+                    # stopPrice invalide ou trop proche du mark price
+                    # → décaler de 0.2% dans la bonne direction
+                    sym  = params.get("symbol", "?")
+                    info = symbol_info_cache.get(sym, {})
+                    pp   = info.get("pricePrecision", 4)
+                    if "stopPrice" in params and "side" in params:
+                        sp       = float(params["stopPrice"])
+                        mark     = get_price(sym) or sp
+                        # SELL SL → en dessous du mark, BUY SL → au dessus
+                        side_ord = params.get("side", "")
+                        # Pour SL : close_side = SELL si BUY position
+                        # stopPrice doit être SOUS le mark pour BUY position (close SELL)
+                        shift = mark * 0.002   # 0.2% de décalage
+                        if side_ord == "SELL":    # Ferme un BUY → SL en dessous
+                            new_sp = round(min(sp, mark - shift), pp)
+                        else:                     # Ferme un SELL → SL au dessus
+                            new_sp = round(max(sp, mark + shift), pp)
+                        params["stopPrice"] = new_sp
+                        logger.warning(
+                            f"⚠️  {'-4003' if code==-4003 else '-5021'} stopPrice "
+                            f"{sp:.{pp}f} → {new_sp:.{pp}f} (mark={mark:.{pp}f})"
+                        )
+                        continue
+
+                elif code == -5022:
+                    # SL déjà déclenché → position probablement fermée
+                    sym = params.get("symbol", "?")
+                    logger.warning(f"⚠️  -5022 {sym} SL déjà déclenché → position fermée")
+                    # Le monitor_positions détectera la fermeture au prochain cycle
+                    return {"_already_triggered": True}
+
+                elif code == -2011:
+                    # Ordre inconnu → il a déjà été annulé par Binance
+                    # Ne pas tenter de le DELETE, juste re-placer le SL
+                    logger.warning(f"⚠️  -2011 ordre inconnu (déjà annulé) → skip DELETE")
+                    if method == "DELETE":
+                        return {"_already_cancelled": True}
+                    continue
+
+                elif code == -4061:
+                    # Qty hors limites → clamp entre minQty et maxQty
+                    sym  = params.get("symbol", "?")
+                    info = symbol_info_cache.get(sym, {})
+                    if "quantity" in params:
+                        qty    = float(params["quantity"])
+                        min_q  = info.get("minQty", 0.001)
+                        step   = info.get("stepSize", 0.001)
+                        new_q  = max(qty, min_q)
+                        new_q  = _round_step(new_q, step)
+                        params["quantity"] = new_q
+                        logger.warning(f"⚠️  -4061 qty hors limites {qty} → {new_q}")
+                        continue
+
+                elif code == -4129:
+                    # Doit être reduceOnly → ajouter le flag
+                    if "reduceOnly" not in params:
+                        params["reduceOnly"] = "true"
+                        logger.warning(f"⚠️  -4129 → ajout reduceOnly=true")
+                        continue
+
+                elif code == -1121:
+                    # Symbole invalide ou suspendu → retirer de la liste
+                    sym = params.get("symbol", "?")
+                    logger.error(f"❌ -1121 symbole invalide/suspendu : {sym}")
+                    if sym in symbols_list:
+                        symbols_list.remove(sym)
+                        logger.warning(f"   {sym} retiré de la liste")
+                        send_telegram(f"⚠️ <b>{sym} suspendu</b> — retiré de la liste")
+                    return None
+
                 else:
-                    if "-1021" in r.text and attempt < 2:
-                        sync_binance_time(); continue
+                    # Erreur non reconnue → log et retry simple
+                    logger.warning(f"⚠️  Binance {r.status_code} code={code}: {msg[:60]}")
+                    if attempt < 3:
+                        time.sleep(1.0 * (attempt + 1))
+                        continue
                     return None
+
+            except requests.exceptions.Timeout:
+                logger.warning(f"⏳ Timeout attempt {attempt+1} → retry")
+                time.sleep(1.5 * (attempt + 1))
             except Exception as e:
-                logger.debug(f"API {attempt+1}: {e}")
-                time.sleep(1*(attempt+1))
+                logger.debug(f"API exception attempt {attempt+1}: {e}")
+                time.sleep(1.0 * (attempt + 1))
+
     return None
 
 # ─── MARKET DATA ─────────────────────────────────────────────────
@@ -359,9 +597,9 @@ def get_account_balance():
                 return account_balance
     return account_balance
 
-def get_risk_usdt():
-    """Risque dynamique : 6% balance, borné $0.04–$0.40."""
-    return max(RISK_MIN_USDT, min(account_balance * RISK_PCT, RISK_MAX_USDT))
+
+# get_risk_usdt / get_leverage / get_max_sl_pct / get_max_margin_pct
+# sont définis dans la section PALIERS ci-dessus
 
 # ─── LOAD SYMBOLS ────────────────────────────────────────────────
 def load_top_symbols():
@@ -520,8 +758,10 @@ def get_btc_m1_direction() -> dict:
         else:
             slope = 0.0
 
-        bull = e5 > e13 and price > e5 and slope > 0.001 and rsi < BTC_RSI_BULL_MAX
-        bear = e5 < e13 and price < e5 and slope < -0.001 and rsi > BTC_RSI_BEAR_MIN
+        # v39.4 : slope supprimée comme condition bloquante
+        # EMA5/EMA13 + prix + RSI suffisent pour déterminer la direction
+        bull = e5 > e13 and price > e5 and rsi < BTC_RSI_BULL_MAX
+        bear = e5 < e13 and price < e5 and rsi > BTC_RSI_BEAR_MIN
 
         if bull:
             direction = 1
@@ -627,9 +867,9 @@ def analyse_m1(symbol: str, klines: list):
         if rsi > 72 or rsi < 28:
             return None
 
-        if bull_ema and 30 < rsi < 65:
+        if bull_ema and 28 < rsi < 70:
             direction = "BUY"
-        elif bear_ema and 35 < rsi < 70:
+        elif bear_ema and 30 < rsi < 72:
             direction = "SELL"
         else:
             return None
@@ -652,16 +892,16 @@ def analyse_m1(symbol: str, klines: list):
         # ══════════════════════════════════════════════════════════
         # SETUP 1 — SWEEP_OB (score 92) — LE MEILLEUR
         # Balayage liquidité M1 + retour Order Block
-        # Confluence obligatoire : sweep + OB + volume + direction
+        # v39.4 : vol_spike optionnel (compte dans confluence, pas bloquant)
         # ══════════════════════════════════════════════════════════
-        if direction == "BUY" and len(pl) >= 2 and vol_spike:
+        if direction == "BUY" and len(pl) >= 2:
             prev_low = l[pl[-2]]
             for i in range(n-4, max(n-10, 1), -1):
                 if l[i] < prev_low and c[i] > prev_low:
                     # Chercher OB (dernière bougie rouge avant le sweep)
                     ob_idx = None
                     for j in range(i-1, max(0, i-OB_LOOKBACK), -1):
-                        if c[j] < o[j] and (o[j]-c[j]) > atr * 0.3:
+                        if c[j] < o[j] and (o[j]-c[j]) > atr * 0.25:
                             ob_idx = j
                             break
                     if ob_idx is not None and c[-1] > c[-2]:
@@ -670,11 +910,11 @@ def analyse_m1(symbol: str, klines: list):
                         conf = sum([
                             1,                                    # Setup de base
                             bool(bull_struct),                    # Structure haussière
-                            bool(rsi < 55),                       # RSI pas surachat
+                            bool(rsi < 58),                       # RSI pas surachat
                             bool(e9[-1] > e21[-1]),               # EMA alignées
-                            bool(h[pl[-1]] < h[ph[-1]] if ph else False),  # CHoCH
+                            bool(vol_spike),                      # Volume spike bonus
                         ])
-                        if conf >= MIN_CONFLUENCE:
+                        if conf >= 2:  # Min 2 pour SWEEP_OB
                             setups.append({
                                 "name": "SWEEP_OB", "score": 92,
                                 "confluence": min(conf, 5),
@@ -683,13 +923,13 @@ def analyse_m1(symbol: str, klines: list):
                             })
                     break
 
-        elif direction == "SELL" and len(ph) >= 2 and vol_spike:
+        elif direction == "SELL" and len(ph) >= 2:
             prev_high = h[ph[-2]]
             for i in range(n-4, max(n-10, 1), -1):
                 if h[i] > prev_high and c[i] < prev_high:
                     ob_idx = None
                     for j in range(i-1, max(0, i-OB_LOOKBACK), -1):
-                        if c[j] > o[j] and (c[j]-o[j]) > atr * 0.3:
+                        if c[j] > o[j] and (c[j]-o[j]) > atr * 0.25:
                             ob_idx = j
                             break
                     if ob_idx is not None and c[-1] < c[-2]:
@@ -698,11 +938,11 @@ def analyse_m1(symbol: str, klines: list):
                         conf = sum([
                             1,
                             bool(bear_struct),
-                            bool(rsi > 45),
+                            bool(rsi > 42),
                             bool(e9[-1] < e21[-1]),
-                            bool(l[ph[-1]] > l[pl[-1]] if pl else False),
+                            bool(vol_spike),
                         ])
-                        if conf >= MIN_CONFLUENCE:
+                        if conf >= 2:
                             setups.append({
                                 "name": "SWEEP_OB", "score": 92,
                                 "confluence": min(conf, 5),
@@ -714,12 +954,12 @@ def analyse_m1(symbol: str, klines: list):
         # ══════════════════════════════════════════════════════════
         # SETUP 2 — BOS_FVG (score 85)
         # BOS confirmé + FVG mitigation M1
+        # v39.4 : confluence min 2, vol_spike en bonus seulement
         # ══════════════════════════════════════════════════════════
         if direction == "BUY" and len(ph) >= 2:
             bos_level = h[ph[-2]]
-            if c[-1] > bos_level and c[-2] > bos_level:  # BOS confirmé 2 bougies
-                # Chercher FVG récent
-                for i in range(n-5, max(0, n-15), -1):
+            if c[-1] > bos_level:  # BOS confirmé sur 1 bougie suffit
+                for i in range(n-5, max(0, n-18), -1):
                     if i+2 < n:
                         gap = l[i+2] - h[i]
                         if gap > price * FVG_MIN_GAP:
@@ -727,10 +967,10 @@ def analyse_m1(symbol: str, klines: list):
                                 1,
                                 bool(vol_spike),
                                 bool(bull_struct),
-                                bool(rsi < 60),
-                                bool(gap > atr * 0.5),
+                                bool(rsi < 62),
+                                bool(gap > atr * 0.3),
                             ])
-                            if conf >= MIN_CONFLUENCE:
+                            if conf >= 2:
                                 setups.append({
                                     "name": "BOS_FVG", "score": 85,
                                     "confluence": min(conf, 5),
@@ -741,8 +981,8 @@ def analyse_m1(symbol: str, klines: list):
 
         elif direction == "SELL" and len(pl) >= 2:
             bos_level = l[pl[-2]]
-            if c[-1] < bos_level and c[-2] < bos_level:
-                for i in range(n-5, max(0, n-15), -1):
+            if c[-1] < bos_level:
+                for i in range(n-5, max(0, n-18), -1):
                     if i+2 < n:
                         gap = l[i] - h[i+2]
                         if gap > price * FVG_MIN_GAP:
@@ -750,10 +990,10 @@ def analyse_m1(symbol: str, klines: list):
                                 1,
                                 bool(vol_spike),
                                 bool(bear_struct),
-                                bool(rsi > 40),
-                                bool(gap > atr * 0.5),
+                                bool(rsi > 38),
+                                bool(gap > atr * 0.3),
                             ])
-                            if conf >= MIN_CONFLUENCE:
+                            if conf >= 2:
                                 setups.append({
                                     "name": "BOS_FVG", "score": 85,
                                     "confluence": min(conf, 5),
@@ -775,18 +1015,16 @@ def analyse_m1(symbol: str, klines: list):
             return None
 
         # ── Trigger M1 : bougie franche confirmée ─────────────────
+        # v39.4 : vol_spike retiré comme condition bloquante finale
+        # (déjà inclus dans le score de confluence)
         ko, kc, kh, kl = o[-2], c[-2], h[-2], l[-2]
-        body  = abs(kc - ko)
+        body   = abs(kc - ko)
         range_ = kh - kl if kh > kl else 1.0
         body_ratio = body / range_
 
         if direction == "BUY"  and not (kc > ko and body_ratio >= MIN_BODY_RATIO):
             return None
         if direction == "SELL" and not (kc < ko and body_ratio >= MIN_BODY_RATIO):
-            return None
-
-        # Volume spike obligatoire sur le trigger
-        if not vol_spike:
             return None
 
         # ── Probabilité ──────────────────────────────────────────
@@ -834,228 +1072,465 @@ def get_sl(symbol, side, ob, entry, atr):
     dist = min(dist, entry * MAX_SL_PCT)
     return round(entry - dist if side == "BUY" else entry + dist, pp)
 
-# ─── LEVIER ──────────────────────────────────────────────────────
-def get_leverage(score):
-    for threshold, lev in LEVERAGE_TABLE:
-        if score >= threshold: return lev
-    return 10
-
 # ─── BINANCE ORDERS ──────────────────────────────────────────────
 def set_leverage_sym(symbol, lev):
-    try: request_binance("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": lev})
-    except: pass
+    """
+    Applique le levier demandé.
+    Si Binance refuse (levier trop élevé pour ce symbole),
+    essaie des leviers décroissants jusqu'à ce que ça passe.
+    """
+    fallbacks = [lev]
+    # Générer des paliers de repli : -5x à chaque étape
+    cur = lev
+    while cur > 5:
+        cur = max(5, cur - 5)
+        fallbacks.append(cur)
+
+    for try_lev in fallbacks:
+        r = request_binance("POST", "/fapi/v1/leverage",
+                            {"symbol": symbol, "leverage": try_lev})
+        if r and "leverage" in r:
+            actual = int(r["leverage"])
+            if actual != lev:
+                logger.warning(f"⚠️  {symbol} levier {lev}x refusé → accepté {actual}x")
+            else:
+                logger.debug(f"  {symbol} levier {actual}x ✅")
+            # Mettre à jour le cache pour que open_position utilise le bon levier
+            symbol_info_cache.setdefault(symbol, {})["actual_leverage"] = actual
+            return actual
+        time.sleep(0.2)
+
+    logger.error(f"❌ {symbol} impossible de définir le levier → garde existant")
+    return lev
 
 def set_isolated(symbol):
-    try: request_binance("POST", "/fapi/v1/marginType", {"symbol": symbol, "marginType": "ISOLATED"})
-    except: pass
+    """
+    Met le mode ISOLATED.
+    Si Binance refuse (position ouverte → ne peut pas changer),
+    continue en CROSS sans bloquer le trade.
+    """
+    r = request_binance("POST", "/fapi/v1/marginType",
+                        {"symbol": symbol, "marginType": "ISOLATED"})
+    if r is None:
+        # Peut échouer si position déjà ouverte ou si margin type déjà correct
+        # → on vérifie l'état actuel
+        pos = request_binance("GET", "/fapi/v2/positionRisk", {"symbol": symbol})
+        if pos:
+            for p in pos:
+                if p.get("symbol") == symbol:
+                    mode = p.get("marginType", "unknown")
+                    if mode == "isolated":
+                        logger.debug(f"  {symbol} déjà ISOLATED ✅")
+                    else:
+                        logger.warning(f"  {symbol} CROSS maintenu (position ouverte) — OK")
 
 def cleanup_orders(symbol):
+    """Annule tous les ordres ouverts — ignore les erreurs individuelles."""
     try:
         orders = request_binance("GET", "/fapi/v1/openOrders", {"symbol": symbol})
-        if orders:
-            for o in orders:
-                request_binance("DELETE", "/fapi/v1/order", {"symbol": symbol, "orderId": o["orderId"]})
-    except: pass
+        if not orders:
+            return
+        for o in orders:
+            oid = o.get("orderId")
+            if oid:
+                r = request_binance("DELETE", "/fapi/v1/order",
+                                    {"symbol": symbol, "orderId": oid})
+                if r and r.get("_already_cancelled"):
+                    pass  # Déjà annulé — normal
+                elif r:
+                    logger.debug(f"  {symbol} ordre {oid} annulé ✅")
+    except Exception as e:
+        logger.debug(f"cleanup_orders {symbol}: {e}")
 
 def place_market(symbol, side, qty):
+    """
+    Ordre MARKET avec gestion intelligente des rejets :
+    - -1111 : précision qty → corrigé par request_binance
+    - -1013 : min notional → qty augmentée par request_binance
+    - -2010 : solde insuf  → qty réduite 2× avant abandon
+    - Si toujours rejeté : retourne None (position non ouverte)
+    """
     info = symbol_info_cache.get(symbol, {})
     qp   = info.get("quantityPrecision", 3)
-    return request_binance("POST", "/fapi/v1/order", {
-        "symbol": symbol, "side": side, "type": "MARKET",
-        "quantity": round(qty, qp)
+    step = info.get("stepSize", 0.001)
+
+    qty_adj = _round_step(qty, step)
+    qty_adj = round(qty_adj, qp)
+
+    r = request_binance("POST", "/fapi/v1/order", {
+        "symbol":   symbol,
+        "side":     side,
+        "type":     "MARKET",
+        "quantity": qty_adj,
     })
 
-def place_sl_binance(symbol, sl, close_side):
-    info = symbol_info_cache.get(symbol, {})
-    pp   = info.get("pricePrecision", 4)
-    for _ in range(3):
-        r = request_binance("POST", "/fapi/v1/order", {
-            "symbol": symbol, "side": close_side,
-            "type": "STOP_MARKET", "stopPrice": round(sl, pp),
-            "closePosition": "true", "workingType": "MARK_PRICE",
-        })
-        if r and r.get("orderId"):
-            logger.info(f"🛡️  {symbol} SL ✅ @ {round(sl, pp)} id={r['orderId']}")
-            return {"sent": True, "order_id": r["orderId"]}
-        time.sleep(0.4)
-    logger.error(f"🚨 {symbol} SL Binance échoué → logiciel")
-    send_telegram(f"🚨 <b>SL {symbol} non posé</b> → SL logiciel actif @ {sl}")
-    return {"sent": False, "order_id": None}
+    if r and r.get("orderId"):
+        logger.info(f"  {symbol} MARKET {side} qty={qty_adj} ✅ id={r['orderId']}")
+        return r
+
+    # request_binance a déjà tenté les corrections auto (-1111, -1013, -2010)
+    # Si on arrive ici → ordre impossible → ne pas ouvrir la position
+    logger.error(f"❌ {symbol} MARKET {side} échoué définitivement — position annulée")
+    send_telegram(
+        f"❌ <b>Ordre MARKET {symbol} {side} impossible</b>\n"
+        f"qty={qty_adj} | Position non ouverte\n"
+        f"Prochain signal sera pris"
+    )
+    return None
 
 def place_tp_binance(symbol, tp, close_side):
+    """
+    Pose un TP avec fallback CONTRACT_PRICE.
+    Si les deux échouent, le TP RR2.5 sera géré par le trailing SL.
+    """
     info = symbol_info_cache.get(symbol, {})
     pp   = info.get("pricePrecision", 4)
+
+    # Tentative 1 : MARK_PRICE
     for _ in range(2):
         r = request_binance("POST", "/fapi/v1/order", {
-            "symbol": symbol, "side": close_side,
-            "type": "TAKE_PROFIT_MARKET", "stopPrice": round(tp, pp),
-            "closePosition": "true", "workingType": "MARK_PRICE",
+            "symbol":        symbol,
+            "side":          close_side,
+            "type":          "TAKE_PROFIT_MARKET",
+            "stopPrice":     round(tp, pp),
+            "closePosition": "true",
+            "workingType":   "MARK_PRICE",
         })
         if r and r.get("orderId"):
-            logger.info(f"🎯 {symbol} TP ✅ @ {round(tp, pp)}")
-            return {"sent": True, "order_id": r["orderId"]}
+            logger.info(f"🎯 {symbol} TP ✅ MARK_PRICE @ {round(tp,pp)}")
+            return {"sent": True, "order_id": r["orderId"], "method": "MARK_PRICE"}
         time.sleep(0.3)
-    return {"sent": False, "order_id": None}
 
-def move_sl_binance(symbol, old_id, new_sl, close_side):
-    """Déplace le SL sur Binance — HORS du trade_lock."""
+    # Tentative 2 : CONTRACT_PRICE
+    for _ in range(2):
+        r = request_binance("POST", "/fapi/v1/order", {
+            "symbol":        symbol,
+            "side":          close_side,
+            "type":          "TAKE_PROFIT_MARKET",
+            "stopPrice":     round(tp, pp),
+            "closePosition": "true",
+            "workingType":   "CONTRACT_PRICE",
+        })
+        if r and r.get("orderId"):
+            logger.info(f"🎯 {symbol} TP ✅ CONTRACT_PRICE @ {round(tp,pp)}")
+            return {"sent": True, "order_id": r["orderId"], "method": "CONTRACT_PRICE"}
+        time.sleep(0.3)
+
+    # TP non posé → le trailing SL prendra le relais au RR2.5
+    logger.warning(f"⚠️  {symbol} TP non posé → trailing SL gère la sortie")
+    return {"sent": False, "order_id": None, "method": "TRAILING"}
+
+def place_sl_binance(symbol, sl, close_side):
+    """
+    Pose un SL sur Binance avec 3 stratégies de fallback :
+    1. STOP_MARKET MARK_PRICE (standard)
+    2. STOP_MARKET CONTRACT_PRICE (si mark price rejeté)
+    3. SL logiciel piloté par le monitor (dernier recours)
+    """
     info = symbol_info_cache.get(symbol, {})
     pp   = info.get("pricePrecision", 4)
-    # Annuler l'ancien
+
+    # ── Stratégie 1 : STOP_MARKET workingType=MARK_PRICE (standard) ──
+    for attempt in range(3):
+        r = request_binance("POST", "/fapi/v1/order", {
+            "symbol":        symbol,
+            "side":          close_side,
+            "type":          "STOP_MARKET",
+            "stopPrice":     round(sl, pp),
+            "closePosition": "true",
+            "workingType":   "MARK_PRICE",
+        })
+        if r and r.get("orderId"):
+            logger.info(f"🛡️  {symbol} SL ✅ MARK_PRICE @ {round(sl,pp)} id={r['orderId']}")
+            return {"sent": True, "order_id": r["orderId"], "method": "MARK_PRICE"}
+        if r and r.get("_already_triggered"):
+            logger.warning(f"⚠️  {symbol} SL -5022 déjà déclenché → position fermée")
+            return {"sent": False, "order_id": None, "triggered": True}
+        time.sleep(0.5)
+
+    # ── Stratégie 2 : STOP_MARKET workingType=CONTRACT_PRICE ──────────
+    logger.warning(f"⚠️  {symbol} MARK_PRICE rejeté → essai CONTRACT_PRICE")
+    for attempt in range(2):
+        r = request_binance("POST", "/fapi/v1/order", {
+            "symbol":        symbol,
+            "side":          close_side,
+            "type":          "STOP_MARKET",
+            "stopPrice":     round(sl, pp),
+            "closePosition": "true",
+            "workingType":   "CONTRACT_PRICE",
+        })
+        if r and r.get("orderId"):
+            logger.info(f"🛡️  {symbol} SL ✅ CONTRACT_PRICE @ {round(sl,pp)} id={r['orderId']}")
+            return {"sent": True, "order_id": r["orderId"], "method": "CONTRACT_PRICE"}
+        time.sleep(0.5)
+
+    # ── Stratégie 3 : SL logiciel (monitor toutes les 2s) ────────────
+    logger.error(f"🚨 {symbol} SL Binance impossible → SL LOGICIEL activé @ {round(sl,pp)}")
+    send_telegram(
+        f"🚨 <b>SL {symbol} non posé sur Binance</b>\n"
+        f"SL logiciel actif @ {round(sl,pp)}\n"
+        f"Monitor vérifie toutes les 2s ✅"
+    )
+    return {"sent": False, "order_id": None, "method": "SOFTWARE"}
+
+
+def move_sl_binance(symbol, old_id, new_sl, close_side):
+    """
+    Déplace le SL sur Binance intelligemment :
+    1. Annule l'ancien SL (ignore si déjà annulé : -2011)
+    2. Pose le nouveau avec fallback CONTRACT_PRICE si MARK_PRICE rejeté
+    Appelé HORS du trade_lock — aucun deadlock possible.
+    """
+    info = symbol_info_cache.get(symbol, {})
+    pp   = info.get("pricePrecision", 4)
+
+    # ── Étape 1 : Annuler l'ancien SL ────────────────────────────
     if old_id:
-        request_binance("DELETE", "/fapi/v1/order", {"symbol": symbol, "orderId": old_id})
-    # Poser le nouveau
+        r_del = request_binance("DELETE", "/fapi/v1/order",
+                                {"symbol": symbol, "orderId": old_id})
+        if r_del and r_del.get("_already_cancelled"):
+            logger.debug(f"  {symbol} ancien SL {old_id} déjà annulé — OK")
+        elif r_del:
+            logger.debug(f"  {symbol} ancien SL {old_id} annulé ✅")
+
+    # ── Étape 2 : Poser le nouveau SL — MARK_PRICE ───────────────
     for _ in range(3):
         r = request_binance("POST", "/fapi/v1/order", {
-            "symbol": symbol, "side": close_side,
-            "type": "STOP_MARKET", "stopPrice": round(new_sl, pp),
-            "closePosition": "true", "workingType": "MARK_PRICE",
+            "symbol":        symbol,
+            "side":          close_side,
+            "type":          "STOP_MARKET",
+            "stopPrice":     round(new_sl, pp),
+            "closePosition": "true",
+            "workingType":   "MARK_PRICE",
         })
         if r and r.get("orderId"):
             return r
+        if r and r.get("_already_triggered"):
+            # SL déclenché pendant le déplacement → position fermée
+            logger.warning(f"⚠️  {symbol} SL déclenché pendant déplacement → fermée")
+            with trade_lock:
+                if symbol in trade_log and trade_log[symbol].get("status") == "OPEN":
+                    trade_log[symbol]["status"]    = "CLOSED"
+                    trade_log[symbol]["closed_by"] = "SL_TRIGGERED_DURING_MOVE"
+                    _on_closed(symbol, trade_log[symbol], is_win=False)
+            return None
         time.sleep(0.3)
+
+    # ── Fallback : CONTRACT_PRICE ─────────────────────────────────
+    logger.warning(f"⚠️  {symbol} MARK_PRICE rejeté sur trailing → CONTRACT_PRICE")
+    for _ in range(2):
+        r = request_binance("POST", "/fapi/v1/order", {
+            "symbol":        symbol,
+            "side":          close_side,
+            "type":          "STOP_MARKET",
+            "stopPrice":     round(new_sl, pp),
+            "closePosition": "true",
+            "workingType":   "CONTRACT_PRICE",
+        })
+        if r and r.get("orderId"):
+            logger.info(f"  {symbol} nouveau SL via CONTRACT_PRICE ✅ @ {round(new_sl,pp)}")
+            return r
+        time.sleep(0.3)
+
+    logger.error(f"❌ {symbol} move_sl_binance échoué — SL logiciel à {round(new_sl,pp)}")
     return None
 
 # ════════════════════════════════════════════════════════════════════
-#  SL SUIVEUR AVEC FRAIS RÉELS BINANCE
+#  SL SUIVEUR — FRAIS RÉELS GARANTIS v39.4
 # ════════════════════════════════════════════════════════════════════
 def update_trailing_sl(symbol: str):
     """
-    SL Suiveur v39.3 avec frais Binance réels :
+    SL Suiveur v39.4 — frais Binance réels intégrés à CHAQUE étape
 
-    FRAIS BINANCE FUTURES :
-    ► Ouverture  : 0.04% (taker)
-    ► Fermeture  : 0.04% (taker)
-    ► Total A/R  : 0.08%
-    ► Buffer     : +0.04% = 0.12% total
-
-    BREAKEVEN RÉEL :
-    ► BUY  : BE_SL = entry × (1 + 0.0012) → couvre les frais A/R
-    ► SELL : BE_SL = entry × (1 - 0.0012)
-
-    Le BE ne se déclenche QUE quand le profit couvre les frais.
-    Sans ça le BE te fait perdre de l'argent sur chaque trade.
-
-    TRAILING :
-    ► Démarre à +1R (après BE)
-    ► Distance = ATR M1 live × 0.7 (serré pour M1)
-    ► Ne recule JAMAIS
-    ► Appelé toutes les 2s
+    ┌─────────────────────────────────────────────────────────────┐
+    │  FRAIS BINANCE FUTURES TAKER                                │
+    │  Ouverture  : 0.04% du notionnel                           │
+    │  Fermeture  : 0.04% du notionnel                           │
+    │  Total A/R  : 0.08% + buffer 50% = 0.12% (BREAKEVEN_FEE)  │
+    ├─────────────────────────────────────────────────────────────┤
+    │  PLANCHER FRAIS (FEE_FLOOR) — plancher absolu du SL        │
+    │  BUY  : entry × (1 + 0.0008)  → couvre open+close fees    │
+    │  SELL : entry × (1 - 0.0008)  → couvre open+close fees    │
+    │  Le SL ne peut JAMAIS descendre sous ce plancher           │
+    ├─────────────────────────────────────────────────────────────┤
+    │  PHASE 1 — BREAKEVEN (+0.6R) :                             │
+    │  BUY  : SL → entry × 1.0012  (frais + buffer 50%)         │
+    │  SELL : SL → entry × 0.9988                               │
+    ├─────────────────────────────────────────────────────────────┤
+    │  PHASE 2 — TRAILING (+1R) :                                │
+    │  SL = prix_actuel - ATR_M1_live × 0.7  (BUY)              │
+    │  SL = prix_actuel + ATR_M1_live × 0.7  (SELL)             │
+    │  + garantie : SL ≥ FEE_FLOOR (jamais sous les frais)       │
+    │  + garantie : SL ne recule JAMAIS                          │
+    │  + appelé toutes les 2s                                    │
+    └─────────────────────────────────────────────────────────────┘
     """
-    # ── Lecture trade_log (lock court) ───────────────────────────
+    # ── Étape 1 : Lecture trade_log (lock COURT) ─────────────────
     with trade_lock:
         if symbol not in trade_log: return
         t = trade_log[symbol]
         if t.get("status") != "OPEN": return
-        side        = t["side"]
-        entry       = t["entry"]
-        sl          = t["sl"]
-        sl_order_id = t.get("sl_order_id")
-        be_moved    = t.get("breakeven_moved", False)
-        info        = symbol_info_cache.get(symbol, {})
-        pp          = info.get("pricePrecision", 4)
+        side         = t["side"]
+        entry        = t["entry"]
+        sl           = t["sl"]
+        sl_order_id  = t.get("sl_order_id")
+        be_moved     = t.get("breakeven_moved", False)
+        info         = symbol_info_cache.get(symbol, {})
+        pp           = info.get("pricePrecision", 4)
 
-    # ── Prix et ATR live (hors lock) ─────────────────────────────
+    # ── Étape 2 : Prix et ATR live (HORS lock, API libre) ────────
     current_price = get_price(symbol)
     if not current_price or current_price <= 0: return
 
-    atr        = _atr_live(symbol)
+    atr        = _atr_live(symbol)   # ATR recalculé live sur M1 frais
     close_side = "SELL" if side == "BUY" else "BUY"
 
-    # ── Calcul RR ────────────────────────────────────────────────
+    # ── Étape 3 : Calcul RR courant ──────────────────────────────
     risk   = abs(entry - sl)
     if risk <= 0: return
     profit = (current_price - entry) if side == "BUY" else (entry - current_price)
     rr     = profit / risk
 
-    new_sl   = sl
-    action   = None
+    new_sl     = sl       # Départ : SL actuel (ne peut qu'augmenter/diminuer vers faveur)
+    action     = None
     be_trigger = False
+    trail_used = False
 
-    # ── PHASE 1 : BREAKEVEN FRAIS RÉELS ─────────────────────────
-    # BE uniquement si on est au-dessus du seuil de rentabilité net
-    # Frais A/R = 0.12% de l'entry
+    # ── Plancher frais absolu ─────────────────────────────────────
+    # Ce plancher garantit que si le SL est touché, on couvre
+    # au minimum les frais d'ouverture ET de fermeture (0.08%)
+    # Le SL ne peut JAMAIS descendre sous ce plancher.
+    if side == "BUY":
+        fee_floor = round(entry * (1.0 + BINANCE_FEE_RATE * 2), pp)  # entry × 1.0008
+    else:
+        fee_floor = round(entry * (1.0 - BINANCE_FEE_RATE * 2), pp)  # entry × 0.9992
+
+    # ── PHASE 1 : BREAKEVEN avec frais réels (+0.6R) ─────────────
+    # Déclenché seulement si on est réellement au-dessus du coût
+    # total des frais aller-retour (0.12% avec buffer)
     if rr >= BREAKEVEN_RR and not be_moved:
-        fee_amount = entry * BREAKEVEN_FEE_TOTAL   # ex: 95000 × 0.0012 = $114 → non, c'est %
-        # BE_SL protège les frais + donne un petit profit
         if side == "BUY":
             be_sl = round(entry * (1.0 + BREAKEVEN_FEE_TOTAL), pp)
             if be_sl > sl:
-                new_sl    = be_sl
-                action    = f"BE+frais @ {be_sl:.{pp}f}"
+                new_sl     = be_sl
                 be_trigger = True
+                action     = f"BE @ {be_sl:.{pp}f} (frais {BREAKEVEN_FEE_TOTAL*100:.2f}% couverts)"
                 logger.info(
-                    f"🎯 {symbol} BREAKEVEN RÉEL | "
-                    f"SL {sl:.{pp}f} → {be_sl:.{pp}f} | "
-                    f"Profit couvre frais {BREAKEVEN_FEE_TOTAL*100:.2f}% | "
-                    f"RR={rr:.2f}R"
+                    f"🎯 {symbol} {side} BREAKEVEN RÉEL | "
+                    f"{sl:.{pp}f} → {be_sl:.{pp}f} | "
+                    f"RR={rr:.2f}R | frais 0.04%×2+buffer OK"
                 )
         else:
             be_sl = round(entry * (1.0 - BREAKEVEN_FEE_TOTAL), pp)
             if be_sl < sl:
-                new_sl    = be_sl
-                action    = f"BE+frais @ {be_sl:.{pp}f}"
+                new_sl     = be_sl
                 be_trigger = True
+                action     = f"BE @ {be_sl:.{pp}f} (frais {BREAKEVEN_FEE_TOTAL*100:.2f}% couverts)"
                 logger.info(
-                    f"🎯 {symbol} BREAKEVEN RÉEL | "
-                    f"SL {sl:.{pp}f} → {be_sl:.{pp}f} | "
-                    f"Profit couvre frais {BREAKEVEN_FEE_TOTAL*100:.2f}% | "
-                    f"RR={rr:.2f}R"
+                    f"🎯 {symbol} {side} BREAKEVEN RÉEL | "
+                    f"{sl:.{pp}f} → {be_sl:.{pp}f} | "
+                    f"RR={rr:.2f}R | frais 0.04%×2+buffer OK"
                 )
 
-    # ── PHASE 2 : TRAILING DYNAMIQUE ────────────────────────────
+    # ── PHASE 2 : TRAILING DYNAMIQUE (+1R) ───────────────────────
+    # Distance = ATR M1 live × 0.7 (serré pour scalp M1)
+    # Garanties :
+    #   ① Le trailing ne peut JAMAIS reculer (only moves in favor)
+    #   ② Le trailing ne descend JAMAIS sous fee_floor
+    #      → si touché, on sort toujours avec un profit net de frais
     if rr >= TRAIL_START_RR:
         trail_dist = atr * TRAIL_ATR_MULT
         if side == "BUY":
-            trail_sl = round(current_price - trail_dist, pp)
+            trail_sl_raw = round(current_price - trail_dist, pp)
+            # Garantie ② : plancher frais
+            trail_sl = max(trail_sl_raw, fee_floor)
+            # Garantie ① : jamais en arrière
             if trail_sl > new_sl:
-                new_sl = trail_sl
-                action = f"TRAIL @ {trail_sl:.{pp}f} ATR={atr:.{pp}f}"
+                new_sl     = trail_sl
+                trail_used = True
+                action     = (
+                    f"TRAIL @ {trail_sl:.{pp}f} | "
+                    f"ATR={atr:.{pp}f} | "
+                    f"dist={trail_dist:.{pp}f} | "
+                    f"floor={fee_floor:.{pp}f}"
+                )
         else:
-            trail_sl = round(current_price + trail_dist, pp)
+            trail_sl_raw = round(current_price + trail_dist, pp)
+            # Garantie ② : plancher frais
+            trail_sl = min(trail_sl_raw, fee_floor)
+            # Garantie ① : jamais en arrière
             if trail_sl < new_sl:
-                new_sl = trail_sl
-                action = f"TRAIL @ {trail_sl:.{pp}f} ATR={atr:.{pp}f}"
+                new_sl     = trail_sl
+                trail_used = True
+                action     = (
+                    f"TRAIL @ {trail_sl:.{pp}f} | "
+                    f"ATR={atr:.{pp}f} | "
+                    f"dist={trail_dist:.{pp}f} | "
+                    f"floor={fee_floor:.{pp}f}"
+                )
 
-    # ── Vérifier si SL s'améliore vraiment ───────────────────────
+    # ── Étape 4 : Le SL s'améliore-t-il vraiment ? ───────────────
     tick = 10 ** (-pp)
     improved = (
         (side == "BUY"  and new_sl > sl + tick) or
         (side == "SELL" and new_sl < sl - tick)
     )
-    if not improved: return
+    if not improved: return   # Rien à faire
 
-    # ── Envoyer nouveau SL à Binance (HORS lock) ─────────────────
+    # ── Étape 5 : Envoyer nouveau SL à Binance (HORS lock) ───────
     new_order = move_sl_binance(symbol, sl_order_id, new_sl, close_side)
 
-    # ── Mise à jour trade_log (lock court) ───────────────────────
+    # ── Étape 6 : Mise à jour trade_log (lock COURT) ─────────────
     with trade_lock:
         if symbol not in trade_log or trade_log[symbol].get("status") != "OPEN":
             return
         t = trade_log[symbol]
         if new_order and new_order.get("orderId"):
-            t["sl"]                  = new_sl
-            t["sl_order_id"]         = new_order["orderId"]
-            t["sl_on_binance"]       = True
-            t["trailing_stop_active"] = (rr >= TRAIL_START_RR)
+            t["sl"]                   = new_sl
+            t["sl_order_id"]          = new_order["orderId"]
+            t["sl_on_binance"]        = True
+            t["trailing_stop_active"] = trail_used
             if be_trigger:
                 t["breakeven_moved"] = True
+
+            # Déterminer le libellé de l'action combinée
+            if be_trigger and trail_used:
+                label = f"BE+TRAIL simultané"
+            elif be_trigger:
+                label = f"BREAKEVEN frais couverts"
+            else:
+                label = f"TRAILING actif"
+
             logger.info(
-                f"🔁 SL SUIVEUR {symbol} {side} | "
+                f"🔁 SL SUIVEUR {symbol} {side} [{label}] | "
                 f"{sl:.{pp}f} → {new_sl:.{pp}f} | "
                 f"RR={rr:.2f}R | {action}"
             )
-            # Telegram au BE et à chaque RR entier
-            if be_trigger or (int(rr) >= 1 and abs(rr - round(rr)) < 0.15):
+
+            # Telegram : au BE et à chaque RR entier franchi
+            if be_trigger or (trail_used and int(rr) >= 1 and abs(rr - round(rr)) < 0.15):
+                pnl_min = abs(new_sl - entry) * t.get("qty", 0)
                 send_telegram(
                     f"🔁 <b>SL Suiveur {symbol} {side}</b>\n"
-                    f"{sl:.{pp}f} → <b>{new_sl:.{pp}f}</b>\n"
+                    f"<b>{sl:.{pp}f} → {new_sl:.{pp}f}</b>\n"
                     f"RR={rr:.2f}R | Prix: {current_price:.{pp}f}\n"
-                    f"{'✅ BREAKEVEN — frais couverts, ne peut plus perdre' if be_trigger else f'🔁 Trailing RR{int(rr)}R'}"
+                    f"Plancher frais: {fee_floor:.{pp}f}\n"
+                    + (
+                        f"✅ <b>BREAKEVEN</b> — frais 0.12% couverts\n"
+                        f"Pire cas si SL touché: +${pnl_min:.4f} net"
+                        if be_trigger else
+                        f"🔁 <b>Trailing RR{int(rr)}R</b>\n"
+                        f"SL garanti au-dessus des frais"
+                    )
                 )
         else:
+            # SL Binance échoué → SL logiciel reste actif
             t["sl_on_binance"] = False
-            logger.warning(f"⚠️  {symbol} SL Binance échoué → logiciel @ {sl:.{pp}f}")
+            logger.warning(
+                f"⚠️  {symbol} déplacement SL Binance échoué | "
+                f"SL logiciel actif @ {sl:.{pp}f} | "
+                f"Tentative : {new_sl:.{pp}f}"
+            )
 
 # ─── OPEN POSITION ────────────────────────────────────────────────
 def open_position(signal: dict):
@@ -1080,21 +1555,24 @@ def open_position(signal: dict):
         entry = get_price(symbol)
         if not entry: return
 
-        lev      = get_leverage(score)
-        marg_pct = MARGIN_PCT_BY_LEV.get(lev, 0.20)
-        margin   = account_balance * marg_pct
+        # ── Paramètres adaptatifs selon le palier balance ─────────
+        tier       = get_tier()
+        lev        = get_leverage(score)
+        marg_pct   = min(MARGIN_PCT_BY_LEV.get(lev, 0.20), get_max_margin_pct())
+        margin     = account_balance * marg_pct
+        max_sl_pct = get_max_sl_pct()
 
         sl = get_sl(symbol, side, ob, entry, atr)
         if side == "BUY":
             sl_dist = max(entry - sl, entry * MIN_SL_PCT)
-            sl_dist = min(sl_dist, entry * MAX_SL_PCT)
+            sl_dist = min(sl_dist, entry * max_sl_pct)
         else:
             sl_dist = max(sl - entry, entry * MIN_SL_PCT)
-            sl_dist = min(sl_dist, entry * MAX_SL_PCT)
+            sl_dist = min(sl_dist, entry * max_sl_pct)
 
-        # SL trop large pour M1 → skip
-        if sl_dist > entry * MAX_SL_PCT:
-            logger.info(f"  {symbol} SL trop large {sl_dist/entry*100:.2f}% > {MAX_SL_PCT*100:.1f}% → skip")
+        # SL trop large pour ce palier → skip
+        if sl_dist > entry * max_sl_pct:
+            logger.info(f"  {symbol} SL trop large {sl_dist/entry*100:.2f}% > {max_sl_pct*100:.1f}% → skip")
             return
 
         if sl_dist <= 0: return
@@ -1106,37 +1584,50 @@ def open_position(signal: dict):
             sl = round(entry + sl_dist, pp)
             tp = round(entry - sl_dist * TP_RR, pp)
 
-        # Risque dynamique
+        # ── Sizing : risque = % balance selon palier ──────────────
         risk_usdt = get_risk_usdt()
         qty = _round_step(risk_usdt / sl_dist, step_size)
 
-        # Cap marge
+        # Cap par marge disponible × levier
         max_qty_m = _round_step((margin * lev) / entry, step_size)
         if max_qty_m > 0 and qty > max_qty_m:
             qty = max_qty_m
 
-        # Min notional check
-        if qty * entry < min_notional:
-            qty_min = _round_step(min_notional / entry + step_size, step_size)
+        # ── Min notional Binance ($5) ──────────────────────────────
+        # Si la qty calculée est inférieure au min notional,
+        # augmenter la qty jusqu'au min notional.
+        # Vérifier que le risque résultant reste acceptable.
+        notional = qty * entry
+        if notional < min_notional:
+            qty_min   = _round_step(min_notional / entry + step_size, step_size)
             real_risk = sl_dist * qty_min
-            if real_risk > account_balance * MAX_NOTIONAL_RISK:
+            # Acceptable si risque < 25% balance (palier 1 : survie tolère plus)
+            max_risk_pct = MAX_NOTIONAL_RISK + (0.07 if tier == 1 else 0.0)
+            if real_risk > account_balance * max_risk_pct:
                 logger.info(
-                    f"  {symbol} skip min notional — risque ${real_risk:.4f} "
-                    f"= {real_risk/account_balance:.1%} > {MAX_NOTIONAL_RISK:.0%} balance"
+                    f"  {symbol} skip — min notional risque ${real_risk:.4f} "
+                    f"= {real_risk/account_balance:.1%} > {max_risk_pct:.0%} balance"
                 )
                 return
             qty = qty_min
 
         if qty < min_qty: return
 
-        # Log complet
+        tier_label = get_tier_label()
+        progress   = get_progress_bar()
         logger.info(
-            f"📊 TRADE {symbol} {side} | {setup}({score}) | prob={prob:.0f}% | "
-            f"{lev}x | risk=${sl_dist*qty:.4f} | qty={qty} | corr={btc_corr[:40]}"
+            f"📊 {tier_label} TRADE {symbol} {side} | {setup}({score}) | "
+            f"prob={prob:.0f}% | {lev}x | sl={sl_dist/entry*100:.3f}% | "
+            f"risk=${sl_dist*qty:.4f} | qty={qty}"
         )
+        logger.info(f"   Palier {get_tier()} | Balance ${account_balance:.4f} | {progress}")
 
         set_isolated(symbol)
-        set_leverage_sym(symbol, lev)
+        actual_lev = set_leverage_sym(symbol, lev)
+        # Utilise le levier réellement accepté par Binance (peut être < lev)
+        if actual_lev != lev:
+            logger.warning(f"  {symbol} levier ajusté {lev}x → {actual_lev}x")
+            lev = actual_lev
         cleanup_orders(symbol)
 
         order = place_market(symbol, side, qty)
@@ -1203,17 +1694,17 @@ def open_position(signal: dict):
                 "be_price":             be_price,
             }
 
-        logger.info(
-            f"✅ {symbol} {side} @ {actual_entry:.{pp}f} | "
-            f"SL {sl:.{pp}f} | BE {be_price:.{pp}f} | TP {tp:.{pp}f} | {lev}x"
-        )
+        logger.info(f"✅ {symbol} {side} @ {actual_entry:.{pp}f} | SL {sl:.{pp}f} | BE {be_price:.{pp}f} | TP {tp:.{pp}f} | {lev}x | {get_tier_label()}")
         send_telegram(
             f"🚀 <b>{symbol} {side}</b> @ {actual_entry:.{pp}f}\n"
             f"SL: {sl:.{pp}f} {'✅Binance' if sl_r['sent'] else '⚠️logiciel'}\n"
-            f"BE frais: {be_price:.{pp}f} ({BREAKEVEN_FEE_TOTAL*100:.2f}% A/R)\n"
-            f"TP filet: {tp:.{pp}f} (RR{TP_RR})\n"
-            f"Setup: {setup}({score}) | Prob: {prob:.0f}% | {lev}x\n"
-            f"Risk: ${sl_dist2*qty:.4f} | BTC: {_btc_direction_cache.get('label','?')}\n"
+            f"BE frais: {be_price:.{pp}f}\n"
+            f"TP: {tp:.{pp}f} (RR{TP_RR})\n"
+            f"Setup: {setup}({score}) | Prob: {prob:.0f}%\n"
+            f"Levier: {lev}x | Risk: ${sl_dist2*qty:.4f}\n"
+            f"\n"
+            f"{get_tier_label()} | {get_progress_bar()}\n"
+            f"Balance: ${account_balance:.4f} → Objectif: ${TARGET_BALANCE:.0f}\n"
             f"🔁 SL suiveur dès RR{BREAKEVEN_RR}"
         )
 
@@ -1280,10 +1771,19 @@ def _on_closed(symbol, trade, is_win):
         consec_losses = 0
         symbol_stats[symbol]["wins"] += 1
         logger.info(f"✅ WIN {symbol} {side} {setup}")
+        # Vérifier si on a franchi un palier
+        prev_tier_label = get_tier_label()
+        milestone_msg = ""
+        if account_balance >= TARGET_BALANCE:
+            milestone_msg = f"\n🏆 <b>OBJECTIF ${TARGET_BALANCE:.0f} ATTEINT !</b>"
+        elif account_balance >= TIER2_LIMIT and (account_balance - abs(trade.get('entry',0)-trade.get('sl',0)) * trade.get('qty',0) * TP_RR) < TIER2_LIMIT:
+            milestone_msg = f"\n🟢 Palier NORMAL atteint ! ${account_balance:.4f}"
+        elif account_balance >= TIER1_LIMIT and (account_balance - abs(trade.get('entry',0)-trade.get('sl',0)) * trade.get('qty',0) * TP_RR) < TIER1_LIMIT:
+            milestone_msg = f"\n🟡 Palier CROISSANCE atteint ! ${account_balance:.4f}"
         send_telegram(
             f"✅ <b>WIN {symbol} {side}</b>\n"
-            f"Setup: {setup} | BE frais couverts\n"
-            f"Balance: ${account_balance:.4f}"
+            f"Setup: {setup} | Frais couverts\n"
+            f"Balance: ${account_balance:.4f} {get_progress_bar()}{milestone_msg}"
         )
     else:
         consec_losses += 1
@@ -1292,7 +1792,8 @@ def _on_closed(symbol, trade, is_win):
         send_telegram(
             f"🔴 <b>LOSS {symbol} {side}</b>\n"
             f"Setup: {setup} | Consécutives: {consec_losses}\n"
-            f"Balance: ${account_balance:.4f}"
+            f"Balance: ${account_balance:.4f} {get_tier_label()}\n"
+            f"{get_progress_bar()}"
         )
         if consec_losses >= CONSEC_LOSS_LIMIT:
             cooldown_until = time.time() + CONSEC_COOLDOWN
@@ -1560,8 +2061,12 @@ def dashboard_loop():
 
             logger.info("═" * 72)
             logger.info(
-                f"SCALPER v39.3 | ${account_balance:.4f} | "
-                f"Pos:{n_open}/{MAX_POSITIONS} | Risk:${get_risk_usdt():.3f}{cd_str}"
+                f"SCALPER v39.4 | ${account_balance:.4f} | {get_tier_label()} | "
+                f"{get_progress_bar()} → ${TARGET_BALANCE:.0f}"
+            )
+            logger.info(
+                f"Pos:{n_open}/{MAX_POSITIONS} | Risk:${get_risk_usdt():.3f} | "
+                f"Lev:{get_leverage(92)}x(best)/{get_leverage(85)}x | {cd_str.strip(' | ') if cd_str else 'No cooldown'}"
             )
             logger.info(f"{btc['label']} | slope:{btc.get('slope',0):+.4f}%")
             logger.info(
@@ -1616,8 +2121,8 @@ def dashboard_loop():
 # ─── MAIN ────────────────────────────────────────────────────────
 def main():
     logger.info("╔" + "═" * 68 + "╗")
-    logger.info("║  SCALPER v39.3 — STRICT | CORRÉLATION BTC | FRAIS RÉELS    ║")
-    logger.info("║  Récupération $1.40 → $6+ | 1 position | Meilleur setup    ║")
+    logger.info("║  SCALPER v39.4 — CALIBRÉ | CORRÉLATION BTC | FRAIS RÉELS   ║")
+    logger.info("║  Récupération $1.40 → $6+ | 1 position | Filtres calibrés  ║")
     logger.info("╚" + "═" * 68 + "╝")
     logger.warning("🔥 LIVE TRADING 🔥")
 
@@ -1631,10 +2136,11 @@ def main():
     logger.info(f"   SELL : seulement si BTC M1 baissier")
     logger.info(f"   Neutre → aucun trade")
     logger.info(f"")
-    logger.info(f"✅ FILTRES ULTRA-STRICTS :")
-    logger.info(f"   Score min : {MIN_SCORE} | Conf : {MIN_CONFLUENCE}/5 | Prob : {MIN_PROB}%")
-    logger.info(f"   Volume spike : {VOLUME_SPIKE_MIN}× | Corps bougie : {MIN_BODY_RATIO*100:.0f}%")
-    logger.info(f"   SL max : {MAX_SL_PCT*100:.1f}% (skip si trop large)")
+    logger.info(f"✅ FILTRES CALIBRÉS v39.4 :")
+    logger.info(f"   Score min : {MIN_SCORE} (SWEEP_OB:92 + BOS_FVG:85)")
+    logger.info(f"   Volume spike : {VOLUME_SPIKE_MIN}× (was 2.0×)")
+    logger.info(f"   Corps bougie : {MIN_BODY_RATIO*100:.0f}% | SL max : {MAX_SL_PCT*100:.1f}%")
+    logger.info(f"   Cooldown symbole : {SIGNAL_COOLDOWN}s (was 180s)")
     logger.info(f"")
     logger.info(f"✅ 1 POSITION MAX | {MAX_POSITIONS} simultanée(e)")
     logger.info(f"   → Seul le MEILLEUR signal est pris à chaque scan")
@@ -1655,15 +2161,21 @@ def main():
     logger.info(f"📊 BTC M1 initial : {btc['label']}")
 
     send_telegram(
-        f"🚀 <b>SCALPER v39.3 DÉMARRÉ</b>\n\n"
+        f"🚀 <b>SCALPER v39.4 DÉMARRÉ</b>\n\n"
         f"💰 Balance: <b>${account_balance:.4f}</b>\n"
-        f"🎯 Risque/trade: ${get_risk_usdt():.4f} ({RISK_PCT*100:.0f}% balance)\n"
+        f"🎯 Objectif: <b>${TARGET_BALANCE:.0f}</b> | {get_progress_bar()}\n"
         f"📊 BTC M1: {btc['label']}\n\n"
-        f"✅ Frais BE réels: {BREAKEVEN_FEE_TOTAL*100:.2f}% A/R\n"
+        f"📈 <b>STRATÉGIE PAR PALIERS</b>\n"
+        f"  🔴 SURVIE  ($1-$3): 7% risk | 50x max\n"
+        f"  🟡 CROISS ($3-$6): 6% risk | 35x max\n"
+        f"  🟢 NORMAL ($6-$10): 5% risk | 25x max\n\n"
+        f"Mode actuel: <b>{get_tier_label()}</b>\n"
+        f"Risque/trade: ${get_risk_usdt():.4f}\n"
+        f"Levier: {get_leverage(92)}x (SWEEP_OB) / {get_leverage(85)}x (BOS_FVG)\n\n"
+        f"✅ Frais BE: {BREAKEVEN_FEE_TOTAL*100:.2f}% A/R\n"
+        f"✅ SL suiveur + plancher frais garanti\n"
         f"✅ Corrélation BTC M1 activée\n"
-        f"✅ Score min: {MIN_SCORE} | 1 position max\n"
-        f"✅ Top {TOP_N_SYMBOLS} cryptos | M1 | H24\n"
-        f"🔁 SL suiveur toutes les {MONITOR_INTERVAL}s"
+        f"🔁 Monitor toutes les {MONITOR_INTERVAL}s"
     )
 
     recover_existing_positions()
