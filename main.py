@@ -1748,14 +1748,14 @@ def scanner_loop():
                 time.sleep(10); continue
 
             count += 1
-            if count % (300 // max(SCAN_INTERVAL, 10)) == 0:
+            if count % max(1, (1800 // max(SCAN_INTERVAL, 1))) == 0:
                 sync_binance_time()
                 get_account_balance()
                 btc = get_btc_direction()
                 logger.info("BTC: {} | Balance: ${:.4f} | {}".format(
                     btc["label"], account_balance, get_tier_label()))
 
-            if count % (3600 // max(SCAN_INTERVAL, 10)) == 0:
+            if count % max(1, (3600 // max(SCAN_INTERVAL, 1))) == 0:
                 load_top_symbols()
 
             if account_balance < HARD_FLOOR:
