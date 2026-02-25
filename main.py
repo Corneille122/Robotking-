@@ -46,8 +46,9 @@ def send_telegram(msg):
         pass
 
 # ─── CLÉS API BINANCE ────────────────────────────────────────────
-API_KEY    = os.environ.get("BINANCE_API_KEY", "YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af")
+API_KEY    = os.environ.get("BINANCE_API_KEY", "YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af
 API_SECRET = os.environ.get("BINANCE_API_SECRET", "si08ii320XMByW4VY1VRt5zRJNnB3QrYBJc3QkDOdKHLZGKxyTo5CHxz7nd4CuQ0")
+
 BASE_URL   = "https://fapi.binance.com"
 
 # ═══════════════════════════════════════════════════════════════════
@@ -2409,14 +2410,24 @@ def place_market(symbol, side, qty):
 
 def place_sl_binance(symbol, sl, close_side):
     """3 stratégies : MARK_PRICE → CONTRACT_PRICE → SL logiciel
-    PATCH 4 : retry avec micro-ajustement ±1 tick si -2010/-4161
+    PATCH SL : log explicite erreur Binance + décalage SL si trop proche du prix
     """
     info = symbol_info_cache.get(symbol, {})
     pp   = info.get("pricePrecision", 4)
     tick = 10 ** (-pp)
 
+    # Vérification : SL doit être à min 0.1% du mark price pour être accepté
+    mark = get_price(symbol) or sl
+    min_dist = mark * 0.001  # 0.1% minimum
+    if close_side == "SELL":   # BUY position → SL sous le mark
+        sl = min(sl, mark - min_dist)
+    else:                       # SELL position → SL au dessus du mark
+        sl = max(sl, mark + min_dist)
+    sl = round(sl, pp)
+    logger.info("🛡️  {} place_sl mark={:.{}f} sl_final={:.{}f} side={}".format(
+        symbol, mark, pp, sl, pp, close_side))
+
     for attempt in range(4):
-        # Micro-décalage progressif si retry (±1, ±2, ±3 ticks selon la direction)
         adj_sl = round(sl - tick * attempt if close_side == "SELL" else sl + tick * attempt, pp)
         r = request_binance("POST", "/fapi/v1/order", {
             "symbol": symbol, "side": close_side, "type": "STOP_MARKET",
@@ -2428,7 +2439,8 @@ def place_sl_binance(symbol, sl, close_side):
             return {"sent": True, "order_id": r["orderId"], "method": "MARK_PRICE"}
         if r and r.get("_already_triggered"):
             return {"sent": False, "order_id": None, "triggered": True}
-        time.sleep(0.4)
+        logger.warning("⚠️  {} SL MARK_PRICE tentative {} échouée → r={}".format(symbol, attempt+1, r))
+        time.sleep(0.8)
 
     logger.warning("⚠️  {} MARK_PRICE rejeté → CONTRACT_PRICE".format(symbol))
     for attempt in range(3):
@@ -2440,18 +2452,30 @@ def place_sl_binance(symbol, sl, close_side):
         if r and r.get("orderId"):
             logger.info("🛡️  {} SL ✅ CONTRACT_PRICE @ {:.{}f}".format(symbol, adj_sl, pp))
             return {"sent": True, "order_id": r["orderId"], "method": "CONTRACT_PRICE"}
-        time.sleep(0.4)
+        logger.warning("⚠️  {} SL CONTRACT_PRICE tentative {} échouée → r={}".format(symbol, attempt+1, r))
+        time.sleep(0.8)
 
-    logger.error("🚨 {} SL Binance impossible → SL LOGICIEL @ {:.{}f}".format(symbol, sl, pp))
+    logger.error("🚨 {} SL Binance IMPOSSIBLE → SL LOGICIEL @ {:.{}f}".format(symbol, sl, pp))
     send_telegram("🚨 <b>SL {} non posé Binance</b>\nSL logiciel actif @ {:.{}f}".format(
         symbol, sl, pp))
     return {"sent": False, "order_id": None, "method": "SOFTWARE"}
 
 def place_tp_binance(symbol, tp, close_side):
-    """PATCH 4 : retry avec micro-ajustement ±tick si rejet prix"""
+    """PATCH SL/TP : log explicite + vérification distance mark price"""
     info = symbol_info_cache.get(symbol, {})
     pp   = info.get("pricePrecision", 4)
     tick = 10 ** (-pp)
+
+    # TP doit être de l'autre côté du mark price
+    mark = get_price(symbol) or tp
+    min_dist = mark * 0.001
+    if close_side == "SELL":   # BUY position → TP au-dessus du mark
+        tp = max(tp, mark + min_dist)
+    else:                       # SELL position → TP sous le mark
+        tp = min(tp, mark - min_dist)
+    tp = round(tp, pp)
+    logger.info("🎯 {} place_tp mark={:.{}f} tp_final={:.{}f} side={}".format(
+        symbol, mark, pp, tp, pp, close_side))
 
     for wtype in ["MARK_PRICE", "CONTRACT_PRICE"]:
         for attempt in range(3):
@@ -2463,7 +2487,8 @@ def place_tp_binance(symbol, tp, close_side):
             if r and r.get("orderId"):
                 logger.info("🎯 {} TP ✅ {} @ {:.{}f}".format(symbol, wtype, adj_tp, pp))
                 return {"sent": True, "order_id": r["orderId"]}
-            time.sleep(0.3)
+            logger.warning("⚠️  {} TP {} tentative {} échouée → r={}".format(symbol, wtype, attempt+1, r))
+            time.sleep(0.5)
     logger.warning("⚠️  {} TP non posé → trailing SL gère la sortie".format(symbol))
     return {"sent": False, "order_id": None}
 
@@ -2471,6 +2496,15 @@ def move_sl_binance(symbol, old_order_id, new_sl, close_side):
     """Déplace SL : annule ancien + pose nouveau avec fallback CONTRACT_PRICE."""
     info = symbol_info_cache.get(symbol, {})
     pp   = info.get("pricePrecision", 4)
+
+    # Vérification distance minimum par rapport au mark
+    mark = get_price(symbol) or new_sl
+    min_dist = mark * 0.0005
+    if close_side == "SELL":
+        new_sl = min(new_sl, mark - min_dist)
+    else:
+        new_sl = max(new_sl, mark + min_dist)
+    new_sl = round(new_sl, pp)
 
     if old_order_id:
         r_del = request_binance("DELETE", "/fapi/v1/order",
@@ -2821,8 +2855,32 @@ def open_position(signal):
         sl_method = sl_method2
 
         close_side = "SELL" if side == "BUY" else "BUY"
-        sl_r = place_sl_binance(symbol, sl, close_side)
+
+        # ── PATCH SL/TP — Attente position confirmée ──────────────
+        # Binance doit enregistrer la position AVANT d'accepter SL/TP.
+        # Sans cette pause, Binance rejette les ordres SL/TP car la
+        # position n'est pas encore visible côté serveur → software SL.
+        time.sleep(2.0)
+
+        # Retry SL jusqu'à 3 fois si software fallback
+        sl_r = {"sent": False, "order_id": None, "method": "SOFTWARE"}
+        for _sl_attempt in range(3):
+            sl_r = place_sl_binance(symbol, sl, close_side)
+            if sl_r["sent"]:
+                break
+            if _sl_attempt < 2:
+                logger.warning("⚠️ SL retry {}/3 dans 2s...".format(_sl_attempt + 1))
+                time.sleep(2.0)
+        if not sl_r["sent"]:
+            logger.critical("🚨 SL {} NON POSÉ sur Binance après 3 tentatives — SL logiciel actif".format(symbol))
+            send_telegram("🚨 <b>CRITIQUE — SL {} non posé sur Binance !</b>\nSL logiciel actif @ {:.{}f}\nVérifiez votre position manuellement !".format(symbol, sl, pp))
+
+        # Retry TP une fois si échec
         tp_r = place_tp_binance(symbol, tp, close_side)
+        if not tp_r["sent"]:
+            logger.warning("⚠️ TP {} non posé → retry dans 2s".format(symbol))
+            time.sleep(2.0)
+            tp_r = place_tp_binance(symbol, tp, close_side)
 
         be_price = round(actual_entry * (1.0 + BREAKEVEN_FEE_TOTAL), pp) if side == "BUY" \
                    else round(actual_entry * (1.0 - BREAKEVEN_FEE_TOTAL), pp)
@@ -2991,6 +3049,24 @@ def monitor_positions():
                 t = trade_log[symbol]
                 if t.get("status") != "OPEN": continue
 
+                # ── AUTO-REPOST SL si non posé sur Binance ────────
+                # Si le SL est en mode logiciel (sl_on_binance=False),
+                # on retente de le poser côté Binance toutes les 30s.
+                if not t.get("sl_on_binance") and not t.get("sl_repost_ts"):
+                    t["sl_repost_ts"] = 0.0
+                if not t.get("sl_on_binance"):
+                    now_ts = time.time()
+                    if now_ts - t.get("sl_repost_ts", 0) > 30:
+                        t["sl_repost_ts"] = now_ts
+                        cs = "SELL" if t["side"] == "BUY" else "BUY"
+                        logger.warning("🔄 {} tentative repost SL @ {:.6f}".format(symbol, t["sl"]))
+                        sl_retry = place_sl_binance(symbol, t["sl"], cs)
+                        if sl_retry["sent"]:
+                            t["sl_on_binance"] = True
+                            t["sl_order_id"]   = sl_retry["order_id"]
+                            logger.info("✅ {} SL reposté sur Binance @ {}".format(symbol, t["sl"]))
+                            send_telegram("✅ <b>SL {} reposté sur Binance</b> @ {:.6f}".format(symbol, t["sl"]))
+
                 if symbol not in binance_open:
                     t["status"]    = "CLOSED"
                     t["closed_by"] = "BINANCE_SL_TP"
@@ -3155,50 +3231,207 @@ def scan_symbol(symbol):
 # ═══════════════════════════════════════════════════════════════════
 
 def recover_existing_positions():
+    """
+    ═══════════════════════════════════════════════════════════════════
+    RECOVER v2.0 — Reprend les positions ouvertes sur Binance au démarrage.
+
+    Pour chaque position ouverte détectée :
+      1. Annule tous les ordres existants (SL/TP orphelins éventuels)
+      2. Calcule SL basé sur ATR×1.2 depuis le prix d'entrée RÉEL
+         → Respecte les bornes MIN_SL_PCT / MAX_SL_PCT
+         → Si prix actuel déjà en profit > SL calculé → SL glissant au BE
+      3. Calcule TP à RR3 depuis l'entrée réelle
+      4. Pose SL sur Binance (MARK_PRICE → CONTRACT_PRICE → logiciel)
+         → 3 tentatives avec attente 2s entre chaque
+      5. Pose TP sur Binance
+      6. Enregistre dans trade_log pour que le trailing SL prenne le relais
+      7. Alerte Telegram avec le détail complet
+    ═══════════════════════════════════════════════════════════════════
+    """
+    logger.info("🔄 Recherche positions existantes à récupérer...")
     try:
         positions = request_binance("GET", "/fapi/v2/positionRisk", signed=True)
-        if not positions: return
+        if not positions:
+            logger.info("  Aucune position existante.")
+            return
+
+        recovered = []
         for pos in positions:
             sym = pos.get("symbol")
             amt = float(pos.get("positionAmt", 0))
-            if amt == 0: continue
+            if amt == 0:
+                continue
+
             side  = "BUY" if amt > 0 else "SELL"
             qty   = abs(amt)
             entry = float(pos.get("entryPrice", 0))
-            if entry <= 0: continue
+            lev   = int(float(pos.get("leverage", 15)))
+            if entry <= 0:
+                continue
+
+            # ── Infos symbole ─────────────────────────────────────
+            if sym not in symbol_info_cache:
+                # Charge les infos de précision si pas encore en cache
+                ei = request_binance("GET", "/fapi/v1/exchangeInfo", signed=False)
+                if ei:
+                    for s in ei.get("symbols", []):
+                        if s["symbol"] == sym:
+                            pp_val = s.get("pricePrecision", 4)
+                            qp_val = s.get("quantityPrecision", 3)
+                            step   = next((float(f["stepSize"]) for f in s.get("filters",[])
+                                           if f["filterType"] == "LOT_SIZE"), 0.001)
+                            symbol_info_cache[sym] = {
+                                "pricePrecision":    pp_val,
+                                "quantityPrecision": qp_val,
+                                "stepSize":          step,
+                            }
 
             info = symbol_info_cache.get(sym, {})
             pp   = info.get("pricePrecision", 4)
-            atr  = _atr_live(sym)
+
+            # ── Prix actuel ───────────────────────────────────────
+            mark = float(pos.get("markPrice", 0)) or get_price(sym) or entry
+
+            # ── ATR live ──────────────────────────────────────────
+            atr = _atr_live(sym)
+
+            # ── Calcul SL ─────────────────────────────────────────
+            # Base ATR×1.2 depuis entry
             dist = max(atr * ATR_SL_MULT, entry * MIN_SL_PCT)
             dist = min(dist, entry * MAX_SL_PCT)
 
-            sl = round(entry - dist if side == "BUY" else entry + dist, pp)
+            if side == "BUY":
+                sl_raw = entry - dist
+                # Si le prix actuel est déjà bien au-dessus → SL au breakeven
+                profit_pct = (mark - entry) / entry if entry > 0 else 0
+                if profit_pct >= BREAKEVEN_RR * (dist / entry):
+                    # Prix a bougé assez pour breakeven → SL au BE
+                    sl_raw  = entry * (1.0 + BREAKEVEN_FEE_TOTAL) + BE_PROFIT_MIN / max(qty, 0.001)
+                    be_moved = True
+                    logger.info("  {} → position en profit, SL positionné au BE".format(sym))
+                else:
+                    be_moved = False
+            else:
+                sl_raw = entry + dist
+                profit_pct = (entry - mark) / entry if entry > 0 else 0
+                if profit_pct >= BREAKEVEN_RR * (dist / entry):
+                    sl_raw  = entry * (1.0 - BREAKEVEN_FEE_TOTAL) - BE_PROFIT_MIN / max(qty, 0.001)
+                    be_moved = True
+                    logger.info("  {} → position en profit, SL positionné au BE".format(sym))
+                else:
+                    be_moved = False
+
+            sl = round(sl_raw, pp)
             tp = round(find_tp_for_rr(entry, sl, side, TP_RR), pp)
             be = round(entry * (1 + BREAKEVEN_FEE_TOTAL) if side == "BUY"
                        else entry * (1 - BREAKEVEN_FEE_TOTAL), pp)
 
-            close_side = "SELL" if side == "BUY" else "BUY"
-            cleanup_orders(sym)
-            sl_r = place_sl_binance(sym, sl, close_side)
-            tp_r = place_tp_binance(sym, tp, close_side)
+            # Distance SL en %
+            sl_pct = abs(entry - sl) / entry * 100
 
-            if sym not in symbols_list: symbols_list.append(sym)
+            # ── Nettoyage ordres existants ────────────────────────
+            logger.info("  {} — nettoyage ordres existants...".format(sym))
+            cleanup_orders(sym)
+            time.sleep(1.5)   # Attente que Binance annule bien
+
+            # ── Pose SL sur Binance (3 tentatives) ───────────────
+            close_side = "SELL" if side == "BUY" else "BUY"
+            sl_r = {"sent": False, "order_id": None, "method": "SOFTWARE"}
+            for attempt in range(3):
+                sl_r = place_sl_binance(sym, sl, close_side)
+                if sl_r["sent"]:
+                    break
+                logger.warning("  {} SL tentative {}/3 échouée → retry 2s".format(sym, attempt + 1))
+                time.sleep(2.0)
+
+            # ── Pose TP sur Binance ───────────────────────────────
+            tp_r = place_tp_binance(sym, tp, close_side)
+            if not tp_r["sent"]:
+                time.sleep(2.0)
+                tp_r = place_tp_binance(sym, tp, close_side)
+
+            # ── Enregistrement trade_log ──────────────────────────
+            if sym not in symbols_list:
+                symbols_list.append(sym)
+
             with trade_lock:
                 trade_log[sym] = {
-                    "side": side, "entry": entry, "sl": sl, "tp": tp, "qty": qty,
-                    "leverage": 15, "margin_pct": 20, "setup": "RECOVERED",
-                    "score": 90, "probability": 90.0, "status": "OPEN",
-                    "opened_at": time.time(), "sl_on_binance": sl_r["sent"],
-                    "tp_on_binance": tp_r["sent"], "sl_order_id": sl_r["order_id"],
-                    "tp_order_id": tp_r["order_id"], "trailing_stop_active": False,
-                    "breakeven_moved": False, "be_price": be, "atr": atr,
-                    "btc_corr": "RECOVERED", "fond_score": 0,
+                    "side":                 side,
+                    "entry":                entry,
+                    "sl":                   sl,
+                    "tp":                   tp,
+                    "qty":                  qty,
+                    "leverage":             lev,
+                    "margin":               0.0,
+                    "margin_pct":           0.0,
+                    "setup":                "RECOVERED",
+                    "score":                90,
+                    "probability":          90.0,
+                    "status":               "OPEN",
+                    "opened_at":            time.time(),
+                    "sl_on_binance":        sl_r["sent"],
+                    "tp_on_binance":        tp_r["sent"],
+                    "sl_order_id":          sl_r["order_id"],
+                    "tp_order_id":          tp_r["order_id"],
+                    "trailing_stop_active": False,
+                    "breakeven_moved":      be_moved,
+                    "be_price":             be,
+                    "atr":                  atr,
+                    "btc_corr":             "RECOVERED",
+                    "fond_score":           0,
+                    "session":              get_session(),
+                    "btc_strength":         "NORMAL",
+                    "sl_repost_ts":         0.0,
                 }
-            logger.info("🔄 {} {} @ {:.{}f} récupéré | SL {:.{}f} | TP {:.{}f}".format(
-                sym, side, entry, pp, sl, pp, tp, pp))
+
+            pnl_usdt = float(pos.get("unRealizedProfit", 0))
+            pnl_pct  = (mark - entry) / entry * 100 * (1 if side == "BUY" else -1)
+
+            logger.info(
+                "✅ RECOVERED {} {} | entry={:.{}f} mark={:.{}f} | "
+                "SL={:.{}f} ({:.2f}%) [{}] | TP={:.{}f} | PnL={:+.4f}$ ({:+.2f}%)".format(
+                    sym, side,
+                    entry, pp, mark, pp,
+                    sl, pp, sl_pct, "✅Binance" if sl_r["sent"] else "⚠️logiciel",
+                    tp, pp,
+                    pnl_usdt, pnl_pct
+                )
+            )
+            recovered.append({
+                "sym": sym, "side": side, "entry": entry, "mark": mark,
+                "sl": sl, "sl_pct": sl_pct, "tp": tp,
+                "sl_ok": sl_r["sent"], "tp_ok": tp_r["sent"],
+                "pnl_usdt": pnl_usdt, "pnl_pct": pnl_pct,
+                "be_moved": be_moved, "pp": pp, "lev": lev,
+            })
+
+        # ── Telegram — rapport de récupération ────────────────────
+        if recovered:
+            lines = ["🔄 <b>RECOVER au démarrage — {} position(s)</b>\n".format(len(recovered))]
+            for r in recovered:
+                icon_pnl = "🟢" if r["pnl_usdt"] >= 0 else "🔴"
+                icon_sl  = "✅" if r["sl_ok"] else "⚠️"
+                icon_tp  = "✅" if r["tp_ok"] else "⚠️"
+                be_tag   = " 🔒BE" if r["be_moved"] else ""
+                lines.append(
+                    "{} <b>{} {}</b> {}x\n"
+                    "  Entry: {:.{}f} | Mark: {:.{}f}\n"
+                    "  SL {}: {:.{}f} ({:.2f}%){}\n"
+                    "  TP {}: {:.{}f}\n"
+                    "  PnL: {:+.4f}$ ({:+.2f}%)".format(
+                        icon_pnl, r["sym"], r["side"], r["lev"],
+                        r["entry"], r["pp"], r["mark"], r["pp"],
+                        icon_sl, r["sl"], r["pp"], r["sl_pct"], be_tag,
+                        icon_tp, r["tp"], r["pp"],
+                        r["pnl_usdt"], r["pnl_pct"]
+                    )
+                )
+            send_telegram("\n\n".join(lines))
+        else:
+            logger.info("  Aucune position à récupérer.")
+
     except Exception as e:
-        logger.error("recover: {}".format(e))
+        logger.error("recover_existing_positions: {}".format(e))
 
 # ═══════════════════════════════════════════════════════════════════
 #  AFFICHAGE CONSOLE
