@@ -2,16 +2,21 @@
 # -*- coding: utf-8 -*-
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║   SCANNER M5 v4.5 — PAROLI + FILTRE LIQUIDITE | RR3           ║
+║   SCANNER M5 v4.9 — FONDAMENTAUX ENRICHIS +5 FILTRES          ║
 ╠══════════════════════════════════════════════════════════════════╣
-║  NOUVEAUTÉS v4.5 :                                              ║
-║  ✅ VOL_MIN_FILTER $5M/jour (×10 — élimine micro-caps)        ║
-║  ✅ PRICE_MIN_USD $0.01 (filtre satoshi-coins type DENT)       ║
-║  ✅ SPREAD_MAX_PCT 0.15% (vérifié au scan ET avant l'ordre)    ║
-║  ✅ LIQUIDITY_BLACKLIST (DENT/PIPPIN/ARC/ESP/ENSO/POWER)      ║
-║  HÉRITÉ v4.4 :                                                  ║
-║  ✅ Paroli $0.60→$1.20 | 4 positions | Sans pause consécutive  ║
-║  ✅ balance_lock | actual_entry guard | tick-retry SL/TP       ║
+║  NOUVEAUTÉS v4.9 :                                              ║
+║  ✅ Session PRIME : London Open 8-11h + NY Open 13-16h UTC     ║
+║     → Risque ×1.3 en prime time, ×0.5 hors session            ║
+║  ✅ MTF (Multi-TimeFrame) : confirmation M15 + H1 obligatoire  ║
+║     → BUY refusé si M15/H1 baissier, SELL refusé si haussier  ║
+║  ✅ CVD proxy : pression acheteur/vendeur sur 10 bougies       ║
+║     → CVD divergent = rejet (gros vendent pendant BUY)        ║
+║  ✅ Filtre News économiques : pause ±30min CPI/NFP/FOMC       ║
+║  ✅ check_fondamentaux /140 pts (était /100)                   ║
+║     + CVD /20 + Session /20 ajoutés au score                  ║
+║  HÉRITÉ v4.8 :                                                  ║
+║  ✅ $0.60 base | +45%/WIN | Pump guard | VOL brain dynamique  ║
+║  ✅ Scan 30s | BTC prix direct | Anti-CT strict               ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
@@ -37,13 +42,19 @@ def send_telegram(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
     try:
-        requests.post(
+        r = requests.post(
             "https://api.telegram.org/bot{}/sendMessage".format(TELEGRAM_TOKEN),
             json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"},
             timeout=5
         )
-    except:
-        pass
+        if r.status_code != 200:
+            logger.warning("⚠️ Telegram erreur HTTP {}: {}".format(r.status_code, r.text[:80]))
+    except requests.exceptions.Timeout:
+        logger.warning("⚠️ Telegram timeout — message non envoyé")
+    except requests.exceptions.ConnectionError as e:
+        logger.warning("⚠️ Telegram connexion impossible: {}".format(str(e)[:80]))
+    except Exception as e:
+        logger.warning("⚠️ Telegram erreur inattendue: {}".format(str(e)[:80]))
 
 # ─── CLÉS API BINANCE ────────────────────────────────────────────
 API_KEY    = os.environ.get("BINANCE_API_KEY", "YQL8N4sxGb6YF3RmfhaQIv2MMNuoB3AcQqf7x1YaVzARKoGb1TKjumwUVNZDW3af")
@@ -92,34 +103,28 @@ BTC_RSI_PERIOD   = 9
 BTC_RSI_BULL_MAX = 82   # M5 : RSI plus large (signaux plus fréquents)
 BTC_RSI_BEAR_MIN = 20   # M5 : RSI plus large côté baissier
 
-# ── MARGE FIXE $0.60 ─────────────────────────────────────────────
+# ── RISQUE DYNAMIQUE +45% par WIN (anti-martingale) ─────────────
 #
-#  Marge FIXE par trade : $0.60 USD, indépendante de la balance.
-#  Cette valeur ne change pas avec les multiplicateurs session/BTC/fond.
-#  Elle peut être pénalisée par le brain (×0.5 ou ×0.75) si le symbole
-#  ou le setup a un mauvais historique, mais jamais en dessous de $0.30.
+#  Principe v4.8 :
+#    - Risque de base : $0.60 par trade (perte max si SL touché)
+#    - Après un WIN   : risque × 1.45 (arrondi à 2 décimales)
+#    - Après un LOSS  : risque reset à $0.60
+#    - Maximum        : $3.00 (plafond de sécurité — ≈ 5 WIN consécutifs)
+#    - Minimum        : $0.30 (plancher pénalités brain)
+#    - Sizing recalculé à chaque trade : qty = risk_usd / sl_distance
 #
-#  qty = FIXED_MARGIN_USD × levier / entry_price
+#  Progression : $0.60 → $0.87 → $1.26 → $1.83 → $2.65 → plafond $3.00
 #
-FIXED_MARGIN_USD = 0.60   # Marge fixe $0.60 par trade (base Paroli)
-MARGIN_MIN_USD   = 0.30   # Plancher absolu (pénalité brain)
-MARGIN_MAX_USD   = 1.20   # Plafond Paroli niveau 4
+RISK_BASE_USD    = 0.60    # Risque de base $0.60 (perte max si SL touché)
+RISK_STEP_PCT    = 0.45    # +45% après chaque WIN
+RISK_MAX_USD     = 3.00    # Plafond absolu (≈ 5 WIN consécutifs)
+RISK_MIN_USD     = 0.30    # Plancher (pénalité brain max)
+RISK_FILE        = "risk_state.json"
 
-# ── SYSTÈME PAROLI (anti-martingale) ─────────────────────────────
-#
-#  Principe : augmenter la mise après un gain, revenir à la base après une perte.
-#  On surfe les séries gagnantes sans risquer plus que la base sur une perte.
-#
-#  Niveaux :  0=$0.60  1=$0.75  2=$0.90  3=$1.05  4=$1.20 (plafond)
-#  Après WIN  : niveau += 1 (si < 4)
-#  Après LOSS : niveau = 0 (reset à $0.60)
-#  Plafond de sécurité : mise ≤ 15% balance courante (jamais dépassé)
-#
-PAROLI_BASE       = 0.60   # Mise de départ
-PAROLI_STEP       = 0.15   # +$0.15 par niveau
-PAROLI_MAX_LEVEL  = 4      # 4 niveaux max (→ $1.20)
-PAROLI_CAP_PCT    = 0.15   # Jamais > 15% de la balance
-PAROLI_FILE       = "paroli.json"
+# Compatibilité (anciens noms utilisés dans brain_get_margin_usd)
+FIXED_MARGIN_USD = RISK_BASE_USD
+MARGIN_MIN_USD   = RISK_MIN_USD
+MARGIN_MAX_USD   = RISK_MAX_USD
 
 # Garde pour compatibilité (utilisé dans compute_dynamic_margin)
 MARGIN_BY_SCORE = {94: 1.0, 93: 1.0, 92: 1.0, 91: 1.0, 90: 1.0}
@@ -127,11 +132,36 @@ MARGIN_MIN = 0.10
 MARGIN_MAX = 0.40
 
 SESSION_MULT = {
-    "LONDON": 1.0,
-    "NY":     1.2,
-    "ASIA":   0.6,
-    "OFF":    0.5,
+    "LONDON_PRIME": 1.3,   # v4.9 : London Open 8h-11h UTC — meilleur momentum
+    "NY_PRIME":     1.3,   # v4.9 : NY Open 13h-16h UTC — meilleur volume
+    "LONDON":       1.0,   # London normal 11h-13h
+    "NY":           1.0,   # NY normal 16h-21h
+    "ASIA":         0.6,   # Asie — moins de volume
+    "OFF":          0.5,   # Nuit — pas de trade sauf signal exceptionnel
 }
+
+# ── Multi-TimeFrame (MTF) — v4.9 ─────────────────────────────────
+#  M15 et H1 doivent confirmer la direction M5.
+#  Si M15 ou H1 contredisent → trade refusé.
+#  Cache séparé pour ne pas saturer l'API.
+MTF_CONFIRM_REQUIRED = True    # Active/désactive le filtre MTF
+MTF_CACHE_TTL        = 180     # Cache MTF 3 minutes
+
+# ── Filtre News Économiques — v4.9 ──────────────────────────────
+#  Pause ±30min autour des événements macro (CPI, NFP, FOMC, etc.)
+#  Les timestamps sont mis à jour automatiquement via l'API ForexFactory
+#  (fallback : liste manuelle des créneaux connus).
+NEWS_FILTER_ENABLED  = True    # Active le filtre news
+NEWS_PAUSE_MINUTES   = 30      # Minutes avant/après l'événement
+NEWS_IMPACT_HIGH     = True    # Filtrer uniquement les news HIGH impact
+
+# ── CVD proxy — v4.9 ─────────────────────────────────────────────
+#  Calcul du CVD (Cumulative Volume Delta) via les bougies M5 :
+#  Une bougie haussière (close > open) = pression acheteur = delta positif
+#  Une bougie baissière (close < open) = pression vendeur  = delta négatif
+#  CVD = somme des deltas sur les N dernières bougies
+CVD_LOOKBACK         = 10      # Nombre de bougies pour calcul CVD
+CVD_MIN_ALIGN_PCT    = 0.6     # 60% du CVD doit être dans la direction du trade
 
 # ── Fondamentaux enrichis ─────────────────────────────────────────
 FOND_MIN_SCORE      = 50   # Seuil minimum STRICT — double confirmation obligatoire
@@ -192,7 +222,7 @@ LIQUIDITY_BLACKLIST = {
 }
 
 # ── Gestion positions ─────────────────────────────────────────────
-MAX_POSITIONS     = 4      # 4 positions simultanées max
+MAX_POSITIONS     = 3      # v4.6 : 3 positions simultanées max
 MARGIN_TYPE       = "ISOLATED"
 MIN_NOTIONAL      = 5.0
 MAX_NOTIONAL_RISK = 0.90
@@ -223,15 +253,19 @@ LEVERAGE_BY_TIER = {
 }
 
 # ── SL suiveur M5 ────────────────────────────────────────────────
-BREAKEVEN_RR   = 0.5   # BE plus rapide en M5 (0.5R au lieu de 0.6R)
-TRAIL_START_RR = 1.0
+BREAKEVEN_RR   = 1.0   # v4.6 : BE déclenché à RR1 (sécurisé dès profit = risque)
+TRAIL_START_RR = 1.0   # v4.6 : Trailing démarre aussi à RR1
 TRAIL_ATR_MULT = 0.8   # Trailing plus serré en M5 (0.8 vs 1.0)
 
-# ── Timing M5 ────────────────────────────────────────────────────
-SCAN_INTERVAL      = 5 * 60    # Scan toutes les 5 minutes
+# ── Timing SCAN CONTINU v4.7 ─────────────────────────────────────
+#  Le scan tourne en continu (30s entre cycles) au lieu de 5min.
+#  La bougie M5 reste le timeframe d'analyse, mais on re-scanne
+#  beaucoup plus souvent pour ne pas rater une entrée en milieu
+#  de bougie (ex : retour en zone BB/FVG à 2min30 de la bougie).
+SCAN_INTERVAL      = 30           # v4.7 : 30s entre cycles (était 5min)
 MONITOR_INTERVAL   = 5
 DASHBOARD_INTERVAL = 30
-SIGNAL_COOLDOWN    = 5 * 60    # Cooldown 5min par symbole (adapté M5)
+SIGNAL_COOLDOWN    = 5 * 60       # Cooldown 5min par symbole (évite doublons)
 HARD_FLOOR         = 0.50
 
 # ── Exclusions ───────────────────────────────────────────────────
@@ -255,7 +289,7 @@ FALLBACK_SYMBOLS = [
 # ── Anti pertes consécutives ──────────────────────────────────────
 # v4.4 : géré par Paroli — constantes conservées pour compatibilité
 DD_ALERT_PCT      = 0.15
-MAX_WORKERS       = 4    # Réduit pour ne pas saturer l'API lors du scan complet
+MAX_WORKERS       = 8    # v4.8 : 8 workers (scan plus rapide, toujours sous le weight limit)
 
 # ── Anti-saturation API ───────────────────────────────────────────
 # Binance Futures : limite 2400 weight/minute
@@ -360,97 +394,109 @@ BRAIN_FILE = "brain.json"
 #
 # ═══════════════════════════════════════════════════════════════════
 
-_paroli = {
-    "level":       0,       # Niveau actuel (0-4)
-    "win_streak":  0,       # Séquence de WIN en cours
-    "total_gains": 0.0,     # Gains cumulés grâce au Paroli
+_risk_state = {
+    "current_risk":  RISK_BASE_USD,   # Risque actuel en USD
+    "win_streak":    0,                # Séquence de WIN en cours
+    "total_gains":   0.0,              # Gains cumulés
 }
-_paroli_lock = threading.Lock()
+_risk_lock = threading.Lock()
 
-def paroli_load():
-    """Charge le niveau Paroli depuis paroli.json."""
-    global _paroli
-    if not os.path.exists(PAROLI_FILE):
+def risk_load():
+    """Charge l'état du risque depuis risk_state.json."""
+    global _risk_state
+    if not os.path.exists(RISK_FILE):
         return
     try:
-        with open(PAROLI_FILE, "r") as f:
+        with open(RISK_FILE, "r") as f:
             data = json.load(f)
-        with _paroli_lock:
-            _paroli.update(data)
-        logger.info("🎲 Paroli chargé — niveau {} (streak={})".format(
-            _paroli["level"], _paroli["win_streak"]))
+        with _risk_lock:
+            _risk_state.update(data)
+        logger.info("💰 Risque chargé — ${:.2f} (streak={})".format(
+            _risk_state["current_risk"], _risk_state["win_streak"]))
     except Exception as e:
-        logger.warning("Paroli load error: {} — reset".format(e))
+        logger.warning("Risk load error: {} — reset".format(e))
 
-def paroli_save():
-    """Sauvegarde le niveau Paroli."""
+def risk_save():
+    """Sauvegarde l'état du risque."""
     try:
-        with _paroli_lock:
-            data = dict(_paroli)
-        with open(PAROLI_FILE, "w") as f:
+        with _risk_lock:
+            data = dict(_risk_state)
+        with open(RISK_FILE, "w") as f:
             json.dump(data, f, indent=2)
     except Exception as e:
-        logger.warning("Paroli save error: {}".format(e))
+        logger.warning("Risk save error: {}".format(e))
 
-def paroli_on_win():
-    """Appelé après chaque WIN : monte d'un niveau (max PAROLI_MAX_LEVEL)."""
-    with _paroli_lock:
-        _paroli["win_streak"] += 1
-        old = _paroli["level"]
-        _paroli["level"] = min(_paroli["level"] + 1, PAROLI_MAX_LEVEL)
-        new = _paroli["level"]
-    paroli_save()
-    if new != old:
-        logger.info("🎲 Paroli WIN → niveau {} | mise ${:.2f}".format(
-            new, PAROLI_BASE + new * PAROLI_STEP))
-        send_telegram("🎲 <b>Paroli niveau {}</b> → mise ${:.2f}".format(
-            new, PAROLI_BASE + new * PAROLI_STEP))
+def risk_on_win(last_gain=0.0):
+    """Après WIN : risque × 1.25, plafonné à RISK_MAX_USD."""
+    with _risk_lock:
+        old = _risk_state["current_risk"]
+        new = round(min(old * (1 + RISK_STEP_PCT), RISK_MAX_USD), 2)
+        _risk_state["current_risk"] = new
+        _risk_state["win_streak"]  += 1
+        _risk_state["total_gains"] += last_gain
+    risk_save()
+    logger.info("💰 WIN → risque ${:.2f} → ${:.2f} (+25%)".format(old, new))
+    send_telegram("💰 <b>WIN → risque ${:.2f}</b> (+25% du précédent)".format(new))
 
-def paroli_on_loss():
-    """Appelé après chaque SL/LOSS : reset au niveau 0."""
-    with _paroli_lock:
-        old_level  = _paroli["level"]
-        old_streak = _paroli["win_streak"]
-        _paroli["level"]      = 0
-        _paroli["win_streak"] = 0
-    paroli_save()
-    if old_level > 0:
-        logger.info("🎲 Paroli LOSS → reset niveau 0 | mise ${:.2f} (était niv.{} streak={})".format(
-            PAROLI_BASE, old_level, old_streak))
-        send_telegram("🎲 Paroli reset niveau 0 → mise ${:.2f}".format(PAROLI_BASE))
+def risk_on_loss():
+    """Après LOSS : risque reset à RISK_BASE_USD."""
+    with _risk_lock:
+        old    = _risk_state["current_risk"]
+        streak = _risk_state["win_streak"]
+        _risk_state["current_risk"] = RISK_BASE_USD
+        _risk_state["win_streak"]   = 0
+    risk_save()
+    if old > RISK_BASE_USD:
+        logger.info("💰 LOSS → risque reset ${:.2f} → ${:.2f} (était streak={})".format(
+            old, RISK_BASE_USD, streak))
+        send_telegram("💰 LOSS → risque reset <b>${:.2f}</b>".format(RISK_BASE_USD))
 
-def paroli_get_margin(symbol, setup, session):
+def risk_get_current(symbol, setup, session):
     """
-    Retourne la mise effective en USD pour ce trade.
-    = PAROLI_BASE + level × PAROLI_STEP
-    Plafonnée à PAROLI_CAP_PCT × balance et jamais > MARGIN_MAX_USD.
-    Brain pénalités (session/symbole) appliquées ensuite.
+    Retourne le risque effectif en USD pour ce trade.
+    Applique les pénalités brain (session/symbole) après.
+    v4.8 : Pénalité automatique ×0.5 si le coin a pompé >20% en 24h
+           (risque de retrace violent + spread élargi).
     """
-    with _paroli_lock:
-        level = _paroli["level"]
+    with _risk_lock:
+        base_risk = _risk_state["current_risk"]
 
-    # Mise brute selon niveau Paroli
-    raw_margin = round(PAROLI_BASE + level * PAROLI_STEP, 2)
-
-    # Plafond sécurité : 15% de la balance courante
-    with balance_lock:
-        cur_bal = account_balance
-    cap = round(cur_bal * PAROLI_CAP_PCT, 2) if cur_bal > 0 else PAROLI_BASE
-    raw_margin = min(raw_margin, cap, MARGIN_MAX_USD)
-    raw_margin = max(raw_margin, PAROLI_BASE)   # jamais sous la base
-
-    # Brain pénalités (session mauvaise / symbole dégradé)
+    # Pénalités brain
     mult = 1.0
     sess_mult = brain_get_session_margin_mult(session)
     mult *= sess_mult
     with _brain_lock:
-        sym_data = _brain["symbols"].get(symbol, {})
+        sym_data  = _brain["symbols"].get(symbol, {})
     sym_total = sym_data.get("wins", 0) + sym_data.get("losses", 0)
     if sym_total >= 5 and sym_data.get("wins", 0) / sym_total < 0.40:
         mult *= 0.75
 
-    margin = round(max(MARGIN_MIN_USD, raw_margin * mult), 2)
-    return margin, level
+    # v4.8 — Pénalité pump 24h : si priceChange > 20% → risque ×0.5
+    # Les coins qui ont déjà beaucoup monté sont sujets à des retracements
+    # violents et un spread bid/ask élargi (fill moins favorable).
+    bulk = get_bulk_ticker(symbol)
+    if bulk:
+        chg_24h = abs(bulk.get("chg", 0))
+        if chg_24h > 20.0:
+            mult *= 0.5
+            logger.debug("  {} pump 24h {:.1f}% → risque ×0.5".format(symbol, chg_24h))
+        elif chg_24h > 30.0:
+            mult *= 0.3
+            logger.debug("  {} pump 24h {:.1f}% → risque ×0.3 (extrême)".format(symbol, chg_24h))
+
+    risk_usd = round(max(RISK_MIN_USD, min(RISK_MAX_USD, base_risk * mult)), 2)
+    return risk_usd
+
+# Alias de compatibilité pour les anciens appels paroli_*
+def paroli_load():    risk_load()
+def paroli_save():    risk_save()
+def paroli_on_win():  risk_on_win()
+def paroli_on_loss(): risk_on_loss()
+
+def paroli_get_margin(symbol, setup, session):
+    """Compatibilité : retourne (risk_usd, 0) — le 2e param était le niveau Paroli."""
+    risk = risk_get_current(symbol, setup, session)
+    return risk, 0
 
 
 _brain = {
@@ -466,6 +512,10 @@ _brain = {
     "early_sl_count": 0,   # SL touchés dans < 60s depuis ouverture
     "last_report_ts": 0.0,
     "adaptations":    [],  # Log des adaptations effectuées
+    # v4.8 — Détection stagnation + VOL_MIN dynamique
+    "stagnation_losses":  0,     # Pertes récentes avec PnL proche de 0
+    "vol_min_boost":      1.0,   # Multiplicateur VOL_MIN_FILTER (1.0 = normal, 2.0 = ×2)
+    "vol_min_boost_until": 0.0,  # Timestamp fin du boost (reset auto)
 }
 _brain_lock = threading.Lock()
 
@@ -623,6 +673,36 @@ def brain_record_trade(symbol, setup, session, side, is_win, trade_duration_s=0)
                 _brain["adaptations"].append({"ts": now, "type": "atr_widen", "msg": msg})
                 send_telegram("🧠 " + msg)
 
+        # ── 6. Détection stagnation → VOL_MIN_FILTER dynamique ───
+        #  v4.8 : Si plusieurs trades perdants avec PnL proche de 0
+        #  (prix n'a quasiment pas bougé = actif stagnant), on monte
+        #  temporairement le filtre de volume pour cibler des actifs
+        #  qui ont un vrai momentum et éviter les paires léthargiques.
+        #
+        #  Condition : perte + durée < 90s (prix n'a pas bougé assez)
+        #  Seuil     : 3 pertes stagnantes consécutives → VOL_MIN ×2
+        #  Reset     : automatique après 2h ou dès un WIN
+        if not is_win and trade_duration_s < 90:
+            _brain["stagnation_losses"] = _brain.get("stagnation_losses", 0) + 1
+            stag = _brain["stagnation_losses"]
+            if stag >= 3 and _brain.get("vol_min_boost", 1.0) < 2.0:
+                _brain["vol_min_boost"]       = 2.0
+                _brain["vol_min_boost_until"] = now + 7200   # 2h
+                msg = "📊 Brain: {} stagnations consécutives → VOL_MIN ×2 pendant 2h".format(stag)
+                logger.warning(msg)
+                _brain["adaptations"].append({"ts": now, "type": "vol_boost", "msg": msg})
+                send_telegram("🧠 " + msg)
+        elif is_win:
+            # Reset stagnation sur un WIN
+            _brain["stagnation_losses"] = 0
+            if _brain.get("vol_min_boost", 1.0) > 1.0 and now > _brain.get("vol_min_boost_until", 0):
+                _brain["vol_min_boost"] = 1.0
+
+        # Reset automatique du boost si délai expiré
+        if now > _brain.get("vol_min_boost_until", 0) and _brain.get("vol_min_boost", 1.0) > 1.0:
+            _brain["vol_min_boost"] = 1.0
+            logger.info("📊 Brain: VOL_MIN boost expiré → retour normal")
+
     brain_save()
 
     # ── 6. Rapport hebdomadaire ──────────────────────────────────
@@ -748,11 +828,42 @@ def brain_summary_log():
         black = sum(1 for d in _brain["symbols"].values()
                     if time.time() < d.get("blacklisted_until", 0))
         atr   = _brain["atr_mult"]
-    return "Brain: {}T WR{:.0f}% ATR×{:.2f} BL:{}".format(total, wr, atr, black)
+        vmult = _brain.get("vol_min_boost", 1.0)
+    vol_tag = " VOL×{:.0f}".format(vmult) if vmult > 1.0 else ""
+    return "Brain: {}T WR{:.0f}% ATR×{:.2f} BL:{}{}".format(total, wr, atr, black, vol_tag)
+
+def brain_get_vol_min_filter():
+    """
+    v4.8 — Retourne le filtre VOL_MIN effectif.
+    Normal : VOL_MIN_FILTER
+    Stagnation détectée : VOL_MIN_FILTER × brain['vol_min_boost'] (max ×2)
+    Se reset automatiquement après 2h ou au premier WIN.
+    """
+    with _brain_lock:
+        boost      = _brain.get("vol_min_boost", 1.0)
+        boost_until = _brain.get("vol_min_boost_until", 0.0)
+    # Reset automatique si délai expiré
+    if boost > 1.0 and time.time() > boost_until:
+        with _brain_lock:
+            _brain["vol_min_boost"] = 1.0
+        boost = 1.0
+    return VOL_MIN_FILTER * boost
 
 _btc_cache = {"direction": 0, "ts": 0.0, "label": "NEUTRE",
               "rsi": 50.0, "slope": 0.0, "closes": None, "strength": "NORMAL"}
 _btc_lock  = threading.Lock()
+
+# ── Cache MTF (M15 + H1) — v4.9 ──────────────────────────────────
+# Évite de re-fetcher M15/H1 à chaque cycle — TTL 3 minutes
+_mtf_cache = {}        # symbol → {"ts": float, "m15_dir": int, "h1_dir": int, "label": str}
+_mtf_lock  = threading.Lock()
+
+# ── Cache Filtre News — v4.9 ─────────────────────────────────────
+# Liste des prochains événements macro HIGH impact (timestamps UTC)
+# Mise à jour 1x/heure via ForexFactory ou liste de secours statique
+_news_events   = []    # [(timestamp_utc, "CPI USA"), ...]
+_news_cache_ts = 0.0
+_news_lock     = threading.Lock()
 
 _fg_cache  = {"value": 50, "label": "Neutral", "ts": 0.0}
 _fg_lock   = threading.Lock()
@@ -806,17 +917,28 @@ def get_progress_bar():
 
 def get_session():
     """
-    Retourne la session en cours selon l'heure UTC.
-    London : 08h–13h | NY : 13h–21h | Asia : 02h–08h | Off : 21h–02h
+    Session en cours avec détection PRIME TIME — v4.9.
+    London Prime : 08h-11h UTC (Open de Londres, forte liquidité)
+    NY Prime     : 13h-16h UTC (Open de New York, plus grand volume)
+    Ces créneaux sont les meilleurs pour le scalping M5 :
+      - Spreads plus serrés
+      - Mouvements directionnels plus nets
+      - Volume institutionnel présent
     """
     h = datetime.now(timezone.utc).hour
-    if 8  <= h < 13: return "LONDON"
-    if 13 <= h < 21: return "NY"
-    if 2  <= h < 8:  return "ASIA"
-    return "OFF"
+    if  8 <= h < 11: return "LONDON_PRIME"   # London Open — meilleur créneau
+    if 13 <= h < 16: return "NY_PRIME"        # NY Open — 2ème meilleur créneau
+    if 11 <= h < 13: return "LONDON"          # London fin de matinée
+    if 16 <= h < 21: return "NY"              # NY après-midi
+    if  2 <= h <  8: return "ASIA"            # Asie
+    return "OFF"                               # 21h-02h UTC — pas de trade
 
 def get_session_mult():
     return SESSION_MULT.get(get_session(), 1.0)
+
+def is_prime_session():
+    """True si on est en PRIME TIME (meilleures entrées)."""
+    return get_session() in ("LONDON_PRIME", "NY_PRIME")
 
 # ═══════════════════════════════════════════════════════════════════
 #  MONEY MANAGEMENT DYNAMIQUE
@@ -967,7 +1089,9 @@ def _rsi(closes, period=14):
     gains  = [max(subset[i] - subset[i-1], 0.0) for i in range(1, len(subset))]
     losses = [max(subset[i-1] - subset[i], 0.0) for i in range(1, len(subset))]
     ag = _mean(gains); al = _mean(losses)
-    if al == 0: return 100.0
+    if al == 0 and ag == 0: return 50.0   # Pas de mouvement
+    if al == 0: return 100.0              # Que des hausses
+    if ag == 0: return 0.0               # Que des baisses
     return 100.0 - (100.0 / (1.0 + ag / al))
 
 def _atr(highs, lows, closes, period=14):
@@ -1556,88 +1680,352 @@ def get_btc_dom_mult(symbol, side):
 # ═══════════════════════════════════════════════════════════════════
 
 def get_btc_direction():
+    """
+    Direction BTC basée sur le PRIX DIRECT (variation récente).
+    v4.7 — Plus de EMA/RSI comme critère principal.
+
+    Méthode :
+      1. Variation 3 bougies M5 (15 min) — court terme
+      2. Variation 6 bougies M5 (30 min) — moyen terme
+      3. Variation 12 bougies M5 (1h)    — long terme
+      → Les 3 doivent être alignées pour valider la direction
+      → Si contradiction → NEUTRE (pas de trade)
+
+    Seuils :
+      BUY  : variation > +0.10% sur les 3 horizons
+      SELL : variation < -0.10% sur les 3 horizons
+      Sinon → NEUTRE
+
+    Force :
+      FORT   : variation > 0.25% sur 6 bougies
+      NORMAL : variation 0.10–0.25%
+      FAIBLE : < 0.10% (NEUTRE en pratique)
+    """
     global _btc_cache
     with _btc_lock:
-        if time.time() - _btc_cache.get("ts", 0) < 60:
+        if time.time() - _btc_cache.get("ts", 0) < 20:   # Cache 20s (scan 30s)
             return _btc_cache
 
-    klines = get_klines(BTC_SYMBOL, TIMEFRAME, 30)
-    if not klines or len(klines) < 20:
+    klines = get_klines(BTC_SYMBOL, TIMEFRAME, 20)
+    if not klines or len(klines) < 14:
         return _btc_cache
 
     o, h, l, cl, v = _parse_klines(klines)
-    ema5  = _ema(cl, BTC_EMA_FAST)
-    ema13 = _ema(cl, BTC_EMA_SLOW)
-    rsi   = _rsi(cl, BTC_RSI_PERIOD)
     price = cl[-1]
-    e5, e13 = ema5[-1], ema13[-1]
 
-    slope = 0.0
-    if len(ema5) >= 4 and ema5[-4] > 0:
-        slope = (ema5[-1] - ema5[-4]) / ema5[-4] * 100
+    # Variations de prix sur 3 horizons
+    def pct(n):
+        ref = cl[-n-1] if len(cl) > n else cl[0]
+        return (price - ref) / ref * 100 if ref > 0 else 0.0
 
-    bull = (e5 > e13) and (price > e5) and (rsi < BTC_RSI_BULL_MAX)
-    bear = (e5 < e13) and (price < e5) and (rsi > BTC_RSI_BEAR_MIN)
+    var3  = pct(3)    # 15 min
+    var6  = pct(6)    # 30 min
+    var12 = pct(12)   # 1h
 
-    if bull:
+    THRESHOLD = 0.10  # 0.10% minimum pour valider la direction
+
+    bull3  = var3  > THRESHOLD
+    bull6  = var6  > THRESHOLD
+    bull12 = var12 > THRESHOLD
+    bear3  = var3  < -THRESHOLD
+    bear6  = var6  < -THRESHOLD
+    bear12 = var12 < -THRESHOLD
+
+    # Tous les horizons doivent être alignés
+    if bull3 and bull6 and bull12:
         direction = 1
-        label = "BTC M5 🟢 HAUSSIER RSI={:.0f}".format(rsi)
-    elif bear:
+        mag = abs(var6)
+        strength = "FORT" if mag > 0.25 else "NORMAL"
+        label = "BTC 🟢 HAUSSIER +{:.2f}% (3/6/12 bougies)".format(var6)
+    elif bear3 and bear6 and bear12:
         direction = -1
-        label = "BTC M5 🔴 BAISSIER RSI={:.0f}".format(rsi)
+        mag = abs(var6)
+        strength = "FORT" if mag > 0.25 else "NORMAL"
+        label = "BTC 🔴 BAISSIER {:.2f}% (3/6/12 bougies)".format(var6)
     else:
         direction = 0
-        label = "BTC M5 ⚪ NEUTRE RSI={:.0f}".format(rsi)
+        strength  = "FAIBLE"
+        label = "BTC ⚪ NEUTRE/MIXTE (3={:+.2f}% 6={:+.2f}% 12={:+.2f}%)".format(
+            var3, var6, var12)
 
-    # Force de la tendance BTC pour le MM dynamique
-    # FORT   : direction claire + RSI dans zone saine (45-75)
-    # NORMAL : direction claire mais RSI tendu
-    # FAIBLE : BTC neutre ou indécis
-    if direction != 0 and 45 <= rsi <= 75 and abs(slope) > 0.03:
-        strength = "FORT"
-    elif direction != 0:
-        strength = "NORMAL"
-    else:
-        strength = "FAIBLE"
-
-    result = {"direction": direction, "label": label, "rsi": round(rsi, 1),
-              "slope": round(slope, 4), "ts": time.time(),
-              "closes": cl, "strength": strength}
+    result = {
+        "direction": direction,
+        "label":     label,
+        "var3":      round(var3, 3),
+        "var6":      round(var6, 3),
+        "var12":     round(var12, 3),
+        "price":     price,
+        "ts":        time.time(),
+        "closes":    cl,
+        "strength":  strength,
+    }
     with _btc_lock:
         _btc_cache = result
     return result
 
+def get_mtf_direction(symbol):
+    """
+    Multi-TimeFrame v4.9 — Direction M15 et H1 pour confirmer le signal M5.
+
+    Principe :
+      Un signal BUY M5 n'est valide QUE si M15 ET H1 sont également haussiers.
+      Un trade contre la tendance H1 échoue statistiquement dans 65-70% des cas.
+
+    Calcul direction : même méthode que BTC (variation prix directe)
+      M15 : variation sur 3 bougies (45 min)
+      H1  : variation sur 3 bougies (3h)
+
+    Cache : 3 minutes (MTF_CACHE_TTL) pour éviter de saturer l'API.
+    Retourne : {"m15_dir": int, "h1_dir": int, "label": str, "ok_buy": bool, "ok_sell": bool}
+    """
+    now = time.time()
+    with _mtf_lock:
+        cached = _mtf_cache.get(symbol)
+        if cached and now - cached["ts"] < MTF_CACHE_TTL:
+            return cached
+
+    result = {"m15_dir": 0, "h1_dir": 0, "label": "MTF N/A", "ok_buy": True, "ok_sell": True, "ts": now}
+
+    if not MTF_CONFIRM_REQUIRED:
+        with _mtf_lock:
+            _mtf_cache[symbol] = result
+        return result
+
+    try:
+        def price_direction(klines_data, n_bars=3):
+            """Direction basée sur variation de prix sur n_bars bougies."""
+            if not klines_data or len(klines_data) < n_bars+2:
+                return 0
+            closes = [float(k[4]) for k in klines_data]
+            price  = closes[-1]
+            ref    = closes[-n_bars-1]
+            if ref <= 0: return 0
+            var = (price - ref) / ref * 100
+            if var >  0.08: return  1
+            if var < -0.08: return -1
+            return 0
+
+        # M15 : 10 bougies suffisent
+        kl_m15 = get_klines(symbol, "15m", 10)
+        m15_dir = price_direction(kl_m15, 3)
+
+        # H1 : 6 bougies
+        kl_h1 = get_klines(symbol, "1h", 6)
+        h1_dir = price_direction(kl_h1, 3)
+
+        # Autorisation par direction
+        # BUY autorisé si M15 ≥ 0 ET H1 ≥ 0 (ni l'un ni l'autre baissier)
+        # SELL autorisé si M15 ≤ 0 ET H1 ≤ 0
+        ok_buy  = (m15_dir >= 0) and (h1_dir >= 0)
+        ok_sell = (m15_dir <= 0) and (h1_dir <= 0)
+
+        labels = []
+        labels.append("M15 {}".format("🟢" if m15_dir==1 else ("🔴" if m15_dir==-1 else "⚪")))
+        labels.append("H1 {}".format("🟢" if h1_dir==1 else ("🔴" if h1_dir==-1 else "⚪")))
+
+        result = {
+            "m15_dir": m15_dir, "h1_dir": h1_dir,
+            "label": " | ".join(labels),
+            "ok_buy": ok_buy, "ok_sell": ok_sell,
+            "ts": now
+        }
+    except Exception as e:
+        logger.debug("get_mtf_direction {}: {}".format(symbol, e))
+
+    with _mtf_lock:
+        _mtf_cache[symbol] = result
+    return result
+
+
+def compute_cvd_proxy(opens, closes, volumes):
+    """
+    CVD Proxy (Cumulative Volume Delta) — v4.9.
+
+    Principe :
+      Bougie haussière (close > open) → pression acheteur = +volume_delta
+      Bougie baissière (close < open) → pression vendeur  = -volume_delta
+      Le delta d'une bougie ≈ volume × |close-open| / (high-low) si H≠L
+
+    On retourne :
+      cvd_total  : somme des deltas (positif = pression haussière nette)
+      cvd_pct    : % du volume total qui est "dans la direction" du CVD
+      direction  : +1 si haussier, -1 si baissier, 0 si équilibré
+
+    Usage : Si BUY mais CVD < 0 → gros vendeurs actifs → signal douteux.
+    """
+    n = min(CVD_LOOKBACK, len(opens))
+    if n < 3:
+        return 0.0, 0.5, 0
+
+    cvd_total  = 0.0
+    vol_total  = 0.0
+
+    for i in range(-n, 0):
+        o, c, v = opens[i], closes[i], volumes[i]
+        if v <= 0: continue
+        delta = v if c >= o else -v
+        # Pondération par la force de la bougie (corps / amplitude)
+        amplitude = abs(c - o)
+        cvd_total += delta
+        vol_total += v
+
+    if vol_total == 0:
+        return 0.0, 0.5, 0
+
+    cvd_pct = (cvd_total / vol_total + 1) / 2   # Normalise entre 0 et 1
+    direction = 1 if cvd_total > 0 else (-1 if cvd_total < 0 else 0)
+    return cvd_total, cvd_pct, direction
+
+
+def get_news_events():
+    """
+    Récupère les prochains événements économiques HIGH impact — v4.9.
+    Source primaire  : ForexFactory calendar (JSON public)
+    Source de secours: liste statique des créneaux habituels (mardi/vendredi)
+
+    Retourne une liste de timestamps UTC (float) pour les 6 prochaines heures.
+    Cache : 60 minutes (les news ne changent pas souvent)
+    """
+    global _news_events, _news_cache_ts
+    now = time.time()
+
+    with _news_lock:
+        if now - _news_cache_ts < 3600 and _news_events is not None:
+            return _news_events
+
+    events = []
+
+    # Tentative ForexFactory
+    try:
+        resp = requests.get(
+            "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+            timeout=5, headers={"User-Agent": "Mozilla/5.0"}
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            for ev in data:
+                if ev.get("impact") not in ("High", "3"):
+                    continue
+                # Format ForexFactory : "2025-01-15T08:30:00-05:00"
+                date_str = ev.get("date", "")
+                try:
+                    from datetime import datetime as dt
+                    # Retire le timezone offset et parse
+                    if "T" in date_str:
+                        ts_dt = dt.fromisoformat(date_str)
+                        ts_utc = ts_dt.astimezone(timezone.utc).timestamp()
+                        if ts_utc > now - 1800:   # Seulement les events récents/futurs
+                            events.append((ts_utc, ev.get("title", "EVENT")))
+                except:
+                    pass
+    except Exception as e:
+        logger.debug("News ForexFactory: {}".format(e))
+
+    # Fallback statique : créneaux habituels HIGH impact (UTC)
+    # CPI US : 2ème mardi du mois à 13h30 UTC
+    # NFP    : 1er vendredi du mois à 13h30 UTC
+    # FOMC   : dates variables, ~8 fois/an à 19h00 UTC
+    if not events:
+        from datetime import datetime as dt
+        now_dt  = dt.now(timezone.utc)
+        weekday = now_dt.weekday()   # 0=lundi, 4=vendredi
+        hour    = now_dt.hour
+
+        # Si vendredi et heure proche de 13h30 UTC → NFP potentiel
+        if weekday == 4:
+            nfp_ts = now_dt.replace(hour=13, minute=30, second=0).timestamp()
+            if abs(now - nfp_ts) < 3600:
+                events.append((nfp_ts, "NFP potentiel (vendredi 13h30 UTC)"))
+
+        # Si mardi et heure proche de 13h30 UTC → CPI potentiel
+        if weekday == 1:
+            cpi_ts = now_dt.replace(hour=13, minute=30, second=0).timestamp()
+            if abs(now - cpi_ts) < 3600:
+                events.append((cpi_ts, "CPI potentiel (mardi 13h30 UTC)"))
+
+    with _news_lock:
+        _news_events   = events
+        _news_cache_ts = now
+
+    return events
+
+
+def is_news_blackout():
+    """
+    Retourne (True, raison) si on est dans une fenêtre de blackout news.
+    Fenêtre : ±NEWS_PAUSE_MINUTES autour de chaque événement HIGH impact.
+    """
+    if not NEWS_FILTER_ENABLED:
+        return False, ""
+
+    now    = time.time()
+    pause  = NEWS_PAUSE_MINUTES * 60
+    events = get_news_events()
+
+    for ts_ev, name in events:
+        if abs(now - ts_ev) <= pause:
+            delta_min = int((ts_ev - now) / 60)
+            if delta_min >= 0:
+                return True, "News dans {}min : {} — pause trades".format(delta_min, name)
+            else:
+                return True, "Post-news {}min : {} — pause trades".format(abs(delta_min), name)
+
+    return False, ""
+
+
 def check_btc_correlation(symbol, side, sym_closes):
     """
-    Vérifie que le setup est OBLIGATOIREMENT aligné avec BTC M15.
-    BUY  → BTC M15 HAUSSIER (direction == 1)
-    SELL → BTC M15 BAISSIER (direction == -1)
-    BTC neutre → aucun trade (pas de prise de risque contre la tendance)
+    Filtre tendance BTC STRICT — v4.7 basé sur prix direct.
+
+    Règles ABSOLUES (jamais contre-tendance) :
+      1. BTC direction == 0 (neutre/mixte) → REJET total
+      2. BUY  sur signal → BTC doit être HAUSSIER (direction == +1)
+      3. SELL sur signal → BTC doit être BAISSIER (direction == -1)
+
+    Filtre co-mouvement additionnel :
+      Le symbole doit avoir bougé dans le MÊME sens que BTC
+      sur les 6 dernières bougies M5 (30 min).
+      Tolérance : si BTC fort (>0.20%) le symbole peut être en légère
+      correction (jusqu'à -0.05%) — retour en zone = setup valide.
+
+    Retourne (ok, raison)
     """
-    btc = get_btc_direction()
+    btc     = get_btc_direction()
     btc_dir = btc["direction"]
 
-    # BTC neutre = pas de trade
+    # Règle 1 : BTC neutre → JAMAIS de trade
     if btc_dir == 0:
-        return False, "BTC M5 neutre → pas de trade"
+        return False, "BTC NEUTRE/MIXTE — aucun trade ({})".format(btc["label"])
 
-    # Alignement strict direction
+    # Règle 2 : alignement strict direction
     if side == "BUY" and btc_dir != 1:
-        return False, "BUY refusé — BTC M5 baissier"
+        return False, "BUY REFUSÉ — BTC baissier ({:.2f}% sur 6 bougies)".format(
+            btc.get("var6", 0))
     if side == "SELL" and btc_dir != -1:
-        return False, "SELL refusé — BTC M5 haussier"
+        return False, "SELL REFUSÉ — BTC haussier ({:.2f}% sur 6 bougies)".format(
+            btc.get("var6", 0))
 
-    # Co-mouvement sur 6 bougies
+    # Règle 3 : co-mouvement prix symbole / BTC
     btc_closes = btc.get("closes")
     if sym_closes and btc_closes and len(sym_closes) >= 6 and len(btc_closes) >= 6:
-        sym_ret = (sym_closes[-1] - sym_closes[-6]) / sym_closes[-6] if sym_closes[-6] > 0 else 0
-        btc_ret = (btc_closes[-1] - btc_closes[-6]) / btc_closes[-6] if btc_closes[-6] > 0 else 0
-        same_dir = (sym_ret > 0 and btc_ret > 0) or (sym_ret < 0 and btc_ret < 0)
-        if not same_dir:
-            return False, "{} diverge BTC (sym:{:+.2f}% btc:{:+.2f}%)".format(
-                symbol, sym_ret * 100, btc_ret * 100)
+        sym_ref = sym_closes[-7] if len(sym_closes) > 6 else sym_closes[0]
+        btc_ref = btc_closes[-7] if len(btc_closes) > 6 else btc_closes[0]
+        sym_var = (sym_closes[-1] - sym_ref) / sym_ref * 100 if sym_ref > 0 else 0
+        btc_var = btc.get("var6", 0)
 
-    return True, "BTC aligné ({}) force={}".format(btc["label"], btc.get("strength","?"))
+        # Divergence dure : symbole part dans le sens opposé à BTC avec amplitude
+        DIVERGENCE_HARD = 0.15   # > 0.15% de divergence = rejet
+        if side == "BUY"  and sym_var < -DIVERGENCE_HARD and btc_var > 0:
+            return False, "{} diverge BTC SELL (sym:{:+.2f}% btc:{:+.2f}%)".format(
+                symbol, sym_var, btc_var)
+        if side == "SELL" and sym_var > +DIVERGENCE_HARD and btc_var < 0:
+            return False, "{} diverge BTC BUY (sym:{:+.2f}% btc:{:+.2f}%)".format(
+                symbol, sym_var, btc_var)
+
+    strength = btc.get("strength", "NORMAL")
+    return True, "BTC {} ({}) | var6={:+.2f}%".format(
+        "🟢 HAUSSIER" if btc_dir == 1 else "🔴 BAISSIER",
+        strength, btc.get("var6", 0))
 
 # ═══════════════════════════════════════════════════════════════════
 #  FONDAMENTAUX — Funding + OI Spike + Spread
@@ -1735,15 +2123,17 @@ def get_liquidations_score(symbol, side):
 
 def check_fondamentaux(symbol, side):
     """
-    Score fondamental /100 (enrichi v2.1) :
-      Funding    /20  — coût de position aligné ou non
-      OI         /20  — intérêt ouvert croissant (pénalité si spike, pas rejet)
-      Spread     /20  — mark vs index (liquidité)
-      Volume 24h /20  — spike volume confirme direction ← NOUVEAU
-      Liquidations/20 — liqd dans le bon sens confirme ← NOUVEAU
+    Score fondamental /140 — v4.9 (était /100).
 
-    Seuil minimum : FOND_MIN_SCORE = 35/100
-    OI spike : pénalité -10 pts (plus de rejet total)
+    Funding      /20  — coût de position aligné ou non
+    OI           /20  — intérêt ouvert croissant (pénalité si spike)
+    Spread       /20  — mark vs index (liquidité)
+    Volume 24h   /20  — spike volume confirme direction
+    Liquidations /20  — liqd dans le bon sens confirme
+    CVD Proxy    /20  — pression acheteur/vendeur réelle ← NOUVEAU v4.9
+    Session      /20  — bonus PRIME TIME (London/NY Open)  ← NOUVEAU v4.9
+
+    Seuil minimum : FOND_MIN_SCORE = 50/140
     Retourne (score, ok, detail)
     """
     score = 0
@@ -1763,11 +2153,8 @@ def check_fondamentaux(symbol, side):
 
     # ── 2. Open Interest + spike detection ───────────────────────
     oi_chg, oi_spike = get_oi_data(symbol)
-
     if oi_spike:
-        # Plus de rejet total — pénalité de -10 points uniquement
-        score -= 10
-        parts.append("OI SPIKE⚠️ (-10pts)")
+        score -= 10; parts.append("OI SPIKE⚠️ (-10pts)")
     else:
         if oi_chg > 0.005:  score += 20; parts.append("OI +{:.2f}%✅".format(oi_chg*100))
         elif oi_chg > 0:    score += 10; parts.append("OI +{:.2f}%⚠️".format(oi_chg*100))
@@ -1780,21 +2167,54 @@ def check_fondamentaux(symbol, side):
     elif abs(spread) < 0.15: score += 10; parts.append("Sprd {:+.3f}%⚠️".format(spread))
     else:                    score += 0;  parts.append("Sprd {:+.3f}%❌".format(spread))
 
-    # ── 4. Volume 24h ← NOUVEAU ──────────────────────────────────
+    # ── 4. Volume 24h ─────────────────────────────────────────────
     vol_score, vol_detail = get_volume_24h_score(symbol, side)
-    score += vol_score
-    parts.append(vol_detail)
+    score += vol_score; parts.append(vol_detail)
 
-    # ── 5. Liquidations ← NOUVEAU ────────────────────────────────
+    # ── 5. Liquidations ───────────────────────────────────────────
     liqd_score, liqd_detail = get_liquidations_score(symbol, side)
-    score += liqd_score
-    parts.append(liqd_detail)
+    score += liqd_score; parts.append(liqd_detail)
 
-    # Score max théorique = 100, min = -10
-    score = max(0, score)
+    # ── 6. CVD Proxy — pression acheteur/vendeur — NOUVEAU v4.9 ──
+    try:
+        kl = get_klines(symbol, TIMEFRAME, CVD_LOOKBACK + 2)
+        if kl and len(kl) >= CVD_LOOKBACK:
+            opens_c   = [float(k[1]) for k in kl]
+            closes_c  = [float(k[4]) for k in kl]
+            volumes_c = [float(k[5]) for k in kl]
+            cvd_total, cvd_pct, cvd_dir = compute_cvd_proxy(opens_c, closes_c, volumes_c)
+            if side == "BUY":
+                if cvd_dir == 1 and cvd_pct >= CVD_MIN_ALIGN_PCT:
+                    score += 20; parts.append("CVD+{:.0f}%🟢✅".format(cvd_pct*100))
+                elif cvd_dir == -1:
+                    score -= 10; parts.append("CVD vendeurs⚠️(-10)")
+                else:
+                    score += 10; parts.append("CVD neutre⚠️")
+            else:
+                if cvd_dir == -1 and cvd_pct <= (1 - CVD_MIN_ALIGN_PCT):
+                    score += 20; parts.append("CVD-{:.0f}%🔴✅".format((1-cvd_pct)*100))
+                elif cvd_dir == 1:
+                    score -= 10; parts.append("CVD acheteurs⚠️(-10)")
+                else:
+                    score += 10; parts.append("CVD neutre⚠️")
+        else:
+            score += 10; parts.append("CVD N/A⚠️")
+    except:
+        score += 10; parts.append("CVD err⚠️")
+
+    # ── 7. Session PRIME TIME — NOUVEAU v4.9 ─────────────────────
+    sess = get_session()
+    if sess in ("LONDON_PRIME", "NY_PRIME"):
+        score += 20; parts.append("{}PRIME✅".format(sess.split("_")[0]))
+    elif sess == "OFF":
+        score -= 10; parts.append("SessionOFF⚠️(-10)")
+    else:
+        score += 5;  parts.append("Session{}⚠️".format(sess))
+
+    score = max(0, min(140, score))
     ok = score >= FOND_MIN_SCORE
-
     return score, ok, " | ".join(parts)
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  BREAKER BLOCK ICT M15 — ALIGNÉ BTC OBLIGATOIRE
@@ -2493,50 +2913,99 @@ def place_tp_binance(symbol, tp, close_side):
     return {"sent": False, "order_id": None}
 
 def _cancel_stop_orders(symbol):
-    """Annule uniquement les ordres STOP_MARKET (pas les TAKE_PROFIT_MARKET)."""
+    """
+    Annule uniquement les ordres STOP_MARKET (pas les TAKE_PROFIT_MARKET).
+    Log explicite de chaque ordre trouvé/annulé.
+    """
     try:
         orders = request_binance("GET", "/fapi/v1/openOrders", {"symbol": symbol})
-        if not orders: return
-        for o in orders:
-            if o.get("type") in ("STOP_MARKET", "STOP"):
-                oid = o.get("orderId")
-                if oid:
-                    request_binance("DELETE", "/fapi/v1/order",
+        if not orders:
+            logger.info("  {} _cancel_stop_orders: aucun ordre ouvert".format(symbol))
+            return
+        stop_orders = [o for o in orders if o.get("type") in ("STOP_MARKET", "STOP")]
+        if not stop_orders:
+            logger.info("  {} _cancel_stop_orders: pas de STOP_MARKET trouvé (ordres ouverts={})".format(
+                symbol, [o.get("type") for o in orders]))
+            return
+        for o in stop_orders:
+            oid  = o.get("orderId")
+            sp   = o.get("stopPrice", "?")
+            side = o.get("side", "?")
+            logger.info("  {} annulation STOP_MARKET id={} side={} stopPrice={}".format(
+                symbol, oid, side, sp))
+            if oid:
+                r = request_binance("DELETE", "/fapi/v1/order",
                                     {"symbol": symbol, "orderId": oid})
-                    time.sleep(0.2)
+                logger.info("  {} DELETE → {}".format(symbol, r))
+                time.sleep(0.3)
     except Exception as e:
-        logger.debug("_cancel_stop_orders {}: {}".format(symbol, e))
+        logger.warning("_cancel_stop_orders {}: {}".format(symbol, e))
+
+
+def _place_stop_raw(symbol, side, stop_price, pp, wtype):
+    """
+    POST direct STOP_MARKET avec capture brute de l'erreur Binance.
+    Retourne (order_dict_ou_None, code_erreur, msg_erreur).
+    Contourne request_binance pour voir l'erreur exacte.
+    """
+    import json as _json
+    params = {
+        "symbol":        symbol,
+        "side":          side,
+        "type":          "STOP_MARKET",
+        "stopPrice":     round(stop_price, pp),
+        "closePosition": "true",
+        "workingType":   wtype,
+        "timestamp":     int(time.time() * 1000) + _binance_time_offset,
+        "recvWindow":    20000,
+    }
+    params["signature"] = _sign(params)
+    headers = {"X-MBX-APIKEY": API_KEY}
+    try:
+        resp = requests.post(
+            BASE_URL + "/fapi/v1/order",
+            params=params, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            return resp.json(), 0, ""
+        try:
+            d    = _json.loads(resp.text)
+            code = int(d.get("code", 0))
+            msg  = str(d.get("msg", resp.text[:120]))
+        except Exception:
+            code, msg = 0, resp.text[:120]
+        return None, code, msg
+    except Exception as e:
+        return None, -1, str(e)
+
 
 def move_sl_binance(symbol, old_order_id, new_sl, close_side):
     """
     Déplace le SL trailing :
-    1. Annule l'ancien ordre SL (par ID ou scan des ordres ouverts)
-    2. Pose le nouveau STOP_MARKET (MARK_PRICE → CONTRACT_PRICE)
-    3. NE touche PAS au TP (TAKE_PROFIT_MARKET conservé)
-
-    Problème clé : Binance n'accepte qu'UN SEUL STOP_MARKET closePosition
-    par symbol. L'ancien doit être annulé AVANT de poser le nouveau.
+    1. Diagnostique les ordres ouverts sur le symbole
+    2. Annule l'ancien SL (par ID ou scan STOP_MARKET)
+    3. Pose le nouveau STOP_MARKET avec capture d'erreur brute Binance
     """
     info = symbol_info_cache.get(symbol, {})
     pp   = info.get("pricePrecision", 4)
 
-    # ── Vérification distance minimum (0.1% du mark) ──────────────
+    # ── Prix actuel et vérification distance ──────────────────────
     mark = get_price(symbol) or new_sl
-    min_dist = mark * 0.001   # 0.1% minimum Binance
-    if close_side == "BUY":   # SELL position → SL doit être AU-DESSUS du mark
+    min_dist = mark * 0.001          # 0.1% minimum Binance
+    if close_side == "BUY":          # SELL position → SL AU-DESSUS du mark
         new_sl = max(round(new_sl, pp), round(mark + min_dist, pp))
-    else:                      # BUY position → SL doit être EN-DESSOUS du mark
+    else:                             # BUY position → SL EN-DESSOUS du mark
         new_sl = min(round(new_sl, pp), round(mark - min_dist, pp))
     new_sl = round(new_sl, pp)
 
-    logger.debug("🔄 {} move_sl mark={:.{}f} new_sl={:.{}f} side={}".format(
-        symbol, mark, pp, new_sl, pp, close_side))
+    logger.info("🔄 {} move_sl | mark={:.{}f} new_sl={:.{}f} close_side={} old_id={}".format(
+        symbol, mark, pp, new_sl, pp, close_side, old_order_id))
 
     # ── Étape 1 : Annulation de l'ancien SL ───────────────────────
     deleted_by_id = False
     if old_order_id:
         r_del = request_binance("DELETE", "/fapi/v1/order",
                                 {"symbol": symbol, "orderId": old_order_id})
+        logger.info("  {} DELETE id={} → {}".format(symbol, old_order_id, r_del))
         if r_del and r_del.get("_already_triggered"):
             logger.warning("⚠️  {} SL déclenché pendant déplacement → fermée".format(symbol))
             with trade_lock:
@@ -2549,39 +3018,61 @@ def move_sl_binance(symbol, old_order_id, new_sl, close_side):
             deleted_by_id = True
 
     if not deleted_by_id:
-        # Fallback : annule uniquement les STOP_MARKET (preserve le TP)
-        logger.debug("  {} scan+cancel STOP orders (ID={} invalide ou absent)".format(
-            symbol, old_order_id))
+        logger.info("  {} → fallback _cancel_stop_orders".format(symbol))
         _cancel_stop_orders(symbol)
-        time.sleep(0.5)
+        time.sleep(0.8)   # Attente Binance
 
-    # ── Étape 2 : Pose du nouveau SL ─────────────────────────────
+    # ── Étape 2 : Pose du nouveau SL (avec erreur brute) ─────────
     for wtype in ["MARK_PRICE", "CONTRACT_PRICE"]:
         for attempt in range(3):
-            r = request_binance("POST", "/fapi/v1/order", {
-                "symbol":        symbol,
-                "side":          close_side,
-                "type":          "STOP_MARKET",
-                "stopPrice":     round(new_sl, pp),
-                "closePosition": "true",
-                "workingType":   wtype,
-            })
-            if r and r.get("orderId"):
-                logger.debug("✅ {} SL trailing {} @ {:.{}f}".format(
-                    symbol, wtype, new_sl, pp))
-                return r
-            if r and r.get("_already_triggered"):
+            sp_try = round(new_sl, pp)
+            order, err_code, err_msg = _place_stop_raw(symbol, close_side, sp_try, pp, wtype)
+
+            if order and order.get("orderId"):
+                logger.info("✅ {} SL trailing {} @ {:.{}f} id={}".format(
+                    symbol, wtype, sp_try, pp, order["orderId"]))
+                # Récupérer l'order_id Binance pour le trade_log
+                order["orderId"] = order["orderId"]
+                return order
+
+            # Log de l'erreur EXACTE de Binance
+            logger.warning("⚠️  {} SL {} tentative {}/3 REFUSÉ — code={} msg='{}'".format(
+                symbol, wtype, attempt + 1, err_code, err_msg))
+
+            # Corrections automatiques selon le code d'erreur
+            if err_code in (-4003, -5021):
+                # Prix trop proche du mark → décaler davantage
+                shift = mark * 0.003 * (attempt + 1)
+                if close_side == "BUY":
+                    new_sl = round(mark + shift, pp)
+                else:
+                    new_sl = round(mark - shift, pp)
+                logger.info("  {} ajustement stopPrice → {:.{}f} (shift +{:.{}f})".format(
+                    symbol, new_sl, pp, shift, pp))
+
+            elif err_code == -5022:
+                # Position déjà fermée pendant le déplacement
+                logger.warning("⚠️  {} position déjà fermée (code -5022)".format(symbol))
                 with trade_lock:
                     if symbol in trade_log and trade_log[symbol].get("status") == "OPEN":
                         trade_log[symbol]["status"]    = "CLOSED"
-                        trade_log[symbol]["closed_by"] = "SL_TRIGGERED_DURING_MOVE"
-                        _on_closed(symbol, trade_log[symbol], is_win=False)
+                        trade_log[symbol]["closed_by"] = "ALREADY_CLOSED_DURING_TRAIL"
+                        _on_closed(symbol, trade_log[symbol], is_win=True)
                 return None
-            logger.warning("⚠️  {} SL trailing {} tentative {}/3 → r={}".format(
-                symbol, wtype, attempt + 1, r))
-            time.sleep(0.5)
 
-    logger.error("❌ {} move_sl_binance échoué — SL logiciel @ {:.{}f}".format(
+            elif err_code == -2021:
+                # "Order would immediately trigger" → SL trop proche, décaler
+                shift = mark * 0.002 * (attempt + 1)
+                if close_side == "BUY":
+                    new_sl = round(mark + shift, pp)
+                else:
+                    new_sl = round(mark - shift, pp)
+                logger.info("  {} -2021 immediate trigger → ajustement {:.{}f}".format(
+                    symbol, new_sl, pp))
+
+            time.sleep(0.8)
+
+    logger.error("❌ {} move_sl_binance ÉCHEC TOTAL — SL logiciel @ {:.{}f}".format(
         symbol, new_sl, pp))
     return None
 
@@ -2697,10 +3188,42 @@ def update_trailing_sl(symbol):
                      if be_trigger else
                      "🔁 <b>Trailing RR{}R</b>".format(int(rr)))
                 )
+            # Remise à zéro du compteur d'échecs si le déplacement a réussi
+            t["sl_fail_count"] = 0
         else:
+            # ── SL REFUSÉ PAR BINANCE → COMPTEUR + FERMETURE FORCÉE ──
             t["sl_on_binance"] = False
             logger.warning("⚠️  {} déplacement SL Binance échoué — SL logiciel @ {:.{}f}".format(
-                symbol, sl, pp))
+                symbol, new_sl, pp))
+
+            # Compteur d'échecs SL consécutifs
+            t["sl_fail_count"] = t.get("sl_fail_count", 0) + 1
+
+            # Après 3 échecs consécutifs → fermeture market forcée
+            if t.get("sl_fail_count", 0) >= 3:
+                logger.critical(
+                    "🚨 {} SL Binance refusé {} fois consécutives → FERMETURE FORCÉE".format(
+                        symbol, t["sl_fail_count"]))
+                send_telegram(
+                    "🚨 <b>FERMETURE FORCÉE {}</b>\n"
+                    "SL Binance refusé {} fois → position fermée au market\n"
+                    "Prix actuel: {:.{}f}\n"
+                    "Entry: {:.{}f} | SL visé: {:.{}f}\n"
+                    "⚠️ Vérifier manuellement le PnL".format(
+                        symbol, t["sl_fail_count"],
+                        current_price, pp,
+                        t["entry"], pp, new_sl, pp
+                    )
+                )
+                close_side_forced = "SELL" if side == "BUY" else "BUY"
+                qty_to_close = t.get("qty", 0)
+                place_market(symbol, close_side_forced, qty_to_close)
+                t["status"]    = "CLOSED"
+                t["closed_by"] = "SL_BINANCE_REFUSED_FORCE_CLOSE"
+                _on_closed(symbol, t, is_win=(
+                    (side == "BUY"  and current_price > t["entry"]) or
+                    (side == "SELL" and current_price < t["entry"])
+                ))
 
 # ═══════════════════════════════════════════════════════════════════
 #  OPEN POSITION — MM DYNAMIQUE
@@ -2754,14 +3277,16 @@ def open_position(signal):
         lev        = get_leverage(score)
         max_sl_pct = get_max_sl_pct()
 
-        # ── Mise Paroli (anti-martingale) ajustée par brain ─────────
+        # ── Risque $0.60 base +25%/WIN — sizing par risque en $ ──────
         session = get_session()
-        margin, paroli_level = paroli_get_margin(symbol, setup, session)
+        risk_usd, _ = paroli_get_margin(symbol, setup, session)
+        mm_detail  = "Risque ${:.2f} (streak={} | +25%/WIN)".format(
+            risk_usd, _risk_state["win_streak"])
+
+        # margin pour le dashboard (estimation)
         with balance_lock:
             cur_bal = account_balance
-        margin_pct = margin / cur_bal if cur_bal > 0 else 0.10
-        mm_detail  = "Paroli niv.{} ${:.2f} (streak={})".format(
-            paroli_level, margin, _paroli["win_streak"])
+        margin_pct = risk_usd / cur_bal if cur_bal > 0 else 0.10
 
         # ── SL ATR ou CRT ────────────────────────────────────────
         candles_ohlc = signal.get("candles_ohlc")
@@ -2780,12 +3305,12 @@ def open_position(signal):
         # ── TP exact RR4 après frais ─────────────────────────────
         tp = round(find_tp_for_rr(entry, sl, side, TP_RR), pp)
 
-        # ── Sizing ───────────────────────────────────────────────
-        risk_usdt = get_risk_usdt()
-        qty = _round_step(risk_usdt / sl_dist, step_size)
+        # ── Sizing : qty = risk_usd / sl_distance ────────────────
+        # Le risque en $ est fixé, les lots s'adaptent au SL
+        qty = _round_step(risk_usd / sl_dist, step_size)
 
-        # Cap par marge × levier
-        max_qty_m = _round_step((margin * lev) / entry, step_size)
+        # Cap par notionnel max raisonnable (levier × risque × 10)
+        max_qty_m = _round_step((risk_usd * lev) / entry, step_size)
         if max_qty_m > 0 and qty > max_qty_m:
             qty = max_qty_m
 
@@ -2911,8 +3436,18 @@ def open_position(signal):
                 logger.warning("⚠️ SL retry {}/3 dans 2s...".format(_sl_attempt + 1))
                 time.sleep(2.0)
         if not sl_r["sent"]:
-            logger.critical("🚨 SL {} NON POSÉ sur Binance après 3 tentatives — SL logiciel actif".format(symbol))
-            send_telegram("🚨 <b>CRITIQUE — SL {} non posé sur Binance !</b>\nSL logiciel actif @ {:.{}f}\nVérifiez votre position manuellement !".format(symbol, sl, pp))
+            logger.critical("🚨 SL {} NON POSÉ sur Binance après 3 tentatives — FERMETURE FORCÉE".format(symbol))
+            send_telegram(
+                "🚨 <b>SL IMPOSSIBLE — {} FERMÉ AU MARKET</b>\n"
+                "Binance a refusé le SL 3 fois.\n"
+                "Position fermée immédiatement pour éviter une perte non contrôlée.\n"
+                "Entry: {:.{}f} | SL visé: {:.{}f}\n"
+                "Prix actuel: {:.{}f}".format(
+                    symbol, actual_entry, pp, sl, pp, get_price(symbol) or actual_entry, pp)
+            )
+            # Fermeture market immédiate — on ne laisse pas une position sans SL
+            place_market(symbol, close_side, qty)
+            return
 
         # Retry TP une fois si échec
         tp_r = place_tp_binance(symbol, tp, close_side)
@@ -2928,7 +3463,7 @@ def open_position(signal):
         with trade_lock:
             trade_log[symbol] = {
                 "side": side, "entry": actual_entry, "sl": sl, "tp": tp,
-                "qty": qty, "leverage": lev, "margin": margin,
+                "qty": qty, "leverage": lev, "margin": risk_usd,
                 "margin_pct": round(margin_pct * 100, 1),
                 "setup": setup, "score": score, "probability": prob,
                 "status": "OPEN", "opened_at": time.time(),
@@ -2938,6 +3473,8 @@ def open_position(signal):
                 "btc_corr": signal.get("btc_corr", "?"), "atr": atr,
                 "be_price": be_price, "session": session,
                 "fond_score": fond_score, "btc_strength": btc_strength,
+                "risk_usd": risk_usd,   # v4.6 : risque $ explicite
+                "realized_pnl": 0.0,    # v4.6 : sera mis à jour à la fermeture
             }
 
         dom_data = get_btc_dominance()
@@ -2954,7 +3491,7 @@ def open_position(signal):
             "BE: {:.{}f} | TP: {:.{}f} (RR{})\n"
             "Setup: {} | Score:{} | Conf:{}/5\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "💰 Marge: <b>{:.0f}%</b>\n"
+            "💰 Risque: <b>${:.2f}</b> ({:.1f}%) | qty={}\n"
             "   {}\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "📊 Fond: {}/100\n"
@@ -2964,12 +3501,11 @@ def open_position(signal):
             "{} | {}".format(
                 symbol, side,
                 actual_entry, pp,
-                sl, pp, sl_dist2/actual_entry*100,
-                sl_method,
+                sl_method, sl, pp, sl_dist2/actual_entry*100,
                 "✅Binance" if sl_r["sent"] else "⚠️logiciel",
                 be_price, pp, tp, pp, TP_RR,
                 setup, score, signal.get("confluence", 0),
-                margin_pct*100,
+                risk_usd, margin_pct*100, qty,
                 mm_detail,
                 fond_score,
                 fg_det,
@@ -3001,20 +3537,22 @@ def _on_closed(symbol, trade, is_win):
     # ── Brain : apprentissage ─────────────────────────────────────
     brain_record_trade(symbol, setup, session, side, is_win, trade_duration_s=trade_duration)
 
-    # ── Paroli : mise à jour niveau ───────────────────────────────
+    # ── Risque +25% : mise à jour ─────────────────────────────────
     if is_win:
-        paroli_on_win()
+        # Récupère le PnL réel si disponible dans le trade
+        last_gain = trade.get("realized_pnl", 0.0)
+        risk_on_win(last_gain)
     else:
-        paroli_on_loss()
+        risk_on_loss()
 
     if is_win:
         consec_losses = 0
         symbol_stats[symbol]["wins"] += 1
-        with _paroli_lock:
-            plvl   = _paroli["level"]
-            streak = _paroli["win_streak"]
-        logger.info("✅ WIN {} {} {} | Paroli niv.{} streak={}".format(
-            symbol, side, setup, plvl, streak))
+        with _risk_lock:
+            new_risk  = _risk_state["current_risk"]
+            streak    = _risk_state["win_streak"]
+        logger.info("✅ WIN {} {} {} | Risque suivant ${:.2f} (streak={})".format(
+            symbol, side, setup, new_risk, streak))
         milestone_msg = ""
         if account_balance >= TARGET_BALANCE:
             milestone_msg = "\n🏆 <b>OBJECTIF ${:.0f} ATTEINT !</b>".format(TARGET_BALANCE)
@@ -3025,25 +3563,25 @@ def _on_closed(symbol, trade, is_win):
         send_telegram(
             "✅ <b>WIN {} {}</b>\n"
             "Setup: {} | Frais couverts\n"
-            "🎲 Paroli niv.{} → prochaine mise ${:.2f}\n"
+            "💰 Risque suivant <b>${:.2f}</b> (+25%)\n"
             "Balance: ${:.4f} {}{}".format(
                 symbol, side, setup,
-                plvl, PAROLI_BASE + plvl * PAROLI_STEP,
+                new_risk,
                 account_balance, get_progress_bar(), milestone_msg))
     else:
         consec_losses += 1
         symbol_stats[symbol]["losses"] += 1
-        logger.info("🔴 LOSS {} {} {} | Paroli reset → ${}".format(
-            symbol, side, setup, PAROLI_BASE))
+        logger.info("🔴 LOSS {} {} {} | Risque reset → ${}".format(
+            symbol, side, setup, RISK_BASE_USD))
         send_telegram(
             "🔴 <b>LOSS {} {}</b>\n"
             "Setup: {} | Consécutives: {}\n"
-            "🎲 Paroli reset → mise ${:.2f}\n"
+            "💰 Risque reset → <b>${:.2f}</b>\n"
             "Balance: ${:.4f} {}\n{}".format(
                 symbol, side, setup, consec_losses,
-                PAROLI_BASE, account_balance,
+                RISK_BASE_USD, account_balance,
                 get_tier_label(), get_progress_bar()))
-        # NOTE v4.4 : pas de cooldown — Paroli gère le risque après perte
+        # NOTE v4.6 : pas de cooldown — risque reset gère après perte
 
 def _on_closed_from_binance(symbol, trade):
     try:
@@ -3051,6 +3589,7 @@ def _on_closed_from_binance(symbol, trade):
                                  {"symbol": symbol, "incomeType": "REALIZED_PNL", "limit": 5},
                                  signed=True)
         pnl = sum(float(i.get("income", 0)) for i in income) if income else 0.0
+        trade["realized_pnl"] = pnl   # v4.6 : stocké pour risk_on_win
         _on_closed(symbol, trade, is_win=pnl >= 0)
     except:
         _on_closed(symbol, trade, is_win=False)
@@ -3207,17 +3746,15 @@ def monitor_positions():
 
 def prefilter_symbol(symbol):
     """
-    Phase 0 — Pré-filtre ultra-léger (0 appel API) :
-    Utilise le cache bulk ticker pour éliminer les symboles sans intérêt.
-    Critères :
-      - Volume 24h ≥ VOL_MIN_FILTER (déjà filtré au chargement)
-      - Si on a les données bulk : cohérence direction/variation
-    Retourne True si le symbole mérite un scan technique.
+    Phase 0 — Pré-filtre ultra-léger (0 appel API).
+    v4.8 : utilise brain_get_vol_min_filter() qui peut être ×2
+    si le brain détecte de la stagnation (actifs qui ne bougent pas).
     """
     bulk = get_bulk_ticker(symbol)
-    if not bulk: return True   # Pas de données → inclus par précaution
+    if not bulk: return True
     vol = bulk["vol"]
-    if vol < VOL_MIN_FILTER: return False
+    effective_vol_min = brain_get_vol_min_filter()
+    if vol < effective_vol_min: return False
     return True
 
 def scan_symbol_tech(symbol):
@@ -3294,36 +3831,56 @@ def scan_symbol_tech(symbol):
 def scan_symbol_fond(signal):
     """
     Phase 2 — Scan FONDAMENTAL sur les candidats techniques.
-    Weight estimé : ≈ 3-4 appels (funding, OI, liquidations)
-    Uniquement sur les signaux qui ont passé le filtre technique.
+    v4.9 : + filtre MTF (M15/H1) + filtre news + fondamentaux /140
+    Weight estimé : ≈ 5-6 appels (funding, OI, liquidations, MTF×2)
     Retourne le signal enrichi ou None.
     """
     symbol = signal["symbol"]
     side   = signal["side"]
     sym_closes = signal["closes"]
     try:
-        # Filtre Fear & Greed (0 appel API si cache valide)
+        # ── Filtre News (0 appel API si cache valide) ─────────────
+        if NEWS_FILTER_ENABLED:
+            news_blackout, news_reason = is_news_blackout()
+            if news_blackout:
+                logger.info("  📰 {} NEWS BLACKOUT — {}".format(symbol, news_reason))
+                return None
+            signal["news_ok"] = True
+
+        # ── Filtre MTF M15+H1 — NOUVEAU v4.9 ─────────────────────
+        if MTF_CONFIRM_REQUIRED:
+            mtf = get_mtf_direction(symbol)
+            if side == "BUY"  and not mtf["ok_buy"]:
+                logger.debug("  {} MTF BUY refusé — {}".format(symbol, mtf["label"]))
+                return None
+            if side == "SELL" and not mtf["ok_sell"]:
+                logger.debug("  {} MTF SELL refusé — {}".format(symbol, mtf["label"]))
+                return None
+            signal["mtf_label"] = mtf["label"]
+
+        # ── Filtre Fear & Greed (0 appel API si cache valide) ─────
         fg_ok, fg_detail = check_fear_greed(side)
         if not fg_ok: return None
         signal["fg_detail"] = fg_detail
 
-        # Corrélation BTC (0 appel API si cache valide)
+        # ── Corrélation BTC (0 appel API si cache valide) ─────────
         corr_ok, corr_reason = check_btc_correlation(symbol, side, sym_closes)
         if not corr_ok: return None
         signal["btc_corr"] = corr_reason
 
-        # Fondamentaux — appels API réels ici
+        # ── Fondamentaux /140 — appels API réels ─────────────────
         fond_score, fond_ok, fond_detail = check_fondamentaux(symbol, side)
         if not fond_ok:
-            logger.debug("  {} fond {}/100 < {} → rejeté: {}".format(
+            logger.debug("  {} fond {}/140 < {} → rejeté: {}".format(
                 symbol, fond_score, FOND_MIN_SCORE, fond_detail))
             return None
         signal["fond_score"]  = fond_score
         signal["fond_detail"] = fond_detail
 
-        logger.info("  ✅ [{}] {} {} | tech={} conf={}/5 fond={}/100".format(
+        mtf_tag = signal.get("mtf_label", "MTF OFF")
+        logger.info("  ✅ [{}] {} {} | tech={} conf={}/5 fond={}/140 | {}".format(
             signal["setup"], symbol, side,
-            signal["score"], signal["confluence"], fond_score))
+            signal["score"], signal["confluence"], fond_score, mtf_tag))
 
         return signal
 
@@ -3549,41 +4106,87 @@ def recover_existing_positions():
 # ═══════════════════════════════════════════════════════════════════
 
 def print_signal_console(sig, rank):
-    side = sig["side"]
-    dcol = RED + BOLD if side == "SELL" else GREEN + BOLD
-    sep  = "═" * 65
+    side  = sig["side"]
+    sym   = sig.get("symbol", "")
+    setup = sig.get("setup", "?")
+    dcol  = RED + BOLD if side == "SELL" else GREEN + BOLD
+    sep   = "═" * 65
+
+    # ── Heure réelle Binance (UTC + offset sync) ──────────────────
+    now_ts  = time.time() + _binance_time_offset / 1000.0
+    now_utc = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    heure   = now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+
     print("\n" + cc(sep, CYAN))
-    print("  #{} {:<22} {} {}".format(
-        rank, sig["symbol"], cc("◄ " + side, dcol), cc("BB M15 BTC-ALIGN", MAGENTA + BOLD)))
+    print("  #{} {:<22} {} {}  {}".format(
+        rank, sym,
+        cc("◄ " + side, dcol),
+        cc(setup, MAGENTA + BOLD),
+        cc(heure, DIM)))
     print(cc("─" * 65, DIM))
 
     def row(label, val, col=WHITE):
         print("  {}  {}".format(cc("{:<18}".format(label+":"), DIM), cc(str(val), col)))
 
-    fg   = _fg_cache
-    sess = get_session()
-    mmult = get_session_mult()
-    bstr  = sig.get("btc_strength", "NORMAL")
-    base  = MARGIN_BY_SCORE.get(sig["score"], MARGIN_MIN)
-    sym   = sig.get("symbol", "")
-    side  = sig.get("side", "BUY")
-    marg, mm_detail = compute_dynamic_margin(
-        sig["score"], sig.get("fond_score", 0), bstr, side=side, symbol=sym)
+    sess    = get_session()
+    mmult   = get_session_mult()
+    bstr    = sig.get("btc_strength", "NORMAL")
     dom_data = get_btc_dominance()
-    fg_mult, fg_det = get_fg_margin_mult(side)
+    fg_mult, fg_det   = get_fg_margin_mult(side)
     dom_mult, dom_det = get_btc_dom_mult(sym, side)
 
-    row("Setup",    "{} | score={} conf={}/5 prob={:.0f}%".format(
-        sig["setup"], sig["score"], sig["confluence"], sig["probability"]), BOLD + WHITE)
-    row("BTC M15",  sig.get("btc_corr", "?"), CYAN)
-    row("Session",  "{} (×{})".format(sess, mmult), YELLOW)
-    row("BTC Force",bstr, GREEN if bstr == "FORT" else WHITE)
-    row("BTC Dom",  dom_det, RED if dom_data.get("dominance", 50) >= BTC_DOM_HIGH else GREEN)
-    row("Fond",     "{}/100 — {}".format(sig.get("fond_score",0), sig.get("fond_detail","")),
-        GREEN if sig.get("fond_score",0) >= 60 else YELLOW)
-    row("F&G",      fg_det,
+    # ── Risque actuel (identique à open_position) ─────────────────
+    risk_usd, _ = paroli_get_margin(sym, setup, sess)
+    risk_detail = "Risque ${:.2f} | streak={} WIN | +25%/WIN".format(
+        risk_usd, _risk_state["win_streak"])
+    with balance_lock:
+        cur_bal = account_balance
+    margin_pct = risk_usd / cur_bal * 100 if cur_bal > 0 else 0.0
+
+    # ── Estimation SL / TP basée sur prix actuel ──────────────────
+    info    = symbol_info_cache.get(sym, {})
+    pp      = info.get("pricePrecision", 4)
+    atr     = sig.get("atr", 0)
+    ob      = sig.get("ob", {})
+    candles = sig.get("candles_ohlc")
+    cur_price = get_price(sym) or 0.0
+
+    sl_disp = tp_disp = "—"
+    if cur_price > 0:
+        try:
+            sl_est, sl_meth = get_sl(ob, cur_price, side, atr, candles)
+            if side == "BUY":
+                sl_dist = max(cur_price - sl_est, cur_price * MIN_SL_PCT)
+                sl_dist = min(sl_dist, cur_price * MAX_SL_PCT)
+                sl_val  = round(cur_price - sl_dist, pp)
+            else:
+                sl_dist = max(sl_est - cur_price, cur_price * MIN_SL_PCT)
+                sl_dist = min(sl_dist, cur_price * MAX_SL_PCT)
+                sl_val  = round(cur_price + sl_dist, pp)
+            tp_val  = round(find_tp_for_rr(cur_price, sl_val, side, TP_RR), pp)
+            sl_pct  = abs(cur_price - sl_val) / cur_price * 100
+            sl_disp = "{:.{}f}  ({:.2f}%)  [{}]".format(sl_val, pp, sl_pct, sl_meth)
+            tp_disp = "{:.{}f}  (RR{})".format(tp_val, pp, TP_RR)
+        except Exception:
+            pass
+
+    # ── Affichage ─────────────────────────────────────────────────
+    row("Setup",     "{} | score={} conf={}/5 prob={:.0f}%".format(
+        setup, sig["score"], sig["confluence"], sig["probability"]), BOLD + WHITE)
+    row("Prix actuel",
+        "{:.{}f}".format(cur_price, pp) if cur_price > 0 else "—", BOLD + WHITE)
+    row("SL estimé",  sl_disp, RED + BOLD)
+    row("TP estimé",  tp_disp, GREEN + BOLD)
+    row("BTC M5",    sig.get("btc_corr", "?"), CYAN)
+    row("Session",   "{} (×{})".format(sess, mmult), YELLOW)
+    row("BTC Force", bstr, GREEN if bstr == "FORT" else WHITE)
+    row("BTC Dom",   dom_det, RED if dom_data.get("dominance", 50) >= BTC_DOM_HIGH else GREEN)
+    row("Fond",      "{}/100 — {}".format(sig.get("fond_score", 0), sig.get("fond_detail", "")),
+        GREEN if sig.get("fond_score", 0) >= 60 else YELLOW)
+    row("F&G",       fg_det,
         GREEN if fg_mult >= 1.0 else YELLOW if fg_mult == 0.5 else WHITE)
-    row("Marge dyn", "{:.0f}% | {}".format(marg*100, mm_detail),
+    row("Risque $",
+        "${:.2f} ({:.1f}%) | {}".format(risk_usd, margin_pct, risk_detail),
         GREEN + BOLD)
     print(cc(sep, CYAN))
 
@@ -3593,26 +4196,32 @@ def print_signal_console(sig, rank):
 
 def scanner_loop():
     """
-    Scan en 2 phases avec anti-saturation API :
+    Scan CONTINU v4.7 — 30s entre chaque cycle complet.
 
-    PHASE 1 — TECHNIQUE (cheap, weight ≈ 1/symbole)
-      → Batches de BATCH_SIZE symboles en parallèle (MAX_WORKERS threads)
-      → Throttle adaptatif : si weight > 50% → augmente pause entre batches
-      → Collecte tous les signaux tech (max TECH_PHASE_MAX_SIGNALS candidats)
+    Avantages vs scan M5 fixe :
+      - On ne rate pas une entrée qui se forme en milieu de bougie
+      - Le retour en zone BB/FVG peut durer 1-3 min → 30s garanti la capture
+      - La corrélation BTC prix est vérifiée en temps réel (cache 20s)
 
-    PHASE 2 — FONDAMENTALE (cher, weight ≈ 3-4/symbole)
-      → Traitée séquentiellement sur les candidats triés par score tech
-      → S'arrête dès qu'un signal complet (tech+fond) est trouvé
-      → Évite de faire des appels lourds sur des symboles qui seront rejetés
+    Anti-saturation API maintenu :
+      - 2 phases tech/fond inchangées
+      - Weight tracker toujours actif
+      - Batches adaptatifs selon saturation
 
-    AVANTAGE :
-      Sans optimisation : 350 × 5 appels = 1750 appels/cycle
-      Avec 2 phases    : 350 × 1 + 20 × 4 = 430 appels/cycle (75% de réduction)
+    Tâches périodiques :
+      - Sync Binance time   : toutes les 30 min
+      - Reload symboles     : toutes les 60 min
+      - Nettoyage cache     : toutes les 30 min
+      - Balance refresh     : toutes les 5 min
     """
-    logger.info("🔍 Scanner M5 v3.0 — Scan complet {} symboles | 2 phases anti-saturation".format(
+    logger.info("🔍 Scanner M5 v4.7 CONTINU — cycle 30s | {} symboles".format(
         len(symbols_list)))
     time.sleep(5)
-    count = 0
+    count        = 0
+    last_sync    = 0.0
+    last_reload  = 0.0
+    last_cache   = 0.0
+    last_balance = 0.0
 
     while True:
         try:
@@ -3620,38 +4229,43 @@ def scanner_loop():
                 time.sleep(10); continue
 
             count += 1
+            now = time.time()
 
-            # Sync toutes les 30min
-            if count % max(1, (1800 // max(SCAN_INTERVAL, 1))) == 0:
+            # ── Tâches périodiques ────────────────────────────────
+            if now - last_sync > 1800:       # Sync toutes les 30min
                 sync_binance_time()
                 get_account_balance(force=True)
-                btc = get_btc_direction()
-                fg  = get_fear_greed()
-                logger.info("🔄 Sync | BTC: {} | Balance: ${:.4f} | F&G:{} | {}".format(
-                    btc["label"], account_balance, fg["value"], get_tier_label()))
+                btc_s = get_btc_direction()
+                fg_s  = get_fear_greed()
+                logger.info("🔄 Sync30min | BTC: {} | Balance: ${:.4f} | F&G:{} | {}".format(
+                    btc_s["label"], account_balance, fg_s["value"], get_tier_label()))
+                last_sync = now
 
-            # Reload symboles + bulk ticker toutes les heures
-            if count % max(1, (3600 // max(SCAN_INTERVAL, 1))) == 0:
+            if now - last_reload > 3600:     # Reload symboles 1h
                 load_top_symbols()
+                last_reload = now
 
-            # PATCH 7 — Nettoyage klines_cache toutes les 30min (anti-fuite mémoire)
-            if count % max(1, (1800 // max(SCAN_INTERVAL, 1))) == 0:
-                cutoff = time.time() - 300   # On garde seulement les < 5min
-                keys_before = len(klines_cache)
-                stale = [k for k, (_, ts) in list(klines_cache.items()) if ts < cutoff]
+            if now - last_cache > 1800:      # Nettoyage cache 30min
+                cutoff = now - 300
+                stale  = [k for k, (_, ts) in list(klines_cache.items()) if ts < cutoff]
                 for k in stale:
                     klines_cache.pop(k, None)
                 if stale:
-                    logger.debug("🧹 klines_cache: {} → {} entrées".format(
-                        keys_before, len(klines_cache)))
+                    logger.debug("🧹 klines_cache nettoyé: {} entrées supprimées".format(len(stale)))
+                last_cache = now
 
+            if now - last_balance > 300:     # Refresh balance 5min
+                get_account_balance(force=True)
+                last_balance = now
+
+            # ── Gardes-fous globaux ───────────────────────────────
             if account_balance < HARD_FLOOR:
                 logger.warning("🛑 Hard floor ${} | ${:.4f}".format(HARD_FLOOR, account_balance))
                 time.sleep(60); continue
 
-            if time.time() < cooldown_until:
-                r = int((cooldown_until - time.time()) / 60)
-                if count % 2 == 0:
+            if now < cooldown_until:
+                r = int((cooldown_until - now) / 60)
+                if count % 4 == 0:
                     logger.info("⏸ Cooldown {}min | weight={}".format(r, get_current_weight()))
                 time.sleep(SCAN_INTERVAL); continue
 
@@ -3662,51 +4276,62 @@ def scanner_loop():
 
             session = get_session()
             if session == "OFF":
-                logger.info("🌙 Session OFF — pause scan")
+                if count % 4 == 0:
+                    logger.info("🌙 Session OFF — pause scan")
                 time.sleep(SCAN_INTERVAL); continue
 
+            # ── Filtre News global (avant de lancer le scan) ──────
+            if NEWS_FILTER_ENABLED:
+                news_ko, news_msg = is_news_blackout()
+                if news_ko:
+                    if count % 4 == 0:
+                        logger.info("📰 {} — scan suspendu".format(news_msg))
+                    time.sleep(SCAN_INTERVAL); continue
+
+            # ── FILTRE TENDANCE BTC STRICT ────────────────────────
+            # Si BTC neutre/mixte → on ne scanne PAS (jamais contre-tendance)
             btc = get_btc_direction()
             if btc["direction"] == 0:
-                logger.info("⚪ BTC M5 neutre — scan annulé")
+                if count % 6 == 0:
+                    logger.info("⚪ BTC NEUTRE — scan suspendu | {}".format(btc["label"]))
                 time.sleep(SCAN_INTERVAL); continue
 
             # Refresh bulk ticker si expiré
             with _bulk_ticker_lock:
-                ticker_age = time.time() - _bulk_ticker_ts
+                ticker_age = now - _bulk_ticker_ts
             if ticker_age > BULK_TICKER_TTL:
                 load_top_symbols()
 
             # Pré-filtre léger (0 appel API)
             candidates = [s for s in symbols_list if prefilter_symbol(s)]
 
-            logger.info("🔍 Phase1/Tech | {} candid → {} après pré-filtre | {} | F&G:{} | weight={}".format(
-                len(symbols_list), len(candidates), btc["label"],
-                _fg_cache.get("value","?"), get_current_weight()))
+            if count % 4 == 0:   # Log tous les 2 min environ
+                logger.info("🔍 Cycle#{} | {} candid | {} | F&G:{} | weight={} | Risque=${:.2f}".format(
+                    count, len(candidates), btc["label"],
+                    _fg_cache.get("value","?"), get_current_weight(),
+                    _risk_state["current_risk"]))
 
             # ══════════════════════════════════════════════════════
             # PHASE 1 : SCAN TECHNIQUE EN BATCHES ADAPTATIFS
             # ══════════════════════════════════════════════════════
             tech_signals = []
-            batches      = [candidates[i:i+BATCH_SIZE]
-                            for i in range(0, len(candidates), BATCH_SIZE)]
+            batches = [candidates[i:i+BATCH_SIZE]
+                       for i in range(0, len(candidates), BATCH_SIZE)]
 
             for batch_idx, batch in enumerate(batches):
-                # Vérifier weight avant chaque batch
-                w_now      = get_current_weight()
-                w_limit    = MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN
-                w_pct      = w_now / w_limit if w_limit > 0 else 0
+                w_now   = get_current_weight()
+                w_limit = MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN
+                w_pct   = w_now / w_limit if w_limit > 0 else 0
 
-                # Throttle adaptatif basé sur le weight restant
-                # PATCH 8 : formule linéaire ×1 à ×4 selon saturation
                 if w_pct >= 1.0:
                     sleep_t = 8.0
-                    logger.warning("🛑 Weight {}/{} — pause {}s".format(int(w_now), int(w_limit), sleep_t))
+                    logger.warning("🛑 Weight {}/{} — pause {}s".format(
+                        int(w_now), int(w_limit), sleep_t))
                     time.sleep(sleep_t)
                 else:
-                    sleep_t = BATCH_SLEEP_BASE * (1 + w_pct * 3)   # ×1.0 → ×4.0 linéaire
+                    sleep_t = BATCH_SLEEP_BASE * (1 + w_pct * 3)
                     time.sleep(sleep_t)
 
-                # Scan parallèle du batch
                 with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
                     futures = {pool.submit(scan_symbol_tech, sym): sym for sym in batch}
                     for fut in as_completed(futures, timeout=None):
@@ -3717,59 +4342,52 @@ def scanner_loop():
                         except Exception:
                             pass
 
-                # Early exit si on a assez de candidats pour la phase 2
                 if len(tech_signals) >= TECH_PHASE_MAX_SIGNALS:
                     logger.info("  Phase1 early exit — {} signaux tech ({}/{} batches)".format(
                         len(tech_signals), batch_idx+1, len(batches)))
                     break
 
             if not tech_signals:
-                logger.info("  Aucun signal technique sur {} symboles".format(len(candidates)))
                 time.sleep(SCAN_INTERVAL); continue
 
-            # Tri des candidats tech par score (meilleurs en premier)
+            # Tri par score
             tech_signals.sort(
                 key=lambda s: s["score"] * s["confluence"] * s.get("probability", 90),
                 reverse=True)
 
-            logger.info("🔎 Phase2/Fond | {} candidats tech → analyse fondamentale | weight={}".format(
-                len(tech_signals), get_current_weight()))
+            logger.info("🔎 Phase2/Fond | {} candidats | BTC {} | weight={}".format(
+                len(tech_signals),
+                "🟢" if btc["direction"] == 1 else "🔴",
+                get_current_weight()))
 
             # ══════════════════════════════════════════════════════
-            # PHASE 2 : ANALYSE FONDAMENTALE (séquentielle, du meilleur au moins bon)
+            # PHASE 2 : ANALYSE FONDAMENTALE
             # ══════════════════════════════════════════════════════
             final_signals = []
             for sig in tech_signals:
-                # Vérifier le weight avant chaque analyse fond (4 appels ≈ weight 23)
                 w_now = get_current_weight()
                 if w_now > MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN * 0.95:
-                    logger.warning("  Phase2 stoppée — weight {}/{}".format(
-                        int(w_now), int(MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN)))
+                    logger.warning("  Phase2 stoppée — weight trop élevé")
                     break
-
                 enriched = scan_symbol_fond(sig)
                 if enriched:
                     final_signals.append(enriched)
-                    # Pause courte entre analyses fond pour ne pas burster
                     time.sleep(0.4)
 
             if not final_signals:
-                logger.info("  Aucun signal tech+fond sur {} candidats".format(len(tech_signals)))
                 time.sleep(SCAN_INTERVAL); continue
 
-            # Score composite final : tech × prob × confluence × fond
+            # Score composite final
             final_signals.sort(
                 key=lambda s: (s["score"] * s["probability"] * s["confluence"]
                                * (1 + s.get("fond_score", 0) / 60)),
                 reverse=True)
 
-            logger.info("✨ {} signaux VALIDÉS (tech+fond) | meilleur: {} {} "
-                        "score={} conf={}/5 fond={}/100 | weight={}".format(
+            logger.info("✨ {} signaux VALIDÉS | meilleur: {} {} score={} conf={}/5 fond={}/100".format(
                 len(final_signals),
                 final_signals[0]["symbol"], final_signals[0]["side"],
                 final_signals[0]["score"], final_signals[0]["confluence"],
-                final_signals[0].get("fond_score", 0),
-                get_current_weight()))
+                final_signals[0].get("fond_score", 0)))
 
             best = final_signals[0]
             sym  = best["symbol"]
@@ -3777,7 +4395,7 @@ def scanner_loop():
             with trade_lock:
                 already = sym in trade_log and trade_log[sym].get("status") == "OPEN"
             if not already:
-                signal_last_at[sym] = time.time()
+                signal_last_at[sym] = now
                 print_signal_console(best, 1)
                 open_position(best)
 
@@ -3825,11 +4443,11 @@ def dashboard_loop():
                 sess, mmult, fg["value"], fg["label"], dom["label"],
                 get_current_weight(), int(MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN)))
             logger.info("🧠 {}".format(brain_summary_log()))
-            with _paroli_lock:
-                plvl   = _paroli["level"]
-                streak = _paroli["win_streak"]
-            logger.info("🎲 Paroli: niv.{}/4 | mise ${:.2f} | streak={}W".format(
-                plvl, PAROLI_BASE + plvl * PAROLI_STEP, streak))
+            with _risk_lock:
+                cur_risk = _risk_state["current_risk"]
+                streak   = _risk_state["win_streak"]
+            logger.info("💰 Risque: ${:.2f} | streak={}W | max=${:.2f} (+25%/WIN)".format(
+                cur_risk, streak, RISK_MAX_USD))
             logger.info("═" * 65)
 
             if n_open > 0:
@@ -3868,26 +4486,27 @@ def dashboard_loop():
 
 def main():
     logger.info("╔" + "═" * 63 + "╗")
-    logger.info("║  SCANNER M5 v4.5 — PAROLI | RR3 | 4 POSITIONS          ║")
-    logger.info("║  BB+FVG | CRT/ATR | BRAIN ADAPTATIF | SCAN COMPLET      ║")
+    logger.info("║  SCANNER M5 v4.8 — $0.60 | +45%/WIN | SCAN 30s          ║")
+    logger.info("║  BB+FVG | BTC PRIX | ANTI-CT | VOL_MIN BRAIN ADAPTATIF  ║")
     logger.info("╚" + "═" * 63 + "╝")
     logger.warning("🔥 LIVE TRADING 🔥")
 
-    logger.info("  ✅ RR             : {}× (gain = {}× le risque net)".format(TP_RR, TP_RR))
-    logger.info("  ✅ MARGE          : FIXE ${:.2f} par trade (brain ajustable)".format(FIXED_MARGIN_USD))
-    logger.info("  ✅ BRAIN          : Apprentissage adaptatif — blacklist/WR/ATR/session")
-    logger.info("  ✅ SCAN           : TOUS les cryptos USDT (vol > ${:.0f}k)".format(VOL_MIN_FILTER/1000))
-    logger.info("  ✅ SETUP 1        : Breaker Block M5 BTC-aligné (score 90+)")
-    logger.info("  ✅ SETUP 2        : FVG Liquidity Sweep (score 93+)")
-    logger.info("  ✅ DOUBLE CONF    : TECH ≥ 90 + FOND ≥ {}/100".format(FOND_MIN_SCORE))
-    logger.info("  ✅ SL             : CRT prioritaire / ATR×{} fallback".format(ATR_SL_MULT))
-    logger.info("  ✅ ANTI-API       : 2 phases | weight ≤ {}/2400".format(
-        int(MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN)))
+    logger.info("  ✅ RISQUE         : ${:.2f} base | +45%/WIN | max ${:.2f} (≈5 WIN)".format(
+        RISK_BASE_USD, RISK_MAX_USD))
+    logger.info("  ✅ SIZING         : qty = risque$ / sl_distance")
+    logger.info("  ✅ SCAN           : Continu 30s | {} workers".format(MAX_WORKERS))
+    logger.info("  ✅ BTC TENDANCE   : Variation PRIX direct (15/30/60 min)")
+    logger.info("  ✅ ANTI-CT        : BTC neutre → scan suspendu")
+    logger.info("  ✅ PUMP GUARD     : priceChange >20%/24h → risque ×0.5")
+    logger.info("  ✅ VOL_MIN BRAIN  : Stagnation détectée → VOL_MIN ×2 (2h)")
+    logger.info("  ✅ TELEGRAM       : Erreurs loggées (plus de pass silencieux)")
+    logger.info("  ✅ BE + SL        : RR1 → frais + $0.01 | ATR×{:.1f}".format(TRAIL_ATR_MULT))
+    logger.info("  ✅ POSITIONS      : {} max | RR{}×".format(MAX_POSITIONS, TP_RR))
 
     start_health_server()
     sync_binance_time()
     brain_load()   # ← Charge la mémoire du brain
-    paroli_load()  # ← Charge le niveau Paroli
+    risk_load()    # ← Charge le risque courant ($0.60 base +25%/WIN)
     load_top_symbols()
     get_account_balance(force=True)
     with balance_lock:
@@ -3903,31 +4522,32 @@ def main():
     logger.info("🕐 Session: {} (mult ×{})".format(sess, get_session_mult()))
 
     send_telegram(
-        "🚀 <b>SCANNER M5 v4.5 DÉMARRÉ</b>\n\n"
+        "🚀 <b>SCANNER M5 v4.8 DÉMARRÉ</b>\n\n"
         "💰 Balance: <b>${:.4f}</b> | {}\n"
         "🎯 Objectif: ${:.0f} | {}\n\n"
-        "📊 BTC M5: {} | Force: {}\n"
+        "📊 BTC: {} | Force: {}\n"
         "😱 Fear & Greed: {} ({})\n"
         "🕐 Session: {} (×{})\n\n"
-        "⚙️ CONFIG :\n"
-        "  🎲 Paroli: niv.{} | mise actuelle <b>${:.2f}</b>\n"
-        "  📈 Niveaux: $0.60→$0.75→$0.90→$1.05→$1.20\n"
-        "  🎯 RR: <b>{}×</b> | 4 positions max\n"
-        "  🧠 Brain: {} trades mémorisés\n"
-        "  🌐 Scan TOUS cryptos (vol > ${:.0f}k)\n"
-        "  🔵 BB (90+) + 🟣 FVG Sweep (93+)\n"
-        "  🛡️ SL CRT/ATR×{:.2f} | TECH+FOND ≥ {}".format(
+        "⚙️ CONFIG v4.8 :\n"
+        "  💰 Risque actuel: <b>${:.2f}</b> (streak={})\n"
+        "  📈 Progression: $0.60 → +45%/WIN → max $3.00\n"
+        "  📐 Sizing: qty = risque$ / sl_distance\n"
+        "  ⚠️ Pump >20%/24h → risque ×0.5 auto\n"
+        "  📊 Stagnation → VOL_MIN ×2 (2h)\n"
+        "  ⏱️ Scan continu 30s | {} workers\n"
+        "  📡 BTC: variation PRIX 15/30/60min\n"
+        "  🚫 BTC neutre → scan suspendu\n"
+        "  🎯 RR {}× | {} positions max\n"
+        "  🧠 Brain: {} trades mémorisés".format(
             account_balance, get_tier_label(),
             TARGET_BALANCE, get_progress_bar(),
-            btc["label"], btc.get("strength","?"),
+            btc["label"], btc.get("strength", "?"),
             fg["value"], fg["label"],
             sess, get_session_mult(),
-            _paroli["level"], PAROLI_BASE + _paroli["level"] * PAROLI_STEP,
-            TP_RR,
+            _risk_state["current_risk"], _risk_state["win_streak"],
+            MAX_WORKERS,
+            TP_RR, MAX_POSITIONS,
             _brain.get("total_trades", 0),
-            VOL_MIN_FILTER / 1000,
-            _brain.get("atr_mult", ATR_SL_MULT),
-            FOND_MIN_SCORE
         )
     )
 
