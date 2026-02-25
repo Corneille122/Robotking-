@@ -2492,20 +2492,48 @@ def place_tp_binance(symbol, tp, close_side):
     logger.warning("⚠️  {} TP non posé → trailing SL gère la sortie".format(symbol))
     return {"sent": False, "order_id": None}
 
+def _cancel_stop_orders(symbol):
+    """Annule uniquement les ordres STOP_MARKET (pas les TAKE_PROFIT_MARKET)."""
+    try:
+        orders = request_binance("GET", "/fapi/v1/openOrders", {"symbol": symbol})
+        if not orders: return
+        for o in orders:
+            if o.get("type") in ("STOP_MARKET", "STOP"):
+                oid = o.get("orderId")
+                if oid:
+                    request_binance("DELETE", "/fapi/v1/order",
+                                    {"symbol": symbol, "orderId": oid})
+                    time.sleep(0.2)
+    except Exception as e:
+        logger.debug("_cancel_stop_orders {}: {}".format(symbol, e))
+
 def move_sl_binance(symbol, old_order_id, new_sl, close_side):
-    """Déplace SL : annule ancien + pose nouveau avec fallback CONTRACT_PRICE."""
+    """
+    Déplace le SL trailing :
+    1. Annule l'ancien ordre SL (par ID ou scan des ordres ouverts)
+    2. Pose le nouveau STOP_MARKET (MARK_PRICE → CONTRACT_PRICE)
+    3. NE touche PAS au TP (TAKE_PROFIT_MARKET conservé)
+
+    Problème clé : Binance n'accepte qu'UN SEUL STOP_MARKET closePosition
+    par symbol. L'ancien doit être annulé AVANT de poser le nouveau.
+    """
     info = symbol_info_cache.get(symbol, {})
     pp   = info.get("pricePrecision", 4)
 
-    # Vérification distance minimum par rapport au mark
+    # ── Vérification distance minimum (0.1% du mark) ──────────────
     mark = get_price(symbol) or new_sl
-    min_dist = mark * 0.0005
-    if close_side == "SELL":
-        new_sl = min(new_sl, mark - min_dist)
-    else:
-        new_sl = max(new_sl, mark + min_dist)
+    min_dist = mark * 0.001   # 0.1% minimum Binance
+    if close_side == "BUY":   # SELL position → SL doit être AU-DESSUS du mark
+        new_sl = max(round(new_sl, pp), round(mark + min_dist, pp))
+    else:                      # BUY position → SL doit être EN-DESSOUS du mark
+        new_sl = min(round(new_sl, pp), round(mark - min_dist, pp))
     new_sl = round(new_sl, pp)
 
+    logger.debug("🔄 {} move_sl mark={:.{}f} new_sl={:.{}f} side={}".format(
+        symbol, mark, pp, new_sl, pp, close_side))
+
+    # ── Étape 1 : Annulation de l'ancien SL ───────────────────────
+    deleted_by_id = False
     if old_order_id:
         r_del = request_binance("DELETE", "/fapi/v1/order",
                                 {"symbol": symbol, "orderId": old_order_id})
@@ -2517,30 +2545,41 @@ def move_sl_binance(symbol, old_order_id, new_sl, close_side):
                     trade_log[symbol]["closed_by"] = "SL_TRIGGERED_DURING_MOVE"
                     _on_closed(symbol, trade_log[symbol], is_win=False)
             return None
+        if r_del and (r_del.get("orderId") or r_del.get("_already_cancelled")):
+            deleted_by_id = True
 
-    for _ in range(3):
-        r = request_binance("POST", "/fapi/v1/order", {
-            "symbol": symbol, "side": close_side, "type": "STOP_MARKET",
-            "stopPrice": round(new_sl, pp), "closePosition": "true",
-            "workingType": "MARK_PRICE"})
-        if r and r.get("orderId"): return r
-        if r and r.get("_already_triggered"):
-            with trade_lock:
-                if symbol in trade_log and trade_log[symbol].get("status") == "OPEN":
-                    trade_log[symbol]["status"]    = "CLOSED"
-                    trade_log[symbol]["closed_by"] = "SL_TRIGGERED_DURING_MOVE"
-                    _on_closed(symbol, trade_log[symbol], is_win=False)
-            return None
-        time.sleep(0.3)
+    if not deleted_by_id:
+        # Fallback : annule uniquement les STOP_MARKET (preserve le TP)
+        logger.debug("  {} scan+cancel STOP orders (ID={} invalide ou absent)".format(
+            symbol, old_order_id))
+        _cancel_stop_orders(symbol)
+        time.sleep(0.5)
 
-    logger.warning("⚠️  {} MARK_PRICE trailing → CONTRACT_PRICE".format(symbol))
-    for _ in range(2):
-        r = request_binance("POST", "/fapi/v1/order", {
-            "symbol": symbol, "side": close_side, "type": "STOP_MARKET",
-            "stopPrice": round(new_sl, pp), "closePosition": "true",
-            "workingType": "CONTRACT_PRICE"})
-        if r and r.get("orderId"): return r
-        time.sleep(0.3)
+    # ── Étape 2 : Pose du nouveau SL ─────────────────────────────
+    for wtype in ["MARK_PRICE", "CONTRACT_PRICE"]:
+        for attempt in range(3):
+            r = request_binance("POST", "/fapi/v1/order", {
+                "symbol":        symbol,
+                "side":          close_side,
+                "type":          "STOP_MARKET",
+                "stopPrice":     round(new_sl, pp),
+                "closePosition": "true",
+                "workingType":   wtype,
+            })
+            if r and r.get("orderId"):
+                logger.debug("✅ {} SL trailing {} @ {:.{}f}".format(
+                    symbol, wtype, new_sl, pp))
+                return r
+            if r and r.get("_already_triggered"):
+                with trade_lock:
+                    if symbol in trade_log and trade_log[symbol].get("status") == "OPEN":
+                        trade_log[symbol]["status"]    = "CLOSED"
+                        trade_log[symbol]["closed_by"] = "SL_TRIGGERED_DURING_MOVE"
+                        _on_closed(symbol, trade_log[symbol], is_win=False)
+                return None
+            logger.warning("⚠️  {} SL trailing {} tentative {}/3 → r={}".format(
+                symbol, wtype, attempt + 1, r))
+            time.sleep(0.5)
 
     logger.error("❌ {} move_sl_binance échoué — SL logiciel @ {:.{}f}".format(
         symbol, new_sl, pp))
