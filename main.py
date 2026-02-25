@@ -91,8 +91,8 @@ BTC_SYMBOL       = "BTCUSDT"
 BTC_EMA_FAST     = 5
 BTC_EMA_SLOW     = 13
 BTC_RSI_PERIOD   = 9
-BTC_RSI_BULL_MAX = 68
-BTC_RSI_BEAR_MIN = 32
+BTC_RSI_BULL_MAX = 78   # M15 : RSI jusqu'à 78 encore haussier (68 trop strict)
+BTC_RSI_BEAR_MIN = 22   # M15 : RSI jusqu'à 22 encore baissier (32 trop strict)
 
 # ── MONEY MANAGEMENT DYNAMIQUE ───────────────────────────────────
 #
@@ -116,10 +116,10 @@ BTC_RSI_BEAR_MIN = 32
 #    BTC normal                           → ×1.0
 #    BTC faible (RSI hors zone)           → ×0.8
 #
-#  Multiplicateur fondamental (score /60) :
-#    ≥ 50/60 → ×1.15   (fondamentaux excellents)
-#    ≥ 40/60 → ×1.0    (standard)
-#    < 40/60 → signal rejeté (filtre dur)
+#  Multiplicateur fondamental (score /100) :
+#    ≥ 60/100 → ×1.15   (fondamentaux excellents)
+#    ≥ 35/100 → ×1.0    (standard)
+#    < 35/100 → signal rejeté (filtre dur)
 #
 # ─────────────────────────────────────────────────────────────────
 MARGIN_BY_SCORE = {
@@ -139,17 +139,34 @@ SESSION_MULT = {
     "OFF":    0.5,
 }
 
-# ── Fondamentaux ──────────────────────────────────────────────────
-FOND_MIN_SCORE    = 40   # Score minimum /60 pour trader
-FOND_BOOST_SCORE  = 50   # Score pour le multiplicateur ×1.15
-OI_SPIKE_THRESH   = 0.02 # +2% OI en 15min = spike anormal → filtre dur
+# ── Fondamentaux enrichis ─────────────────────────────────────────
+FOND_MIN_SCORE      = 35   # Abaissé (était 40) — moins restrictif
+FOND_BOOST_SCORE    = 50   # Score pour multiplicateur ×1.15
+OI_SPIKE_THRESH     = 0.03 # Spike OI >3% → pénalité (était rejet total)
+VOL_SPIKE_MULT      = 2.5  # Volume 24h > 2.5× moyenne 7j = spike bullish
+LIQD_THRESH_USD     = 500_000  # $500k de liquidations récentes = signal fort
 
 # ── Fear & Greed ──────────────────────────────────────────────────
-# Valeur 0-100 : 0=Fear extrême, 100=Greed extrême
-# On évite d'acheter dans la greed extrême (>80) et de vendre dans la fear extrême (<20)
-FG_BULL_MAX  = 80   # BUY refusé si Fear&Greed > 80 (greed extrême)
-FG_BEAR_MIN  = 20   # SELL refusé si Fear&Greed < 20 (fear extrême)
-FG_CACHE_TTL = 300  # Cache 5min (API publique limitée)
+# Logique RÉVISÉE selon ta préférence :
+#   F&G extrême → NE PAS bloquer, mais RÉDUIRE la marge (×0.5)
+#   F&G < 15 (Fear extrême)  → BUY autorisé mais marge ×0.5 (prudence)
+#   F&G > 85 (Greed extrême) → SELL autorisé mais marge ×0.5 (prudence)
+#   F&G ≤ 30 (Fear)          → SELL confirmé, marge normale voire +
+#   F&G ≥ 70 (Greed)         → BUY confirmé, marge normale voire +
+FG_EXTREME_FEAR  = 15   # Sous ce seuil → BUY avec marge réduite ×0.5
+FG_EXTREME_GREED = 85   # Au-dessus    → SELL avec marge réduite ×0.5
+FG_FEAR_ZONE     = 30   # F&G ≤ 30 confirme les SELL → marge ×1.1
+FG_GREED_ZONE    = 70   # F&G ≥ 70 confirme les BUY  → marge ×1.1
+FG_CACHE_TTL     = 300  # Cache 5min
+
+# ── Dominance BTC ─────────────────────────────────────────────────
+# Quand BTC domine fortement, les altcoins sont aspirés / comprimés.
+# Dominance BTC > 60% : altcoins sous pression → marge altcoins réduite
+# Dominance BTC > 65% : altcoins très faibles  → marge ×0.6 (très prudent)
+# Dominance BTC < 50% : altseason → altcoins libres, marge normale/+
+BTC_DOM_HIGH      = 60.0   # Dominance > 60% → altcoins sous pression
+BTC_DOM_EXTREME   = 65.0   # Dominance > 65% → altcoins très faibles
+BTC_DOM_CACHE_TTL = 300    # Cache 5min
 
 # ── Top N symboles ────────────────────────────────────────────────
 TOP_N_SYMBOLS = 80   # Scan ciblé sur les 80 meilleures cryptos
@@ -240,6 +257,9 @@ _btc_lock  = threading.Lock()
 _fg_cache  = {"value": 50, "label": "Neutral", "ts": 0.0}
 _fg_lock   = threading.Lock()
 
+_btc_dom_cache = {"dominance": 50.0, "label": "Normal", "ts": 0.0}
+_btc_dom_lock  = threading.Lock()
+
 # ─── COULEURS ────────────────────────────────────────────────────
 GREEN   = "\033[92m"; RED    = "\033[91m"; YELLOW = "\033[93m"
 CYAN    = "\033[96m"; WHITE  = "\033[97m"; RESET  = "\033[0m"
@@ -300,14 +320,23 @@ def get_session_mult():
 #  MONEY MANAGEMENT DYNAMIQUE
 # ═══════════════════════════════════════════════════════════════════
 
-def compute_dynamic_margin(signal_score, fond_score, btc_strength):
+def compute_dynamic_margin(signal_score, fond_score, btc_strength, side="BUY", symbol=""):
     """
     Calcule la marge dynamique en fonction de :
       - signal_score  : score BB (90→94)
-      - fond_score    : score fondamental (/60)
+      - fond_score    : score fondamental (/100)
       - btc_strength  : force BTC ("FORT", "NORMAL", "FAIBLE")
+      - side          : "BUY" ou "SELL" (pour F&G et dominance)
+      - symbol        : pour la dominance BTC (alts vs BTC)
 
-    Retourne un float entre MARGIN_MIN (0.10) et MARGIN_MAX (0.40).
+    Multiplicateurs appliqués :
+      ×session  : Asia×0.6 / London×1.0 / NY×1.2 / OFF×0.5
+      ×btc      : FORT×1.2 / NORMAL×1.0 / FAIBLE×0.8
+      ×fond     : ≥60/100→×1.15 / <35/100→rejeté avant
+      ×fg       : F&G extrême contre-tendance→×0.5 / confirme→×1.1
+      ×dom      : Dom BTC >65%→BUY×0.6 SELL×1.1 / Altseason→BUY×1.15
+
+    Retourne (margin_float, detail_str)
     """
     # 1. Base selon qualité du signal
     base = MARGIN_MIN
@@ -319,24 +348,28 @@ def compute_dynamic_margin(signal_score, fond_score, btc_strength):
     # 2. Multiplicateur session
     mult_session = get_session_mult()
 
-    # 3. Multiplicateur BTC
+    # 3. Multiplicateur BTC force
     mult_btc = {"FORT": 1.2, "NORMAL": 1.0, "FAIBLE": 0.8}.get(btc_strength, 1.0)
 
-    # 4. Multiplicateur fondamental
+    # 4. Multiplicateur fondamental (/100)
     mult_fond = 1.15 if fond_score >= FOND_BOOST_SCORE else 1.0
 
-    margin = base * mult_session * mult_btc * mult_fond
+    # 5. Multiplicateur Fear & Greed (réduit si contre-tendance, boost si confirme)
+    mult_fg, fg_detail = get_fg_margin_mult(side)
+
+    # 6. Multiplicateur Dominance BTC (alts faibles si BTC domine)
+    mult_dom, dom_detail = get_btc_dom_mult(symbol, side)
+
+    margin = base * mult_session * mult_btc * mult_fond * mult_fg * mult_dom
 
     # Clamp strict
     margin = max(MARGIN_MIN, min(MARGIN_MAX, margin))
 
-    logger.debug(
-        "MM dynamique: base={:.0f}% ×session({})={:.2f} ×BTC({})={:.2f} "
-        "×fond={:.2f} → marge={:.1f}%".format(
-            base*100, get_session(), mult_session,
-            btc_strength, mult_btc, mult_fond, margin*100)
-    )
-    return margin
+    detail = "base={:.0f}% ×sess={:.1f} ×BTC={:.1f} ×fond={:.2f} ×F&G={:.1f} ×dom={:.1f} → {:.1f}%".format(
+        base*100, mult_session, mult_btc, mult_fond, mult_fg, mult_dom, margin*100)
+
+    logger.debug("MM: {} [{}] [{}]".format(detail, fg_detail, dom_detail))
+    return margin, detail
 
 # ═══════════════════════════════════════════════════════════════════
 #  FLASK HEALTH SERVER
@@ -374,6 +407,7 @@ def status_ep():
         "session":       get_session(),
         "session_mult":  get_session_mult(),
         "fear_greed":    _fg_cache,
+        "btc_dominance": _btc_dom_cache,
         "btc":           {"direction": btc["direction"], "label": btc["label"],
                           "strength": btc.get("strength","NORMAL")},
         "positions":     open_pos,
@@ -733,23 +767,121 @@ def get_fear_greed():
     # Fallback : valeur neutre si API indisponible
     return {"value": 50, "label": "Neutral", "ts": time.time()}
 
-def check_fear_greed(side):
+def get_fg_margin_mult(side):
     """
-    Filtre Fear & Greed :
-    - BUY  refusé si greed extrême (>80) → le marché est suracheté/euphorique
-    - SELL refusé si fear extrême  (<20) → le marché est en panique (rebond possible)
-    Retourne (ok: bool, detail: str)
+    Fear & Greed → multiplicateur de marge (NE BLOQUE PLUS, réduit juste la mise).
+
+    F&G < 15 (Extreme Fear)  + BUY  → ×0.5  (contre-tendance, prudence)
+    F&G > 85 (Extreme Greed) + SELL → ×0.5  (contre-tendance, prudence)
+    F&G ≤ 30 (Fear)          + SELL → ×1.1  (dans le sens de la panique)
+    F&G ≥ 70 (Greed)         + BUY  → ×1.1  (dans le sens de l'euphorie)
+    Sinon → ×1.0 (neutre)
     """
     fg = get_fear_greed()
     v  = fg.get("value", 50)
     lb = fg.get("label", "Neutral")
 
-    if side == "BUY" and v >= FG_BULL_MAX:
-        return False, "F&G={} {} (greed extrême → BUY risqué)".format(v, lb)
-    if side == "SELL" and v <= FG_BEAR_MIN:
-        return False, "F&G={} {} (fear extrême → SELL risqué)".format(v, lb)
+    if side == "BUY"  and v < FG_EXTREME_FEAR:
+        return 0.5, "F&G={} {} → BUY contre-tendance ×0.5".format(v, lb)
+    if side == "SELL" and v >= FG_EXTREME_GREED:
+        return 0.5, "F&G={} {} → SELL contre-tendance ×0.5".format(v, lb)
+    if side == "SELL" and v <= FG_FEAR_ZONE:
+        return 1.1, "F&G={} {} ✅ confirme SELL ×1.1".format(v, lb)
+    if side == "BUY"  and v >= FG_GREED_ZONE:
+        return 1.1, "F&G={} {} ✅ confirme BUY ×1.1".format(v, lb)
+    return 1.0, "F&G={} {} neutre ×1.0".format(v, lb)
 
-    return True, "F&G={} {}".format(v, lb)
+def check_fear_greed(side):
+    """Compatibilité : retourne toujours True (plus de blocage), le mult est dans get_fg_margin_mult."""
+    mult, detail = get_fg_margin_mult(side)
+    return True, detail
+
+# ═══════════════════════════════════════════════════════════════════
+#  DOMINANCE BTC
+# ═══════════════════════════════════════════════════════════════════
+
+def get_btc_dominance():
+    """
+    Récupère la dominance BTC via CoinGecko (API publique gratuite).
+    Dominance = % du marché crypto total représenté par BTC.
+
+    > 65% : Altcoins très faibles (BTC aspire tout le capital)
+    > 60% : Altcoins sous pression
+    < 50% : Altseason — altcoins libres de leurs mouvements
+    Cache 5 minutes.
+    """
+    global _btc_dom_cache
+    with _btc_dom_lock:
+        if time.time() - _btc_dom_cache.get("ts", 0) < BTC_DOM_CACHE_TTL:
+            return _btc_dom_cache
+
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/global",
+            timeout=5,
+            headers={"Accept": "application/json"}
+        )
+        if r.status_code == 200:
+            data = r.json().get("data", {})
+            dom  = float(data.get("market_cap_percentage", {}).get("btc", 50.0))
+            if dom >= BTC_DOM_EXTREME:
+                label = "EXTREME ({:.1f}%)".format(dom)
+            elif dom >= BTC_DOM_HIGH:
+                label = "ÉLEVÉE ({:.1f}%)".format(dom)
+            elif dom < 50.0:
+                label = "ALTSEASON ({:.1f}%)".format(dom)
+            else:
+                label = "NORMALE ({:.1f}%)".format(dom)
+
+            result = {"dominance": dom, "label": label, "ts": time.time()}
+            with _btc_dom_lock:
+                _btc_dom_cache = result
+            return result
+    except:
+        pass
+
+    return _btc_dom_cache  # Retourne cache expiré si API indisponible
+
+def get_btc_dom_mult(symbol, side):
+    """
+    Multiplicateur de marge selon la dominance BTC.
+
+    Logique :
+    - Dom > 65% (Extreme) : BTC aspire tout → alts très faibles
+        BUY  alts → ×0.6  (contre-tendance lourde)
+        SELL alts → ×1.1  (dans le sens de la faiblesse des alts)
+    - Dom > 60% (Élevée)  : alts sous pression
+        BUY  alts → ×0.8
+        SELL alts → ×1.05
+    - Dom < 50% (Altseason) : alts libres de monter
+        BUY  alts → ×1.15 (altseason = les alts surperforment)
+        SELL alts → ×0.9  (shorter en altseason = risqué)
+    - Dom normale (50-60%) → ×1.0
+
+    Note : ne s'applique pas à BTC lui-même.
+    """
+    # BTC n'est pas affecté par sa propre dominance
+    if symbol.startswith("BTC"):
+        return 1.0, "BTC DOM N/A"
+
+    dom_data = get_btc_dominance()
+    dom   = dom_data.get("dominance", 50.0)
+    label = dom_data.get("label", "?")
+
+    if dom >= BTC_DOM_EXTREME:
+        mult = 0.6 if side == "BUY" else 1.1
+        detail = "DOM {} → alts très faibles ×{:.1f}".format(label, mult)
+    elif dom >= BTC_DOM_HIGH:
+        mult = 0.8 if side == "BUY" else 1.05
+        detail = "DOM {} → alts pression ×{:.1f}".format(label, mult)
+    elif dom < 50.0:
+        mult = 1.15 if side == "BUY" else 0.9
+        detail = "DOM {} → altseason ×{:.1f}".format(label, mult)
+    else:
+        mult = 1.0
+        detail = "DOM {} → normale ×1.0".format(label)
+
+    return mult, detail
 
 # ═══════════════════════════════════════════════════════════════════
 #  BTC M15 — DIRECTION + FORCE
@@ -790,12 +922,15 @@ def get_btc_direction():
         label = "BTC M15 ⚪ NEUTRE RSI={:.0f}".format(rsi)
 
     # Force de la tendance BTC pour le MM dynamique
-    if direction != 0 and 45 <= rsi <= 65 and abs(slope) > 0.05:
+    # FORT   : direction claire + RSI dans zone saine (45-75)
+    # NORMAL : direction claire mais RSI tendu
+    # FAIBLE : BTC neutre ou indécis
+    if direction != 0 and 45 <= rsi <= 75 and abs(slope) > 0.03:
         strength = "FORT"
-    elif direction == 0:
-        strength = "FAIBLE"
-    else:
+    elif direction != 0:
         strength = "NORMAL"
+    else:
+        strength = "FAIBLE"
 
     result = {"direction": direction, "label": label, "rsi": round(rsi, 1),
               "slope": round(slope, 4), "ts": time.time(),
@@ -848,24 +983,17 @@ def get_funding_rate(symbol):
     return 0.0
 
 def get_oi_data(symbol):
-    """
-    Retourne (oi_change_pct, oi_spike: bool).
-    oi_change_pct : variation sur 15min
-    oi_spike      : True si OI a bondi de +2% en 1 bougie (potentiel piège)
-    """
     try:
         d = request_binance("GET", "/futures/data/openInterestHist",
                             {"symbol": symbol, "period": "15m", "limit": 6}, signed=False)
         if d and len(d) >= 2:
-            oi0 = float(d[0]["sumOpenInterest"])
-            oi1 = float(d[-1]["sumOpenInterest"])
-            # Spike sur la dernière bougie uniquement
+            oi0          = float(d[0]["sumOpenInterest"])
+            oi1          = float(d[-1]["sumOpenInterest"])
             oi_last_prev = float(d[-2]["sumOpenInterest"])
             oi_last_curr = float(d[-1]["sumOpenInterest"])
             spike_pct    = (oi_last_curr - oi_last_prev) / oi_last_prev if oi_last_prev > 0 else 0
-
-            oi_change = (oi1 - oi0) / oi0 if oi0 > 0 else 0
-            oi_spike  = abs(spike_pct) > OI_SPIKE_THRESH
+            oi_change    = (oi1 - oi0) / oi0 if oi0 > 0 else 0
+            oi_spike     = abs(spike_pct) > OI_SPIKE_THRESH
             return oi_change, oi_spike
     except: pass
     return 0.0, False
@@ -880,47 +1008,122 @@ def get_mark_spread(symbol):
     except: pass
     return 0.0
 
+def get_volume_24h_score(symbol, side):
+    """
+    Score de volume 24h :
+    Spike de volume = forte conviction → confirme la direction
+    Retourne (score /20, detail)
+    """
+    try:
+        ticker = request_binance("GET", "/fapi/v1/ticker/24hr",
+                                 {"symbol": symbol}, signed=False)
+        if not ticker: return 10, "Vol N/A⚠️"
+
+        vol_24h   = float(ticker.get("quoteVolume", 0))  # Volume en USDT
+        price_chg = float(ticker.get("priceChangePercent", 0))  # % variation 24h
+
+        # Volume cohérent avec la direction
+        if side == "BUY"  and price_chg > 2  and vol_24h > 10_000_000:
+            return 20, "Vol24h=${:.0f}M ↑{:.1f}%✅".format(vol_24h/1e6, price_chg)
+        if side == "SELL" and price_chg < -2 and vol_24h > 10_000_000:
+            return 20, "Vol24h=${:.0f}M ↓{:.1f}%✅".format(vol_24h/1e6, abs(price_chg))
+        if vol_24h > 5_000_000:
+            return 10, "Vol24h=${:.0f}M⚠️".format(vol_24h/1e6)
+        return 5, "Vol24h=${:.0f}M❌".format(vol_24h/1e6)
+    except:
+        return 10, "Vol N/A⚠️"
+
+def get_liquidations_score(symbol, side):
+    """
+    Score liquidations récentes via l'endpoint Binance forcedOrders.
+    Shorts liquidés → momentum haussier → confirme BUY
+    Longs  liquidés → momentum baissier → confirme SELL
+    Retourne (score /20, detail)
+    """
+    try:
+        d = request_binance("GET", "/fapi/v1/allForceOrders",
+                            {"symbol": symbol, "limit": 20}, signed=False)
+        if not d: return 10, "Liqd N/A⚠️"
+
+        long_liqd  = sum(float(o.get("origQty",0)) * float(o.get("avgPrice",0))
+                         for o in d if o.get("side") == "SELL")   # long liquidé = ordre SELL
+        short_liqd = sum(float(o.get("origQty",0)) * float(o.get("avgPrice",0))
+                         for o in d if o.get("side") == "BUY")    # short liquidé = ordre BUY
+
+        total = long_liqd + short_liqd
+
+        if side == "BUY" and short_liqd > LIQD_THRESH_USD:
+            return 20, "Liqd SHORT ${:.0f}k✅ (haussier)".format(short_liqd/1000)
+        if side == "SELL" and long_liqd > LIQD_THRESH_USD:
+            return 20, "Liqd LONG ${:.0f}k✅ (baissier)".format(long_liqd/1000)
+        if total > LIQD_THRESH_USD / 2:
+            return 10, "Liqd ${:.0f}k⚠️".format(total/1000)
+        return 10, "Liqd faibles⚠️"
+    except:
+        return 10, "Liqd N/A⚠️"
+
 def check_fondamentaux(symbol, side):
     """
-    Score /60 : Funding(20) + OI(20) + Spread(20)
-    OI spike détecté → filtre dur (rejet du signal, liquidité artificielle)
+    Score fondamental /100 (enrichi v2.1) :
+      Funding    /20  — coût de position aligné ou non
+      OI         /20  — intérêt ouvert croissant (pénalité si spike, pas rejet)
+      Spread     /20  — mark vs index (liquidité)
+      Volume 24h /20  — spike volume confirme direction ← NOUVEAU
+      Liquidations/20 — liqd dans le bon sens confirme ← NOUVEAU
+
+    Seuil minimum : FOND_MIN_SCORE = 35/100
+    OI spike : pénalité -10 pts (plus de rejet total)
     Retourne (score, ok, detail)
     """
     score = 0
     parts = []
 
-    # ── Funding ───────────────────────────────────────────────────
+    # ── 1. Funding Rate ───────────────────────────────────────────
     funding = get_funding_rate(symbol)
     fp = funding * 100
     if side == "BUY":
-        if funding <= 0.001:  score += 20; parts.append("Fund {:.4f}%✅".format(fp))
-        elif funding > 0.002: parts.append("Fund {:.4f}%❌".format(fp))
-        else:                 score += 10; parts.append("Fund {:.4f}%⚠️".format(fp))
+        if funding <= 0.001:   score += 20; parts.append("Fund {:.4f}%✅".format(fp))
+        elif funding > 0.002:  score += 5;  parts.append("Fund {:.4f}%❌".format(fp))
+        else:                  score += 10; parts.append("Fund {:.4f}%⚠️".format(fp))
     else:
         if funding >= -0.001:  score += 20; parts.append("Fund {:.4f}%✅".format(fp))
-        elif funding < -0.002: parts.append("Fund {:.4f}%❌".format(fp))
+        elif funding < -0.002: score += 5;  parts.append("Fund {:.4f}%❌".format(fp))
         else:                  score += 10; parts.append("Fund {:.4f}%⚠️".format(fp))
 
-    # ── OI + spike detection ──────────────────────────────────────
+    # ── 2. Open Interest + spike detection ───────────────────────
     oi_chg, oi_spike = get_oi_data(symbol)
 
-    # Spike OI anormal = liquidité artificielle → rejet dur
     if oi_spike:
-        parts.append("OI SPIKE ❌ (liquidité artificielle)")
-        return score, False, " | ".join(parts)
+        # Plus de rejet total — pénalité de -10 points uniquement
+        score -= 10
+        parts.append("OI SPIKE⚠️ (-10pts)")
+    else:
+        if oi_chg > 0.005:  score += 20; parts.append("OI +{:.2f}%✅".format(oi_chg*100))
+        elif oi_chg > 0:    score += 10; parts.append("OI +{:.2f}%⚠️".format(oi_chg*100))
+        elif oi_chg == 0:   score += 10; parts.append("OI N/A⚠️")
+        else:               score += 5;  parts.append("OI {:.2f}%❌".format(oi_chg*100))
 
-    if oi_chg > 0.005:  score += 20; parts.append("OI +{:.2f}%✅".format(oi_chg*100))
-    elif oi_chg > 0:    score += 10; parts.append("OI +{:.2f}%⚠️".format(oi_chg*100))
-    elif oi_chg == 0:   score += 10; parts.append("OI N/A⚠️")
-    else:               parts.append("OI {:.2f}%❌".format(oi_chg*100))
-
-    # ── Spread Mark/Index ──────────────────────────────────────────
+    # ── 3. Spread Mark/Index ──────────────────────────────────────
     spread = get_mark_spread(symbol)
     if abs(spread) < 0.05:   score += 20; parts.append("Sprd {:+.3f}%✅".format(spread))
     elif abs(spread) < 0.15: score += 10; parts.append("Sprd {:+.3f}%⚠️".format(spread))
-    else:                    parts.append("Sprd {:+.3f}%❌".format(spread))
+    else:                    score += 0;  parts.append("Sprd {:+.3f}%❌".format(spread))
 
-    return score, score >= FOND_MIN_SCORE, " | ".join(parts)
+    # ── 4. Volume 24h ← NOUVEAU ──────────────────────────────────
+    vol_score, vol_detail = get_volume_24h_score(symbol, side)
+    score += vol_score
+    parts.append(vol_detail)
+
+    # ── 5. Liquidations ← NOUVEAU ────────────────────────────────
+    liqd_score, liqd_detail = get_liquidations_score(symbol, side)
+    score += liqd_score
+    parts.append(liqd_detail)
+
+    # Score max théorique = 100, min = -10
+    score = max(0, score)
+    ok = score >= FOND_MIN_SCORE
+
+    return score, ok, " | ".join(parts)
 
 # ═══════════════════════════════════════════════════════════════════
 #  BREAKER BLOCK ICT M15 — ALIGNÉ BTC OBLIGATOIRE
@@ -1481,9 +1684,10 @@ def open_position(signal):
         max_sl_pct = get_max_sl_pct()
 
         # ── Marge dynamique ──────────────────────────────────────
-        margin_pct = compute_dynamic_margin(score, fond_score, btc_strength)
-        margin     = account_balance * margin_pct
-        session    = get_session()
+        margin_pct, mm_detail = compute_dynamic_margin(
+            score, fond_score, btc_strength, side=side, symbol=symbol)
+        margin  = account_balance * margin_pct
+        session = get_session()
 
         # ── SL structurel ATR M15 ────────────────────────────────
         sl = get_sl(ob, entry, side, atr)
@@ -1589,6 +1793,10 @@ def open_position(signal):
                 "fond_score": fond_score, "btc_strength": btc_strength,
             }
 
+        dom_data = get_btc_dominance()
+        _, fg_det  = get_fg_margin_mult(side)
+        _, dom_det = get_btc_dom_mult(symbol, side)
+
         logger.info("✅ {} {} @ {:.{}f} | SL {:.{}f} | TP {:.{}f} | {}x | marge={:.0f}% | {}".format(
             symbol, side, actual_entry, pp, sl, pp, tp, pp, lev,
             margin_pct*100, get_tier_label()))
@@ -1598,9 +1806,14 @@ def open_position(signal):
             "SL: {:.{}f} ({:.3f}%) {}\n"
             "BE: {:.{}f} | TP: {:.{}f} (RR{})\n"
             "Setup: {} | Score:{} | Conf:{}/5\n"
-            "Marge: <b>{:.0f}%</b> [score×{}×{}]\n"
-            "Levier: {}x | Session: {}\n"
-            "Fond: {}/60 | F&G: {} {}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "💰 Marge: <b>{:.0f}%</b>\n"
+            "   {}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "📊 Fond: {}/100\n"
+            "😱 {}\n"
+            "🌐 {}\n"
+            "⚡ {}x | Session: {} | {}\n"
             "{} | {}".format(
                 symbol, side,
                 actual_entry, pp,
@@ -1608,9 +1821,12 @@ def open_position(signal):
                 "✅Binance" if sl_r["sent"] else "⚠️logiciel",
                 be_price, pp, tp, pp, TP_RR,
                 setup, score, signal.get("confluence", 0),
-                margin_pct*100, session, btc_strength,
-                lev, session,
-                fond_score, fg.get("value","?"), fg.get("label",""),
+                margin_pct*100,
+                mm_detail,
+                fond_score,
+                fg_det,
+                dom_det,
+                lev, session, btc_strength,
                 get_tier_label(), get_progress_bar()
             )
         )
@@ -1775,12 +1991,12 @@ def scan_symbol(symbol):
         # Fondamentaux (avec OI spike)
         fond_score, fond_ok, fond_detail = check_fondamentaux(symbol, side)
         if not fond_ok:
-            logger.debug("  {} fond insuffisant ({}/60): {}".format(symbol, fond_score, fond_detail))
+            logger.debug("  {} fond insuffisant ({}/100): {}".format(symbol, fond_score, fond_detail))
             return None
         signal["fond_score"]  = fond_score
         signal["fond_detail"] = fond_detail
 
-        logger.debug("  {} ✅ score={} conf={}/5 fond={}/60 {}".format(
+        logger.debug("  {} ✅ score={} conf={}/5 fond={}/100 {}".format(
             symbol, signal["score"], signal["confluence"], fond_score, side))
 
         return signal
@@ -1860,18 +2076,25 @@ def print_signal_console(sig, rank):
     mmult = get_session_mult()
     bstr  = sig.get("btc_strength", "NORMAL")
     base  = MARGIN_BY_SCORE.get(sig["score"], MARGIN_MIN)
-    marg  = compute_dynamic_margin(sig["score"], sig.get("fond_score", 0), bstr)
+    sym   = sig.get("symbol", "")
+    side  = sig.get("side", "BUY")
+    marg, mm_detail = compute_dynamic_margin(
+        sig["score"], sig.get("fond_score", 0), bstr, side=side, symbol=sym)
+    dom_data = get_btc_dominance()
+    fg_mult, fg_det = get_fg_margin_mult(side)
+    dom_mult, dom_det = get_btc_dom_mult(sym, side)
 
     row("Setup",    "{} | score={} conf={}/5 prob={:.0f}%".format(
         sig["setup"], sig["score"], sig["confluence"], sig["probability"]), BOLD + WHITE)
     row("BTC M15",  sig.get("btc_corr", "?"), CYAN)
     row("Session",  "{} (×{})".format(sess, mmult), YELLOW)
     row("BTC Force",bstr, GREEN if bstr == "FORT" else WHITE)
-    row("Fond",     "{}/60 — {}".format(sig.get("fond_score",0), sig.get("fond_detail","")),
-        GREEN if sig.get("fond_score",0) >= 50 else YELLOW)
-    row("F&G",      sig.get("fg_detail", "?"),
-        GREEN if fg.get("value",50) < 70 else RED)
-    row("Marge dyn", "{:.0f}% → base={:.0f}% ×sess×BTC×fond".format(marg*100, base*100),
+    row("BTC Dom",  dom_det, RED if dom_data.get("dominance", 50) >= BTC_DOM_HIGH else GREEN)
+    row("Fond",     "{}/100 — {}".format(sig.get("fond_score",0), sig.get("fond_detail","")),
+        GREEN if sig.get("fond_score",0) >= 60 else YELLOW)
+    row("F&G",      fg_det,
+        GREEN if fg_mult >= 1.0 else YELLOW if fg_mult == 0.5 else WHITE)
+    row("Marge dyn", "{:.0f}% | {}".format(marg*100, mm_detail),
         GREEN + BOLD)
     print(cc(sep, CYAN))
 
@@ -1935,18 +2158,19 @@ def scanner_loop():
                 len(symbols_list), btc["label"], session,
                 _fg_cache.get("value","?"), get_tier_label()))
 
-            # Scan parallèle
+            # Scan parallèle — timeout par future, pas global
             signals  = []
             sig_lock = threading.Lock()
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
                 futures = {pool.submit(scan_symbol, sym): sym for sym in symbols_list}
-                for fut in as_completed(futures, timeout=30):
+                for fut in as_completed(futures, timeout=None):
                     try:
-                        sig = fut.result()
+                        sig = fut.result(timeout=15)
                         if sig:
                             with sig_lock:
                                 signals.append(sig)
-                    except: pass
+                    except Exception:
+                        pass
 
             if not signals:
                 logger.info("  Aucun signal qualifié sur {} symboles".format(len(symbols_list)))
@@ -1958,7 +2182,7 @@ def scanner_loop():
                                * (1 + s.get("fond_score", 0) / 60)),
                 reverse=True)
 
-            logger.info("✨ {} signaux qualifiés — meilleur: {} {} score={} conf={}/5 fond={}/60".format(
+            logger.info("✨ {} signaux qualifiés — meilleur: {} {} score={} conf={}/5 fond={}/100".format(
                 len(signals), signals[0]["symbol"], signals[0]["side"],
                 signals[0]["score"], signals[0]["confluence"],
                 signals[0].get("fond_score", 0)))
@@ -1999,15 +2223,16 @@ def dashboard_loop():
             wr   = tw/(tw+tl)*100 if (tw+tl) > 0 else 0
             btc  = get_btc_direction()
             fg   = get_fear_greed()
+            dom  = get_btc_dominance()
             sess = get_session()
             mmult = get_session_mult()
             logger.info("═" * 65)
-            logger.info("SCANNER M15 v2.0 | ${:.4f} | {} | {}".format(
+            logger.info("SCANNER M15 v2.1 | ${:.4f} | {} | {}".format(
                 account_balance, get_tier_label(), get_progress_bar()))
             logger.info("Pos:{}/{} | W:{} L:{} WR:{:.1f}% | {} | {}".format(
                 n_open, MAX_POSITIONS, tw, tl, wr, btc["label"], btc.get("strength","?")))
-            logger.info("Session:{} (×{}) | F&G:{} {} | Symboles:{}".format(
-                sess, mmult, fg["value"], fg["label"], len(symbols_list)))
+            logger.info("Session:{} (×{}) | F&G:{} {} | DOM BTC:{}".format(
+                sess, mmult, fg["value"], fg["label"], dom["label"]))
             logger.info("═" * 65)
 
             if n_open > 0:
@@ -2046,7 +2271,7 @@ def dashboard_loop():
 
 def main():
     logger.info("╔" + "═" * 63 + "╗")
-    logger.info("║  SCANNER M15 v2.0 — BB BTC-ALIGNÉ | RR4 | MM DYNAMIQUE  ║")
+    logger.info("║  SCANNER M15 v2.1 — BB BTC-ALIGNÉ | RR4 | MM DYNAMIQUE  ║")
     logger.info("║  Session Filter | Fear&Greed | OI Spike | Top 80 Cryptos ║")
     logger.info("╚" + "═" * 63 + "╝")
     logger.warning("🔥 LIVE TRADING 🔥")
@@ -2056,9 +2281,8 @@ def main():
     logger.info("✅ MM DYNAMIQUE  : {:.0f}%→{:.0f}% selon score/session/BTC/fond".format(
         MARGIN_MIN*100, MARGIN_MAX*100))
     logger.info("✅ SESSION       : Asia×0.6 | London×1.0 | NY×1.2 | OFF=pause")
-    logger.info("✅ FEAR & GREED  : BUY refusé si >80 | SELL refusé si <20")
-    logger.info("✅ OI SPIKE      : Rejet si spike > {:.0f}% sur 1 bougie".format(
-        OI_SPIKE_THRESH*100))
+    logger.info("✅ FEAR & GREED  : Extrême → marge ×0.5 (plus de blocage)")
+    logger.info("✅ FONDAMENTAUX  : Fund+OI+Spread+Vol24h+Liqd+DomBTC (/100)")
     logger.info("✅ SL M15        : ATR×{} ({:.0f}%→{:.0f}%)".format(
         ATR_SL_MULT, MIN_SL_PCT*100, MAX_SL_PCT*100))
     logger.info("✅ RR            : {}× net après frais 0.12%".format(TP_RR))
@@ -2080,7 +2304,7 @@ def main():
     logger.info("🕐 Session: {} (mult ×{})".format(sess, get_session_mult()))
 
     send_telegram(
-        "🚀 <b>SCANNER M15 v2.0 DÉMARRÉ</b>\n\n"
+        "🚀 <b>SCANNER M15 v2.1 DÉMARRÉ</b>\n\n"
         "💰 Balance: <b>${:.4f}</b> | {}\n"
         "🎯 Objectif: ${:.0f} | {}\n\n"
         "📊 BTC M15: {} | Force: {}\n"
