@@ -3088,43 +3088,115 @@ def monitor_positions():
                 t = trade_log[symbol]
                 if t.get("status") != "OPEN": continue
 
-                # ── AUTO-REPOST SL si non posé sur Binance ────────
-                # Si le SL est en mode logiciel (sl_on_binance=False),
-                # on retente de le poser côté Binance toutes les 30s.
-                if not t.get("sl_on_binance") and not t.get("sl_repost_ts"):
-                    t["sl_repost_ts"] = 0.0
-                if not t.get("sl_on_binance"):
-                    now_ts = time.time()
-                    if now_ts - t.get("sl_repost_ts", 0) > 30:
-                        t["sl_repost_ts"] = now_ts
-                        cs = "SELL" if t["side"] == "BUY" else "BUY"
-                        logger.warning("🔄 {} tentative repost SL @ {:.6f}".format(symbol, t["sl"]))
-                        sl_retry = place_sl_binance(symbol, t["sl"], cs)
-                        if sl_retry["sent"]:
-                            t["sl_on_binance"] = True
-                            t["sl_order_id"]   = sl_retry["order_id"]
-                            logger.info("✅ {} SL reposté sur Binance @ {}".format(symbol, t["sl"]))
-                            send_telegram("✅ <b>SL {} reposté sur Binance</b> @ {:.6f}".format(symbol, t["sl"]))
-
+                # ── Détection fermeture par Binance (SL/TP touché) ───
                 if symbol not in binance_open:
                     t["status"]    = "CLOSED"
                     t["closed_by"] = "BINANCE_SL_TP"
-                    logger.info("✅ {} fermée par Binance".format(symbol))
+                    logger.info("✅ {} fermée par Binance (SL ou TP atteint)".format(symbol))
                     _on_closed_from_binance(symbol, t)
                     continue
 
+                # ── GESTION SL LOGICIEL (Binance a refusé) ────────────
+                # Si sl_on_binance=False :
+                #   1. Toutes les 30s → retente de poser le SL sur Binance
+                #   2. En permanence  → surveille le prix et coupe manuellement
+                #      si le prix touche le SL (ordre market forcé)
+                #   3. Mémorise le nombre de refus dans sl_binance_failures
+                #      → Si ≥ 3 refus → alerte Telegram CRITIQUE
                 if not t.get("sl_on_binance"):
+                    now_ts = time.time()
+
+                    # ── Compteur de refus ──────────────────────────
+                    failures = t.get("sl_binance_failures", 0)
+
+                    # ── Retry toutes les 30s ───────────────────────
+                    if now_ts - t.get("sl_repost_ts", 0) > 30:
+                        t["sl_repost_ts"] = now_ts
+                        cs = "SELL" if t["side"] == "BUY" else "BUY"
+                        logger.warning("🔄 {} repost SL tentative #{} @ {:.6f}".format(
+                            symbol, failures + 1, t["sl"]))
+                        sl_retry = place_sl_binance(symbol, t["sl"], cs)
+                        if sl_retry["sent"]:
+                            t["sl_on_binance"]       = True
+                            t["sl_order_id"]         = sl_retry["order_id"]
+                            t["sl_binance_failures"] = 0
+                            logger.info("✅ {} SL reposté Binance @ {:.6f} (après {} refus)".format(
+                                symbol, t["sl"], failures))
+                            send_telegram(
+                                "✅ <b>SL {} reposté sur Binance</b>\n"
+                                "@ {:.6f} | Après {} refus".format(symbol, t["sl"], failures))
+                        else:
+                            # Échec → incrément compteur
+                            t["sl_binance_failures"] = failures + 1
+                            logger.error(
+                                "🚨 {} SL REFUSÉ par Binance x{} — "
+                                "surveillance manuelle active @ {:.6f}".format(
+                                    symbol, t["sl_binance_failures"], t["sl"]))
+                            # Alerte critique si ≥ 3 refus consécutifs
+                            if t["sl_binance_failures"] >= 3:
+                                send_telegram(
+                                    "🚨 <b>CRITIQUE — SL {} REFUSÉ {}x par Binance</b>\n\n"
+                                    "SL cible : {:.6f}\n"
+                                    "Prix actuel : {:.6f}\n"
+                                    "Côté : {}\n\n"
+                                    "⚠️ Le bot surveille et coupera manuellement "
+                                    "si le prix touche le SL.\n"
+                                    "Vérifiez vos permissions API Futures !".format(
+                                        symbol, t["sl_binance_failures"],
+                                        t["sl"], get_price(symbol) or 0,
+                                        t["side"]
+                                    )
+                                )
+
+                    # ── Surveillance prix en continu ───────────────
+                    # TOUJOURS actif si sl_on_binance=False,
+                    # indépendamment du retry timer.
                     cp = get_price(symbol)
-                    if cp:
-                        sl = t["sl"]
-                        if (t["side"] == "BUY" and cp <= sl) or \
-                           (t["side"] == "SELL" and cp >= sl):
-                            logger.warning("🚨 {} SL LOGICIEL déclenché @ {}".format(symbol, cp))
+                    if cp and cp > 0:
+                        sl_level = t["sl"]
+                        sl_hit = (t["side"] == "BUY"  and cp <= sl_level) or \
+                                 (t["side"] == "SELL" and cp >= sl_level)
+                        if sl_hit:
+                            logger.warning(
+                                "🚨 {} SL LOGICIEL DÉCLENCHÉ @ {:.6f} "
+                                "(SL={:.6f}) — FERMETURE MARKET FORCÉE".format(
+                                    symbol, cp, sl_level))
                             cs = "SELL" if t["side"] == "BUY" else "BUY"
-                            place_market(symbol, cs, t.get("qty", 0))
-                            t["status"]    = "CLOSED"
-                            t["closed_by"] = "SOFTWARE_SL"
+
+                            # Fermeture market avec 3 tentatives
+                            closed = False
+                            for _attempt in range(3):
+                                close_r = place_market(symbol, cs, t.get("qty", 0))
+                                if close_r:
+                                    closed = True
+                                    break
+                                time.sleep(1.0)
+
+                            t["status"]              = "CLOSED"
+                            t["closed_by"]           = "SOFTWARE_SL_MANUAL"
+                            t["sl_triggered_price"]  = cp
                             _on_closed(symbol, t, is_win=False)
+
+                            send_telegram(
+                                "🚨 <b>SL LOGICIEL {} {}</b>\n\n"
+                                "Prix déclenché : {:.6f}\n"
+                                "SL cible      : {:.6f}\n"
+                                "Fermeture {}  : {}\n\n"
+                                "Raison : Binance avait refusé le SL x{}".format(
+                                    symbol, t["side"],
+                                    cp, sl_level,
+                                    "✅ OK" if closed else "❌ ÉCHEC",
+                                    cs,
+                                    t.get("sl_binance_failures", "?")
+                                )
+                            )
+                            if not closed:
+                                # Ultime alerte si même le market order échoue
+                                send_telegram(
+                                    "🆘 <b>URGENCE {} — FERMETURE MARKET ÉCHOUÉE !</b>\n"
+                                    "Fermez manuellement votre position {} sur Binance !".format(
+                                        symbol, t["side"]))
+                            continue
 
     except Exception as e:
         logger.debug("monitor_positions: {}".format(e))
