@@ -2,23 +2,20 @@
 # -*- coding: utf-8 -*-
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║   SCANNER M15 v2.0 — BREAKER BLOCK ICT | RR4 | MM DYNAMIQUE   ║
-║   BTC-Aligned | Session Filter | Fear&Greed | OI Spike         ║
+║   SCANNER M5 v4.5 — PAROLI + FILTRE LIQUIDITE | RR3           ║
 ╠══════════════════════════════════════════════════════════════════╣
-║  NOUVEAUTÉS v2.0 :                                              ║
-║  ✅ Breaker Block OBLIGATOIREMENT aligné avec BTC M15           ║
-║  ✅ Money Management dynamique 10%→40% selon qualité signal     ║
-║  ✅ Multiplicateur session (Asia 0.6× / London 1.0× / NY 1.2×) ║
-║  ✅ Multiplicateur BTC (fort = plus de mise)                    ║
-║  ✅ Fear & Greed Index (API gratuite)                           ║
-║  ✅ Détection spike OI anormal                                  ║
-║  ✅ Score global = technique + fondamental + session + BTC       ║
-║  ✅ Top 80 cryptos par volume (scan ciblé, pas 458 symboles)    ║
-║  ✅ SL suiveur v41.0 bidir | Frais + $0.01 garanti             ║
+║  NOUVEAUTÉS v4.5 :                                              ║
+║  ✅ VOL_MIN_FILTER $5M/jour (×10 — élimine micro-caps)        ║
+║  ✅ PRICE_MIN_USD $0.01 (filtre satoshi-coins type DENT)       ║
+║  ✅ SPREAD_MAX_PCT 0.15% (vérifié au scan ET avant l'ordre)    ║
+║  ✅ LIQUIDITY_BLACKLIST (DENT/PIPPIN/ARC/ESP/ENSO/POWER)      ║
+║  HÉRITÉ v4.4 :                                                  ║
+║  ✅ Paroli $0.60→$1.20 | 4 positions | Sans pause consécutive  ║
+║  ✅ balance_lock | actual_entry guard | tick-retry SL/TP       ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
-import time, hmac, hashlib, requests, threading, os, logging
+import time, hmac, hashlib, requests, threading, os, logging, json
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify
@@ -57,22 +54,22 @@ BASE_URL   = "https://fapi.binance.com"
 #  CONFIGURATION v2.0
 # ═══════════════════════════════════════════════════════════════════
 
-# ── Timeframe M15 ────────────────────────────────────────────────
-TIMEFRAME        = "15m"
-LIMIT_CANDLES    = 60       # 60 × 15min = 15h d'historique
-KLINES_CACHE_TTL = 60       # Cache 60s (bougie M15 = 15min)
+# ── Timeframe M5 ─────────────────────────────────────────────────
+TIMEFRAME        = "5m"
+LIMIT_CANDLES    = 80       # 80 × 5min = ~6.5h d'historique (optimal M5)
+KLINES_CACHE_TTL = 15       # Cache 15s (bougie M5 = 5min → plus réactif)
 
 # ── Frais Binance ─────────────────────────────────────────────────
 BINANCE_FEE_RATE    = 0.0004         # 0.04% taker par côté
 BREAKEVEN_FEE_TOTAL = BINANCE_FEE_RATE * 2 * 1.5  # 0.12% A/R avec buffer
 BE_PROFIT_MIN       = 0.01           # $0.01 net garanti au BE
 
-# ── RR & SL adapté M15 ───────────────────────────────────────────
-MIN_RR       = 4.0
-TP_RR        = 4.0
-MIN_SL_PCT   = 0.005   # SL min 0.5%
-MAX_SL_PCT   = 0.030   # SL max 3.0%
-ATR_SL_MULT  = 1.5     # SL = ATR × 1.5
+# ── RR & SL adapté M5 ────────────────────────────────────────────
+MIN_RR       = 3.0
+TP_RR        = 3.0   # RR3 — gain = 3× le risque net après frais
+MIN_SL_PCT   = 0.003   # SL min 0.3% (M5 = mouvements plus serrés)
+MAX_SL_PCT   = 0.020   # SL max 2.0% (réduit vs M15 pour M5)
+ATR_SL_MULT  = 1.2     # SL = ATR × 1.2 (plus serré qu'en M15)
 
 # ── Breaker Block ─────────────────────────────────────────────────
 BB_LOOKBACK    = 40
@@ -86,51 +83,47 @@ MIN_CONFLUENCE = 4     # 4/5 confluences minimum
 MIN_PROB       = 90.0  # Probabilité minimum
 MIN_BODY_RATIO = 0.40  # Corps bougie ≥ 40%
 
-# ── BTC corrélation M15 ──────────────────────────────────────────
+# ── BTC corrélation M5 ───────────────────────────────────────────
 BTC_SYMBOL       = "BTCUSDT"
 BTC_EMA_FAST     = 5
 BTC_EMA_SLOW     = 13
 BTC_RSI_PERIOD   = 9
-BTC_RSI_BULL_MAX = 78   # M15 : RSI jusqu'à 78 encore haussier (68 trop strict)
-BTC_RSI_BEAR_MIN = 22   # M15 : RSI jusqu'à 22 encore baissier (32 trop strict)
+BTC_RSI_BULL_MAX = 82   # M5 : RSI plus large (signaux plus fréquents)
+BTC_RSI_BEAR_MIN = 20   # M5 : RSI plus large côté baissier
 
-# ── MONEY MANAGEMENT DYNAMIQUE ───────────────────────────────────
+# ── MARGE FIXE $0.60 ─────────────────────────────────────────────
 #
-#  Marge = base_pct × multiplicateur_score × mult_session × mult_btc × mult_fond
+#  Marge FIXE par trade : $0.60 USD, indépendante de la balance.
+#  Cette valeur ne change pas avec les multiplicateurs session/BTC/fond.
+#  Elle peut être pénalisée par le brain (×0.5 ou ×0.75) si le symbole
+#  ou le setup a un mauvais historique, mais jamais en dessous de $0.30.
 #
-#  base_pct selon qualité du signal :
-#    Score 90   (conf 4/5) → 10% balance (base minimale)
-#    Score 91   (conf 4/5) → 15%
-#    Score 92   (conf 5/5) → 20%
-#    Score 93   (conf 5/5) → 30%
-#    Score 94   (conf 5/5) → 40%  (signal parfait)
+#  qty = FIXED_MARGIN_USD × levier / entry_price
 #
-#  Multiplicateur session :
-#    Asia    02h→08h UTC → ×0.6 (liquidité faible)
-#    London  08h→13h UTC → ×1.0 (standard)
-#    NY      13h→21h UTC → ×1.2 (meilleure liquidité)
-#    Off     21h→02h UTC → ×0.5 (évite les pièges nuit)
+FIXED_MARGIN_USD = 0.60   # Marge fixe $0.60 par trade (base Paroli)
+MARGIN_MIN_USD   = 0.30   # Plancher absolu (pénalité brain)
+MARGIN_MAX_USD   = 1.20   # Plafond Paroli niveau 4
+
+# ── SYSTÈME PAROLI (anti-martingale) ─────────────────────────────
 #
-#  Multiplicateur BTC (force de la tendance) :
-#    BTC fort (RSI 45-65, slope > 0.05%) → ×1.2
-#    BTC normal                           → ×1.0
-#    BTC faible (RSI hors zone)           → ×0.8
+#  Principe : augmenter la mise après un gain, revenir à la base après une perte.
+#  On surfe les séries gagnantes sans risquer plus que la base sur une perte.
 #
-#  Multiplicateur fondamental (score /100) :
-#    ≥ 60/100 → ×1.15   (fondamentaux excellents)
-#    ≥ 35/100 → ×1.0    (standard)
-#    < 35/100 → signal rejeté (filtre dur)
+#  Niveaux :  0=$0.60  1=$0.75  2=$0.90  3=$1.05  4=$1.20 (plafond)
+#  Après WIN  : niveau += 1 (si < 4)
+#  Après LOSS : niveau = 0 (reset à $0.60)
+#  Plafond de sécurité : mise ≤ 15% balance courante (jamais dépassé)
 #
-# ─────────────────────────────────────────────────────────────────
-MARGIN_BY_SCORE = {
-    94: 0.40,  # Confluence parfaite 5/5 + tous critères
-    93: 0.30,
-    92: 0.20,
-    91: 0.15,
-    90: 0.10,  # Score minimum
-}
-MARGIN_MIN = 0.10   # 10% balance minimum
-MARGIN_MAX = 0.40   # 40% balance maximum
+PAROLI_BASE       = 0.60   # Mise de départ
+PAROLI_STEP       = 0.15   # +$0.15 par niveau
+PAROLI_MAX_LEVEL  = 4      # 4 niveaux max (→ $1.20)
+PAROLI_CAP_PCT    = 0.15   # Jamais > 15% de la balance
+PAROLI_FILE       = "paroli.json"
+
+# Garde pour compatibilité (utilisé dans compute_dynamic_margin)
+MARGIN_BY_SCORE = {94: 1.0, 93: 1.0, 92: 1.0, 91: 1.0, 90: 1.0}
+MARGIN_MIN = 0.10
+MARGIN_MAX = 0.40
 
 SESSION_MULT = {
     "LONDON": 1.0,
@@ -140,8 +133,8 @@ SESSION_MULT = {
 }
 
 # ── Fondamentaux enrichis ─────────────────────────────────────────
-FOND_MIN_SCORE      = 35   # Abaissé (était 40) — moins restrictif
-FOND_BOOST_SCORE    = 50   # Score pour multiplicateur ×1.15
+FOND_MIN_SCORE      = 50   # Seuil minimum STRICT — double confirmation obligatoire
+FOND_BOOST_SCORE    = 65   # Score pour multiplicateur ×1.15
 OI_SPIKE_THRESH     = 0.03 # Spike OI >3% → pénalité (était rejet total)
 VOL_SPIKE_MULT      = 2.5  # Volume 24h > 2.5× moyenne 7j = spike bullish
 LIQD_THRESH_USD     = 500_000  # $500k de liquidations récentes = signal fort
@@ -169,13 +162,47 @@ BTC_DOM_EXTREME   = 65.0   # Dominance > 65% → altcoins très faibles
 BTC_DOM_CACHE_TTL = 300    # Cache 5min
 
 # ── Top N symboles ────────────────────────────────────────────────
-TOP_N_SYMBOLS = 80   # Scan ciblé sur les 80 meilleures cryptos
+TOP_N_SYMBOLS  = 9999  # Scan TOUS les cryptos (limité par filtre volume)
+VOL_MIN_FILTER = 5_000_000   # v4.5 : relevé à $5M/jour (était $500k)
+                              # Élimine les micro-caps illiquides (DENT, PIPPIN, ARC...)
+
+# ── Filtres liquidité v4.5 ────────────────────────────────────────
+#
+#  Problème détecté en backtest : les micro-caps (DENTUSDT, PIPPINUSDT,
+#  ARCUSDT, ESPUSDT) génèrent des faux wins à cause du spread bid/ask
+#  réel (1-3%) non simulé. En live, le fill market est bien plus loin
+#  du close théorique → PnL réel négatif sur ces symboles.
+#
+#  Filtres ajoutés :
+#   1. VOL_MIN_FILTER $5M  : volume 24h minimum (×10 vs avant)
+#   2. PRICE_MIN_USD $0.01 : élimine les "mille-satoshi" (DENT $0.0002)
+#   3. SPREAD_MAX_PCT 0.15 : skip si spread mark/index > 0.15%
+#   4. Blacklist explicite des symboles identifiés comme illiquides
+#
+PRICE_MIN_USD     = 0.01    # Prix minimum $0.01 — en dessous spread trop large
+SPREAD_MAX_PCT    = 0.15    # Spread mark/index max 0.15% (était pas vérifié avant signal)
+LIQUIDITY_BLACKLIST = {
+    # Identifiés via backtest comme illiquides / spread excessif
+    "DENTUSDT", "PIPPINUSDT", "ARCUSDT", "ESPUSDT",
+    "POWERUSDT", "ENSOUSDT",
+    # Micro-caps génériques à exclure
+    "1000SHIBUSDT", "1000FLOKIUSDT", "1000BONKUSDT",
+    "1000RATSUSDT", "1000CATUSDT", "LUNCUSDT",
+}
 
 # ── Gestion positions ─────────────────────────────────────────────
-MAX_POSITIONS     = 2
+MAX_POSITIONS     = 4      # 4 positions simultanées max
 MARGIN_TYPE       = "ISOLATED"
 MIN_NOTIONAL      = 5.0
 MAX_NOTIONAL_RISK = 0.90
+
+# ── Anti pertes consécutives ──────────────────────────────────────
+# NOTE v4.4 : le cooldown consécutif est DÉSACTIVÉ.
+# La gestion du risque après pertes est confiée au système Paroli
+# (reset automatique à la mise de base après chaque SL).
+# Le brain blacklist les symboles toxiques (≥3 pertes consec) — conservé.
+CONSEC_LOSS_LIMIT = 999   # Désactivé — Paroli gère
+CONSEC_COOLDOWN   = 0     # Désactivé
 
 # ── Paliers balance ───────────────────────────────────────────────
 TARGET_BALANCE = 10.0
@@ -194,16 +221,16 @@ LEVERAGE_BY_TIER = {
     3: [(92, 25), (90, 20), (0, 15)],
 }
 
-# ── SL suiveur ────────────────────────────────────────────────────
-BREAKEVEN_RR   = 0.6
+# ── SL suiveur M5 ────────────────────────────────────────────────
+BREAKEVEN_RR   = 0.5   # BE plus rapide en M5 (0.5R au lieu de 0.6R)
 TRAIL_START_RR = 1.0
-TRAIL_ATR_MULT = 1.0   # Plus large en M15
+TRAIL_ATR_MULT = 0.8   # Trailing plus serré en M5 (0.8 vs 1.0)
 
-# ── Timing ───────────────────────────────────────────────────────
-SCAN_INTERVAL      = 15 * 60
+# ── Timing M5 ────────────────────────────────────────────────────
+SCAN_INTERVAL      = 5 * 60    # Scan toutes les 5 minutes
 MONITOR_INTERVAL   = 5
 DASHBOARD_INTERVAL = 30
-SIGNAL_COOLDOWN    = 15 * 60
+SIGNAL_COOLDOWN    = 5 * 60    # Cooldown 5min par symbole (adapté M5)
 HARD_FLOOR         = 0.50
 
 # ── Exclusions ───────────────────────────────────────────────────
@@ -225,13 +252,30 @@ FALLBACK_SYMBOLS = [
 ]
 
 # ── Anti pertes consécutives ──────────────────────────────────────
-CONSEC_LOSS_LIMIT = 2
-CONSEC_COOLDOWN   = 30 * 60
+# v4.4 : géré par Paroli — constantes conservées pour compatibilité
 DD_ALERT_PCT      = 0.15
-MAX_WORKERS       = 6
+MAX_WORKERS       = 4    # Réduit pour ne pas saturer l'API lors du scan complet
+
+# ── Anti-saturation API ───────────────────────────────────────────
+# Binance Futures : limite 2400 weight/minute
+# Poids des endpoints utilisés :
+#   /fapi/v1/klines            → weight 1
+#   /fapi/v1/ticker/24hr bulk  → weight 40 (1 appel pour TOUT)
+#   /fapi/v1/ticker/24hr sym   → weight 1
+#   /fapi/v1/premiumIndex sym  → weight 1
+#   /futures/data/openInterestHist → weight 1
+#   /fapi/v1/allForceOrders    → weight 20 (!!! cher)
+MAX_API_WEIGHT_PER_MIN   = 2400   # Limite Binance Futures
+WEIGHT_SAFETY_MARGIN     = 0.75   # On s'arrête à 75% (1800 weight/min)
+API_WEIGHT_WINDOW        = 60     # Fenêtre glissante en secondes
+BATCH_SIZE               = 12     # Symboles par batch phase technique
+BATCH_SLEEP_BASE         = 0.6    # Pause entre batches (secondes)
+TECH_PHASE_MAX_SIGNALS   = 20     # Max signaux tech avant phase fond
+BULK_TICKER_TTL          = 30     # Cache ticker bulk (secondes)
 
 # ─── ÉTAT GLOBAL ─────────────────────────────────────────────────
 account_balance   = 0.0
+balance_lock      = threading.Lock()   # ← PATCH 1 : verrou solde
 trade_log         = {}
 trade_lock        = threading.Lock()
 api_lock          = threading.Lock()
@@ -249,6 +293,461 @@ _binance_time_offset = 0
 
 symbol_stats   = defaultdict(lambda: {"wins": 0, "losses": 0})
 drawdown_state = {"ref_balance": 0.0, "last_alert": 0.0}
+
+# ── Weight tracker API ────────────────────────────────────────────
+_api_weight_times   = []   # [(timestamp, weight), ...]
+_api_weight_lock    = threading.Lock()
+_api_weight_used    = 0    # Cumulé sur fenêtre glissante
+
+# ── Cache ticker bulk ─────────────────────────────────────────────
+_bulk_ticker_cache  = {}   # symbol → {quoteVolume, priceChangePercent}
+_bulk_ticker_ts     = 0.0
+_bulk_ticker_lock   = threading.Lock()
+
+# ═══════════════════════════════════════════════════════════════════
+#  BRAIN — SYSTÈME D'APPRENTISSAGE ADAPTATIF
+# ═══════════════════════════════════════════════════════════════════
+#
+#  Le brain apprend de chaque trade fermé et adapte le comportement :
+#
+#  1. MÉMOIRE PAR SYMBOLE
+#     - Wins/losses, pertes consécutives
+#     - Blacklist temporaire si ≥ 3 pertes consécutives (durée 2h)
+#     - Bonus si winrate > 65% sur ≥ 5 trades (marge ×1.0 maintenu)
+#
+#  2. MÉMOIRE PAR SETUP (BB vs FVG_SWEEP)
+#     - Winrate par setup
+#     - Si BB winrate < 45% sur ≥ 8 trades → score min BB relevé à 92
+#     - Si FVG winrate < 45% sur ≥ 8 trades → score min FVG relevé à 94
+#
+#  3. MÉMOIRE PAR SESSION
+#     - Winrate London / NY / Asia
+#     - Session < 40% winrate sur ≥ 10 trades → pénalité marge ×0.75
+#
+#  4. MÉMOIRE PAR DIRECTION BTC
+#     - Winrate BUY vs SELL
+#     - Si côté < 35% → alerte + skip temporaire (4h)
+#
+#  5. AJUSTEMENT ATR MULTIPLIER
+#     - Si > 60% des trades perdants sont fermés par SL dans la 1ère minute
+#       → SL trop serré → ATR_SL_MULT augmenté de 0.1 (max 2.0)
+#     - Si ATR_SL_MULT > 1.5 et winrate global > 55% → réduction progressive
+#
+#  6. PERSISTANCE (brain.json)
+#     - Sauvegardé après chaque trade
+#     - Rechargé au démarrage
+# ═══════════════════════════════════════════════════════════════════
+
+BRAIN_FILE = "brain.json"
+
+# ═══════════════════════════════════════════════════════════════════
+#  PAROLI — SYSTÈME ANTI-MARTINGALE
+# ═══════════════════════════════════════════════════════════════════
+#
+#  Niveau  | Mise    | Condition
+#  --------|---------|------------------------------------------
+#     0    | $0.60   | Base (départ / après tout SL)
+#     1    | $0.75   | Après 1 WIN consécutif
+#     2    | $0.90   | Après 2 WIN consécutifs
+#     3    | $1.05   | Après 3 WIN consécutifs
+#     4    | $1.20   | Après 4+ WIN consécutifs (plafond)
+#
+#  Garde-fous :
+#    - Mise effective = min(niveau_mise, balance × PAROLI_CAP_PCT)
+#    - Brain pénalités (session/symbole) s'appliquent APRÈS (×0.75 plancher $0.30)
+#    - Niveau sauvegardé dans paroli.json (survit aux redémarrages)
+#
+# ═══════════════════════════════════════════════════════════════════
+
+_paroli = {
+    "level":       0,       # Niveau actuel (0-4)
+    "win_streak":  0,       # Séquence de WIN en cours
+    "total_gains": 0.0,     # Gains cumulés grâce au Paroli
+}
+_paroli_lock = threading.Lock()
+
+def paroli_load():
+    """Charge le niveau Paroli depuis paroli.json."""
+    global _paroli
+    if not os.path.exists(PAROLI_FILE):
+        return
+    try:
+        with open(PAROLI_FILE, "r") as f:
+            data = json.load(f)
+        with _paroli_lock:
+            _paroli.update(data)
+        logger.info("🎲 Paroli chargé — niveau {} (streak={})".format(
+            _paroli["level"], _paroli["win_streak"]))
+    except Exception as e:
+        logger.warning("Paroli load error: {} — reset".format(e))
+
+def paroli_save():
+    """Sauvegarde le niveau Paroli."""
+    try:
+        with _paroli_lock:
+            data = dict(_paroli)
+        with open(PAROLI_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.warning("Paroli save error: {}".format(e))
+
+def paroli_on_win():
+    """Appelé après chaque WIN : monte d'un niveau (max PAROLI_MAX_LEVEL)."""
+    with _paroli_lock:
+        _paroli["win_streak"] += 1
+        old = _paroli["level"]
+        _paroli["level"] = min(_paroli["level"] + 1, PAROLI_MAX_LEVEL)
+        new = _paroli["level"]
+    paroli_save()
+    if new != old:
+        logger.info("🎲 Paroli WIN → niveau {} | mise ${:.2f}".format(
+            new, PAROLI_BASE + new * PAROLI_STEP))
+        send_telegram("🎲 <b>Paroli niveau {}</b> → mise ${:.2f}".format(
+            new, PAROLI_BASE + new * PAROLI_STEP))
+
+def paroli_on_loss():
+    """Appelé après chaque SL/LOSS : reset au niveau 0."""
+    with _paroli_lock:
+        old_level  = _paroli["level"]
+        old_streak = _paroli["win_streak"]
+        _paroli["level"]      = 0
+        _paroli["win_streak"] = 0
+    paroli_save()
+    if old_level > 0:
+        logger.info("🎲 Paroli LOSS → reset niveau 0 | mise ${:.2f} (était niv.{} streak={})".format(
+            PAROLI_BASE, old_level, old_streak))
+        send_telegram("🎲 Paroli reset niveau 0 → mise ${:.2f}".format(PAROLI_BASE))
+
+def paroli_get_margin(symbol, setup, session):
+    """
+    Retourne la mise effective en USD pour ce trade.
+    = PAROLI_BASE + level × PAROLI_STEP
+    Plafonnée à PAROLI_CAP_PCT × balance et jamais > MARGIN_MAX_USD.
+    Brain pénalités (session/symbole) appliquées ensuite.
+    """
+    with _paroli_lock:
+        level = _paroli["level"]
+
+    # Mise brute selon niveau Paroli
+    raw_margin = round(PAROLI_BASE + level * PAROLI_STEP, 2)
+
+    # Plafond sécurité : 15% de la balance courante
+    with balance_lock:
+        cur_bal = account_balance
+    cap = round(cur_bal * PAROLI_CAP_PCT, 2) if cur_bal > 0 else PAROLI_BASE
+    raw_margin = min(raw_margin, cap, MARGIN_MAX_USD)
+    raw_margin = max(raw_margin, PAROLI_BASE)   # jamais sous la base
+
+    # Brain pénalités (session mauvaise / symbole dégradé)
+    mult = 1.0
+    sess_mult = brain_get_session_margin_mult(session)
+    mult *= sess_mult
+    with _brain_lock:
+        sym_data = _brain["symbols"].get(symbol, {})
+    sym_total = sym_data.get("wins", 0) + sym_data.get("losses", 0)
+    if sym_total >= 5 and sym_data.get("wins", 0) / sym_total < 0.40:
+        mult *= 0.75
+
+    margin = round(max(MARGIN_MIN_USD, raw_margin * mult), 2)
+    return margin, level
+
+
+_brain = {
+    "version":        4,
+    "total_trades":   0,
+    "total_wins":     0,
+    "total_losses":   0,
+    "symbols":        {},   # sym → {wins, losses, consec_losses, blacklisted_until, last_trade_ts}
+    "setups":         {},   # setup_name → {wins, losses, min_score_override}
+    "sessions":       {},   # session → {wins, losses, margin_mult_override}
+    "sides":          {},   # "BUY"/"SELL" → {wins, losses, skip_until}
+    "atr_mult":       ATR_SL_MULT,   # Ajustable dynamiquement
+    "early_sl_count": 0,   # SL touchés dans < 60s depuis ouverture
+    "last_report_ts": 0.0,
+    "adaptations":    [],  # Log des adaptations effectuées
+}
+_brain_lock = threading.Lock()
+
+def brain_load():
+    """Charge le brain depuis brain.json si existe."""
+    global _brain
+    if not os.path.exists(BRAIN_FILE):
+        logger.info("🧠 Brain: pas de fichier existant — démarrage à zéro")
+        return
+    try:
+        with open(BRAIN_FILE, "r") as f:
+            data = json.load(f)
+        with _brain_lock:
+            # Merge pour préserver les nouvelles clés si format évolue
+            for k, v in data.items():
+                _brain[k] = v
+            # Restaure ATR_SL_MULT sauvegardé
+            global ATR_SL_MULT
+            ATR_SL_MULT = _brain.get("atr_mult", ATR_SL_MULT)
+        logger.info("🧠 Brain chargé — {} trades | WR={:.1f}% | ATR×{:.2f} | {} symboles en mémoire".format(
+            _brain["total_trades"],
+            _brain["total_wins"] / max(_brain["total_trades"], 1) * 100,
+            _brain["atr_mult"],
+            len(_brain["symbols"])))
+    except Exception as e:
+        logger.warning("🧠 Brain load error: {} — reset".format(e))
+
+def brain_save():
+    """Sauvegarde le brain dans brain.json."""
+    try:
+        with _brain_lock:
+            data = dict(_brain)
+        with open(BRAIN_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.warning("🧠 Brain save error: {}".format(e))
+
+def brain_record_trade(symbol, setup, session, side, is_win, trade_duration_s=0):
+    """
+    Enregistre un trade fermé dans le brain et déclenche l'adaptation.
+    Appelé depuis _on_closed().
+    """
+    global ATR_SL_MULT
+    now = time.time()
+
+    with _brain_lock:
+        _brain["total_trades"] += 1
+        if is_win:
+            _brain["total_wins"] += 1
+        else:
+            _brain["total_losses"] += 1
+
+        # ── 1. Mémoire symbole ────────────────────────────────────
+        if symbol not in _brain["symbols"]:
+            _brain["symbols"][symbol] = {
+                "wins": 0, "losses": 0, "consec_losses": 0,
+                "blacklisted_until": 0.0, "last_trade_ts": 0.0
+            }
+        sym_data = _brain["symbols"][symbol]
+        sym_data["last_trade_ts"] = now
+        if is_win:
+            sym_data["wins"] += 1
+            sym_data["consec_losses"] = 0
+        else:
+            sym_data["losses"] += 1
+            sym_data["consec_losses"] += 1
+            # Blacklist si ≥ 3 pertes consécutives → 2h
+            if sym_data["consec_losses"] >= 3:
+                sym_data["blacklisted_until"] = now + 7200
+                msg = "🚫 Brain: {} BLACKLISTÉ 2h ({} pertes consec)".format(
+                    symbol, sym_data["consec_losses"])
+                logger.warning(msg)
+                _brain["adaptations"].append({"ts": now, "type": "blacklist", "msg": msg})
+                send_telegram("🧠 " + msg)
+
+        # ── 2. Mémoire setup ─────────────────────────────────────
+        if setup not in _brain["setups"]:
+            _brain["setups"][setup] = {"wins": 0, "losses": 0, "min_score_override": None}
+        s_data = _brain["setups"][setup]
+        if is_win: s_data["wins"] += 1
+        else:      s_data["losses"] += 1
+
+        s_total = s_data["wins"] + s_data["losses"]
+        if s_total >= 8:
+            wr = s_data["wins"] / s_total
+            if wr < 0.45 and s_data["min_score_override"] is None:
+                # Setup peu fiable → relever le score minimum
+                new_min = 92 if "BB" in setup else 94
+                s_data["min_score_override"] = new_min
+                msg = "📈 Brain: {} WR={:.0f}% < 45% → score min relevé à {}".format(
+                    setup, wr*100, new_min)
+                logger.warning(msg)
+                _brain["adaptations"].append({"ts": now, "type": "score_raise", "msg": msg})
+                send_telegram("🧠 " + msg)
+            elif wr >= 0.55 and s_data["min_score_override"] is not None:
+                # Setup redevenu fiable → reset
+                s_data["min_score_override"] = None
+                msg = "✅ Brain: {} WR={:.0f}% → score min réinitialisé".format(setup, wr*100)
+                logger.info(msg)
+                _brain["adaptations"].append({"ts": now, "type": "score_reset", "msg": msg})
+
+        # ── 3. Mémoire session ────────────────────────────────────
+        if session not in _brain["sessions"]:
+            _brain["sessions"][session] = {"wins": 0, "losses": 0, "margin_mult_override": 1.0}
+        sess_data = _brain["sessions"][session]
+        if is_win: sess_data["wins"] += 1
+        else:      sess_data["losses"] += 1
+
+        sess_total = sess_data["wins"] + sess_data["losses"]
+        if sess_total >= 10:
+            sess_wr = sess_data["wins"] / sess_total
+            if sess_wr < 0.40 and sess_data["margin_mult_override"] == 1.0:
+                sess_data["margin_mult_override"] = 0.75
+                msg = "⚠️ Brain: Session {} WR={:.0f}% < 40% → marge ×0.75".format(
+                    session, sess_wr*100)
+                logger.warning(msg)
+                _brain["adaptations"].append({"ts": now, "type": "session_penalty", "msg": msg})
+                send_telegram("🧠 " + msg)
+            elif sess_wr >= 0.50 and sess_data["margin_mult_override"] < 1.0:
+                sess_data["margin_mult_override"] = 1.0
+                msg = "✅ Brain: Session {} WR={:.0f}% → marge normale".format(
+                    session, sess_wr*100)
+                logger.info(msg)
+                _brain["adaptations"].append({"ts": now, "type": "session_restore", "msg": msg})
+
+        # ── 4. Mémoire côté (BUY/SELL) ───────────────────────────
+        if side not in _brain["sides"]:
+            _brain["sides"][side] = {"wins": 0, "losses": 0, "skip_until": 0.0}
+        side_data = _brain["sides"][side]
+        if is_win: side_data["wins"] += 1
+        else:      side_data["losses"] += 1
+
+        side_total = side_data["wins"] + side_data["losses"]
+        if side_total >= 10:
+            side_wr = side_data["wins"] / side_total
+            if side_wr < 0.35 and time.time() > side_data.get("skip_until", 0):
+                side_data["skip_until"] = now + 14400  # 4h
+                msg = "🛑 Brain: {} WR={:.0f}% < 35% → skip 4h".format(side, side_wr*100)
+                logger.warning(msg)
+                _brain["adaptations"].append({"ts": now, "type": "side_skip", "msg": msg})
+                send_telegram("🧠 " + msg)
+
+        # ── 5. Ajustement ATR si SL trop serré ───────────────────
+        if not is_win and trade_duration_s < 60:
+            _brain["early_sl_count"] += 1
+        recent_losses = _brain["total_losses"]
+        if recent_losses >= 5:
+            early_ratio = _brain["early_sl_count"] / max(recent_losses, 1)
+            if early_ratio > 0.60 and _brain["atr_mult"] < 2.0:
+                _brain["atr_mult"] = round(min(_brain["atr_mult"] + 0.1, 2.0), 2)
+                ATR_SL_MULT = _brain["atr_mult"]
+                msg = "📏 Brain: SL trop serré ({:.0f}% early SL) → ATR×{:.2f}".format(
+                    early_ratio*100, ATR_SL_MULT)
+                logger.warning(msg)
+                _brain["adaptations"].append({"ts": now, "type": "atr_widen", "msg": msg})
+                send_telegram("🧠 " + msg)
+
+    brain_save()
+
+    # ── 6. Rapport hebdomadaire ──────────────────────────────────
+    with _brain_lock:
+        last_report = _brain.get("last_report_ts", 0)
+    if now - last_report > 7 * 86400:
+        brain_weekly_report()
+
+def brain_is_blacklisted(symbol):
+    """Retourne True si le symbole est blacklisté par le brain."""
+    with _brain_lock:
+        sym_data = _brain["symbols"].get(symbol)
+        if sym_data and time.time() < sym_data.get("blacklisted_until", 0):
+            return True
+    return False
+
+def brain_is_side_skipped(side):
+    """Retourne True si ce côté (BUY/SELL) est temporairement skippé."""
+    with _brain_lock:
+        side_data = _brain["sides"].get(side)
+        if side_data and time.time() < side_data.get("skip_until", 0):
+            return True
+    return False
+
+def brain_get_setup_min_score(setup):
+    """Retourne le score minimum pour ce setup (override brain ou défaut)."""
+    with _brain_lock:
+        s_data = _brain["setups"].get(setup, {})
+        override = s_data.get("min_score_override")
+    return override if override is not None else MIN_SCORE
+
+def brain_get_session_margin_mult(session):
+    """Retourne le multiplicateur de marge pour cette session."""
+    with _brain_lock:
+        sess_data = _brain["sessions"].get(session, {})
+    return sess_data.get("margin_mult_override", 1.0)
+
+def brain_get_margin_usd(symbol, setup, session):
+    """
+    Retourne la marge fixe en USD après ajustements brain.
+    Base : FIXED_MARGIN_USD = $0.60
+    Pénalités appliquées :
+      - Session mauvaise     → ×0.75
+      - Symbole dégradé (WR < 40% sur ≥ 5 trades) → ×0.75
+    Plancher : MARGIN_MIN_USD = $0.30
+    """
+    margin = FIXED_MARGIN_USD
+    mult = 1.0
+
+    # Pénalité session
+    sess_mult = brain_get_session_margin_mult(session)
+    mult *= sess_mult
+
+    # Pénalité symbole
+    with _brain_lock:
+        sym_data = _brain["symbols"].get(symbol, {})
+    sym_total = sym_data.get("wins", 0) + sym_data.get("losses", 0)
+    if sym_total >= 5:
+        sym_wr = sym_data.get("wins", 0) / sym_total
+        if sym_wr < 0.40:
+            mult *= 0.75
+
+    margin = round(max(MARGIN_MIN_USD, min(MARGIN_MAX_USD, margin * mult)), 2)
+    return margin
+
+def brain_weekly_report():
+    """Envoie un rapport Telegram des apprentissages de la semaine."""
+    global _brain
+    now = time.time()
+    with _brain_lock:
+        _brain["last_report_ts"] = now
+        total   = _brain["total_trades"]
+        wins    = _brain["total_wins"]
+        wr_glob = wins / max(total, 1) * 100
+
+        setup_lines = []
+        for sname, sd in _brain["setups"].items():
+            t = sd["wins"] + sd["losses"]
+            if t > 0:
+                wr = sd["wins"] / t * 100
+                override = sd.get("min_score_override")
+                flag = " ⚠️ score min relevé" if override else ""
+                setup_lines.append("  {} : {:.0f}% WR ({} trades){}".format(
+                    sname, wr, t, flag))
+
+        sess_lines = []
+        for sname, sd in _brain["sessions"].items():
+            t = sd["wins"] + sd["losses"]
+            if t > 0:
+                wr = sd["wins"] / t * 100
+                mult = sd.get("margin_mult_override", 1.0)
+                flag = " ×{:.2f}".format(mult)
+                sess_lines.append("  {} : {:.0f}% WR ({} trades){}".format(
+                    sname, wr, t, flag))
+
+        black = [s for s, d in _brain["symbols"].items()
+                 if time.time() < d.get("blacklisted_until", 0)]
+
+        recent_adapt = _brain["adaptations"][-5:] if _brain["adaptations"] else []
+
+    msg = (
+        "🧠 <b>Rapport Brain hebdo</b>\n\n"
+        "📊 Global: {} trades | WR {:.0f}% | ATR×{:.2f}\n\n"
+        "⚙️ Setups:\n{}\n\n"
+        "🕐 Sessions:\n{}\n\n"
+        "🚫 Blacklists actives: {}\n\n"
+        "📝 Dernières adaptations:\n{}".format(
+            total, wr_glob, _brain.get("atr_mult", ATR_SL_MULT),
+            "\n".join(setup_lines) or "  Aucune donnée",
+            "\n".join(sess_lines) or "  Aucune donnée",
+            ", ".join(black) if black else "Aucune",
+            "\n".join("  " + a["msg"] for a in recent_adapt) or "  Aucune"
+        )
+    )
+    send_telegram(msg)
+    logger.info("🧠 Rapport brain envoyé")
+
+def brain_summary_log():
+    """Log court du brain pour le dashboard."""
+    with _brain_lock:
+        total = _brain["total_trades"]
+        wr    = _brain["total_wins"] / max(total, 1) * 100
+        black = sum(1 for d in _brain["symbols"].values()
+                    if time.time() < d.get("blacklisted_until", 0))
+        atr   = _brain["atr_mult"]
+    return "Brain: {}T WR{:.0f}% ATR×{:.2f} BL:{}".format(total, wr, atr, black)
 
 _btc_cache = {"direction": 0, "ts": 0.0, "label": "NEUTRE",
               "rsi": 50.0, "slope": 0.0, "closes": None, "strength": "NORMAL"}
@@ -272,8 +771,10 @@ def cc(text, col): return "{}{}{}".format(col, text, RESET)
 # ═══════════════════════════════════════════════════════════════════
 
 def get_tier():
-    if account_balance < TIER1_LIMIT: return 1
-    if account_balance < TIER2_LIMIT: return 2
+    with balance_lock:
+        bal = account_balance
+    if bal < TIER1_LIMIT: return 1
+    if bal < TIER2_LIMIT: return 2
     return 3
 
 def get_tier_label():
@@ -384,8 +885,8 @@ def home():
     st  = "🛑 STOP" if _bot_stop else "🟢 RUNNING"
     ses = get_session()
     fg  = _fg_cache.get("value", "?")
-    return "SCANNER M15 v2.0 | {} | ${:.4f} | Pos:{}/{} | {} | F&G:{}".format(
-        st, account_balance, n, MAX_POSITIONS, ses, fg), 200
+    return "SCANNER M5 v4.5 | {} | ${:.4f} | Pos:{}/{} | {} | F&G:{} | W:{}".format(
+        st, account_balance, n, MAX_POSITIONS, ses, fg, get_current_weight()), 200
 
 @flask_app.route("/health")
 def health():
@@ -402,7 +903,7 @@ def status_ep():
     tl = sum(v["losses"] for v in symbol_stats.values())
     btc = _btc_cache
     return jsonify({
-        "version":       "v2.0",
+        "version":       "v2.1",
         "balance":       round(account_balance, 4),
         "session":       get_session(),
         "session_mult":  get_session_mult(),
@@ -539,15 +1040,103 @@ def sync_binance_time():
 #  RATE LIMIT & API
 # ═══════════════════════════════════════════════════════════════════
 
-def _rate_limit():
+# ═══════════════════════════════════════════════════════════════════
+#  WEIGHT TRACKER ANTI-SATURATION API
+# ═══════════════════════════════════════════════════════════════════
+#
+#  Binance Futures = 2400 weight/minute
+#  On consomme au maximum WEIGHT_SAFETY_MARGIN × 2400 = 1800/min
+#
+#  Poids estimés des endpoints :
+#    klines              → 1
+#    ticker/24hr bulk    → 40
+#    ticker/24hr symbol  → 1
+#    premiumIndex        → 1
+#    openInterestHist    → 1
+#    allForceOrders      → 20
+#    order (POST/DELETE) → 1
+#    balance/position    → 5
+# ═══════════════════════════════════════════════════════════════════
+
+ENDPOINT_WEIGHTS = {
+    "/fapi/v1/klines":                   1,
+    "/fapi/v1/ticker/24hr_bulk":         40,   # bulk = paramètre interne
+    "/fapi/v1/ticker/24hr":              1,
+    "/fapi/v1/ticker/price":             1,
+    "/fapi/v1/premiumIndex":             1,
+    "/futures/data/openInterestHist":    1,
+    "/fapi/v1/allForceOrders":           20,
+    "/fapi/v1/order":                    1,
+    "/fapi/v2/balance":                  5,
+    "/fapi/v2/positionRisk":             5,
+    "/fapi/v1/leverage":                 1,
+    "/fapi/v1/marginType":               1,
+    "/fapi/v1/openOrders":               1,
+    "/fapi/v1/income":                   1,
+    "_default":                          1,
+}
+
+def _get_endpoint_weight(path, bulk=False):
+    if bulk: return ENDPOINT_WEIGHTS["/fapi/v1/ticker/24hr_bulk"]
+    return ENDPOINT_WEIGHTS.get(path, ENDPOINT_WEIGHTS["_default"])
+
+def _track_weight(path, bulk=False):
+    """Enregistre le poids consommé et retourne le weight actuel sur la fenêtre."""
+    global _api_weight_times, _api_weight_used
+    w = _get_endpoint_weight(path, bulk)
+    now = time.time()
+    with _api_weight_lock:
+        # Nettoyage fenêtre glissante
+        _api_weight_times = [(t, wt) for t, wt in _api_weight_times
+                             if now - t < API_WEIGHT_WINDOW]
+        _api_weight_times.append((now, w))
+        _api_weight_used = sum(wt for _, wt in _api_weight_times)
+        return _api_weight_used
+
+def get_current_weight():
+    """Retourne le weight API consommé sur la dernière minute."""
+    now = time.time()
+    with _api_weight_lock:
+        return sum(wt for t, wt in _api_weight_times if now - t < API_WEIGHT_WINDOW)
+
+def _rate_limit(path=""):
+    """
+    Double protection :
+    1. Compteur brut d'appels (≤1100/min pour sécurité)
+    2. Weight tracker Binance (≤ WEIGHT_SAFETY_MARGIN × 2400/min)
+    Si limite approchée → sleep adaptatif
+    """
     global api_call_times
+    max_safe_weight = MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN
+
     with api_lock:
         now = time.time()
+        # Compteur appels bruts
         api_call_times = [t for t in api_call_times if now - t < 60]
         if len(api_call_times) >= 1100:
             s = 60 - (now - api_call_times[0])
-            if s > 0: time.sleep(s)
+            if s > 0:
+                logger.warning("⚠️ Rate limit appels bruts — pause {:.1f}s".format(s))
+                time.sleep(s)
         api_call_times.append(now)
+
+    # Weight tracker
+    w_used = get_current_weight()
+    if w_used >= max_safe_weight:
+        # Calcule le sleep nécessaire pour que les vieux weights sortent de la fenêtre
+        with _api_weight_lock:
+            if _api_weight_times:
+                oldest = _api_weight_times[0][0]
+                sleep_needed = API_WEIGHT_WINDOW - (time.time() - oldest) + 0.5
+                if sleep_needed > 0:
+                    logger.warning("⚠️ Weight {}/{} — throttle {:.1f}s".format(
+                        int(w_used), int(max_safe_weight), sleep_needed))
+                    time.sleep(sleep_needed)
+    elif w_used >= max_safe_weight * 0.85:
+        # Zone orange (85%) → légère pause préventive
+        time.sleep(0.3)
+
+    _track_weight(path)
 
 def _sign(params):
     q = "&".join("{}={}".format(k, v) for k, v in params.items())
@@ -563,7 +1152,7 @@ def _parse_binance_error(response_text):
 
 def request_binance(method, path, params=None, signed=True):
     if params is None: params = {}
-    _rate_limit()
+    _rate_limit(path)
     headers = {"X-MBX-APIKEY": API_KEY}
     url     = BASE_URL + path
 
@@ -582,14 +1171,26 @@ def request_binance(method, path, params=None, signed=True):
                 elif method == "DELETE": r = requests.delete(url, params=p, headers=headers, timeout=10)
                 else: return None
 
-                if r.status_code == 200: return r.json()
+                if r.status_code == 200:
+                    # Lire le weight réel retourné par Binance si dispo
+                    used_weight = r.headers.get("X-MBX-USED-WEIGHT-1M")
+                    if used_weight:
+                        real_w = int(used_weight)
+                        if real_w > MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN * 0.9:
+                            logger.warning("⚠️ Binance weight header: {}/{}".format(
+                                real_w, MAX_API_WEIGHT_PER_MIN))
+                    return r.json()
 
                 code, msg = _parse_binance_error(r.text)
 
                 if r.status_code == 429:
-                    time.sleep([5, 15, 30, 60][min(attempt, 3)]); continue
+                    sleep_t = [10, 20, 45, 90][min(attempt, 3)]
+                    logger.warning("⚠️ 429 Rate limit — backoff {}s (attempt {})".format(
+                        sleep_t, attempt + 1))
+                    time.sleep(sleep_t); continue
                 if r.status_code == 418:
-                    time.sleep(120); return None
+                    logger.error("🚫 418 IP Ban — pause 3 minutes")
+                    time.sleep(180); return None
                 if r.status_code in (401, 403):
                     logger.error("🔑 Auth {} — clé API invalide".format(r.status_code))
                     return None
@@ -684,20 +1285,57 @@ def get_price(symbol):
         return p
     return 0.0
 
-def get_account_balance():
-    global account_balance
+_balance_last_ts = 0.0
+BALANCE_TTL      = 45   # Rafraîchissement max toutes les 45s
+
+def get_account_balance(force=False):
+    """
+    PATCH 1 — Lecture sécurisée du solde :
+    - balance_lock sur toute lecture/écriture
+    - Cache TTL 45s (pas de requête inutile)
+    - Fallback sécurité : si l'appel échoue, on conserve
+      la dernière valeur connue MAIS on la plafonne à 80%
+      pour éviter l'over-sizing en cas de solde obsolète.
+    """
+    global account_balance, _balance_last_ts
+    now = time.time()
+
+    # Court-circuit si cache encore frais
+    if not force and (now - _balance_last_ts) < BALANCE_TTL:
+        with balance_lock:
+            return account_balance
+
     d = request_binance("GET", "/fapi/v2/balance", signed=True)
     if d:
         for a in d:
             if a.get("asset") == "USDT":
-                account_balance = float(a.get("availableBalance", 0))
-                return account_balance
-    return account_balance
+                new_bal = float(a.get("availableBalance", 0))
+                with balance_lock:
+                    account_balance  = new_bal
+                    _balance_last_ts = now
+                return new_bal
+    else:
+        # Appel échoué → valeur sécurisée à 80% du dernier solde connu
+        with balance_lock:
+            safe = account_balance * 0.80
+        logger.warning("⚠️ get_account_balance échoué — valeur sécurité ${:.4f}".format(safe))
+        return safe
+
+    with balance_lock:
+        return account_balance
 
 def load_top_symbols():
+    """
+    Charge TOUS les symboles USDT perpétuels éligibles.
+    Pré-filtre : volume 24h > VOL_MIN_FILTER ($500k)
+    → 1 seul appel ticker/24hr bulk (weight 40)
+    → typiquement 200-350 symboles après filtre
+    """
     global symbols_list
-    logger.info("📥 Chargement top {} symboles M15...".format(TOP_N_SYMBOLS))
+    logger.info("📥 Chargement TOUS les symboles USDT perps...")
     try:
+        # 1 seul appel pour tout le ticker (weight 40)
+        _track_weight("/fapi/v1/ticker/24hr", bulk=True)
         tickers  = request_binance("GET", "/fapi/v1/ticker/24hr", signed=False)
         exchange = request_binance("GET", "/fapi/v1/exchangeInfo", signed=False)
         if not tickers or not exchange: raise ValueError("API indispo")
@@ -708,7 +1346,9 @@ def load_top_symbols():
             base = s["baseAsset"].upper()
             if (sym.endswith("USDT") and s.get("status") == "TRADING"
                     and s.get("contractType") == "PERPETUAL"
-                    and sym not in EXCLUDE_SYMBOLS and base not in MEME_COINS):
+                    and sym not in EXCLUDE_SYMBOLS
+                    and sym not in LIQUIDITY_BLACKLIST      # v4.5 blacklist explicite
+                    and base not in MEME_COINS):
                 tradeable.add(sym)
                 filters = {f["filterType"]: f for f in s.get("filters", [])}
                 symbol_info_cache[sym] = {
@@ -719,22 +1359,49 @@ def load_top_symbols():
                     "minNotional": float(filters.get("MIN_NOTIONAL", {}).get("notional", MIN_NOTIONAL)),
                 }
 
+        # Construire le bulk ticker cache en même temps
         vol_map = {}
-        for t in tickers:
-            sym = t.get("symbol", "")
-            if sym in tradeable:
-                try: vol_map[sym] = float(t.get("quoteVolume", 0))
-                except: pass
+        with _bulk_ticker_lock:
+            global _bulk_ticker_cache, _bulk_ticker_ts
+            _bulk_ticker_cache = {}
+            for t in tickers:
+                sym = t.get("symbol", "")
+                if sym in tradeable:
+                    try:
+                        vol   = float(t.get("quoteVolume", 0))
+                        chg   = float(t.get("priceChangePercent", 0))
+                        price = float(t.get("lastPrice", 0))
+                        # v4.5 : filtre prix minimum $0.01
+                        if price < PRICE_MIN_USD:
+                            continue
+                        _bulk_ticker_cache[sym] = {"vol": vol, "chg": chg}
+                        vol_map[sym] = vol
+                    except: pass
+            _bulk_ticker_ts = time.time()
 
-        # Top N par volume uniquement — scan ciblé et efficace
-        sorted_syms = sorted(vol_map.items(), key=lambda x: x[1], reverse=True)
-        symbols_list = [s for s, v in sorted_syms if v > 1_000_000][:TOP_N_SYMBOLS]
-        if not symbols_list: symbols_list = list(tradeable)[:TOP_N_SYMBOLS]
-        logger.info("✅ {} symboles M15 (top {} par volume)".format(
-            len(symbols_list), TOP_N_SYMBOLS))
+        # Filtre volume minimum + tri par volume
+        sorted_syms  = sorted(vol_map.items(), key=lambda x: x[1], reverse=True)
+        symbols_list = [s for s, v in sorted_syms if v >= VOL_MIN_FILTER]
+
+        if not symbols_list:
+            symbols_list = FALLBACK_SYMBOLS[:]
+
+        logger.info("✅ {} symboles éligibles (vol24h > ${:.0f}M | prix > ${}) | weight_used={}".format(
+            len(symbols_list), VOL_MIN_FILTER / 1_000_000, PRICE_MIN_USD, get_current_weight()))
+
     except Exception as e:
         logger.error("load_top_symbols: {} → fallback".format(e))
         symbols_list = FALLBACK_SYMBOLS[:]
+
+def get_bulk_ticker(symbol):
+    """
+    Retourne les données ticker depuis le cache bulk (vol24h, priceChange%).
+    Si cache expiré → retourne None (sera rechargé au prochain cycle).
+    """
+    with _bulk_ticker_lock:
+        if time.time() - _bulk_ticker_ts < BULK_TICKER_TTL:
+            return _bulk_ticker_cache.get(symbol)
+    return None
 
 # ═══════════════════════════════════════════════════════════════════
 #  FEAR & GREED INDEX
@@ -913,13 +1580,13 @@ def get_btc_direction():
 
     if bull:
         direction = 1
-        label = "BTC M15 🟢 HAUSSIER RSI={:.0f}".format(rsi)
+        label = "BTC M5 🟢 HAUSSIER RSI={:.0f}".format(rsi)
     elif bear:
         direction = -1
-        label = "BTC M15 🔴 BAISSIER RSI={:.0f}".format(rsi)
+        label = "BTC M5 🔴 BAISSIER RSI={:.0f}".format(rsi)
     else:
         direction = 0
-        label = "BTC M15 ⚪ NEUTRE RSI={:.0f}".format(rsi)
+        label = "BTC M5 ⚪ NEUTRE RSI={:.0f}".format(rsi)
 
     # Force de la tendance BTC pour le MM dynamique
     # FORT   : direction claire + RSI dans zone saine (45-75)
@@ -951,13 +1618,13 @@ def check_btc_correlation(symbol, side, sym_closes):
 
     # BTC neutre = pas de trade
     if btc_dir == 0:
-        return False, "BTC M15 neutre → pas de trade"
+        return False, "BTC M5 neutre → pas de trade"
 
     # Alignement strict direction
     if side == "BUY" and btc_dir != 1:
-        return False, "BUY refusé — BTC M15 baissier"
+        return False, "BUY refusé — BTC M5 baissier"
     if side == "SELL" and btc_dir != -1:
-        return False, "SELL refusé — BTC M15 haussier"
+        return False, "SELL refusé — BTC M5 haussier"
 
     # Co-mouvement sur 6 bougies
     btc_closes = btc.get("closes")
@@ -985,7 +1652,7 @@ def get_funding_rate(symbol):
 def get_oi_data(symbol):
     try:
         d = request_binance("GET", "/futures/data/openInterestHist",
-                            {"symbol": symbol, "period": "15m", "limit": 6}, signed=False)
+                            {"symbol": symbol, "period": "5m", "limit": 6}, signed=False)
         if d and len(d) >= 2:
             oi0          = float(d[0]["sumOpenInterest"])
             oi1          = float(d[-1]["sumOpenInterest"])
@@ -1010,19 +1677,22 @@ def get_mark_spread(symbol):
 
 def get_volume_24h_score(symbol, side):
     """
-    Score de volume 24h :
-    Spike de volume = forte conviction → confirme la direction
-    Retourne (score /20, detail)
+    Score de volume 24h — utilise le cache bulk en priorité (0 appel API).
+    Fallback : appel individuel si cache expiré.
     """
     try:
-        ticker = request_binance("GET", "/fapi/v1/ticker/24hr",
-                                 {"symbol": symbol}, signed=False)
-        if not ticker: return 10, "Vol N/A⚠️"
+        # Priorité : cache bulk (aucun appel API supplémentaire)
+        bulk = get_bulk_ticker(symbol)
+        if bulk:
+            vol_24h   = bulk["vol"]
+            price_chg = bulk["chg"]
+        else:
+            ticker = request_binance("GET", "/fapi/v1/ticker/24hr",
+                                     {"symbol": symbol}, signed=False)
+            if not ticker: return 10, "Vol N/A⚠️"
+            vol_24h   = float(ticker.get("quoteVolume", 0))
+            price_chg = float(ticker.get("priceChangePercent", 0))
 
-        vol_24h   = float(ticker.get("quoteVolume", 0))  # Volume en USDT
-        price_chg = float(ticker.get("priceChangePercent", 0))  # % variation 24h
-
-        # Volume cohérent avec la direction
         if side == "BUY"  and price_chg > 2  and vol_24h > 10_000_000:
             return 20, "Vol24h=${:.0f}M ↑{:.1f}%✅".format(vol_24h/1e6, price_chg)
         if side == "SELL" and price_chg < -2 and vol_24h > 10_000_000:
@@ -1238,11 +1908,11 @@ def _find_breaker_block(o, h, l, cl, v, atr, direction):
 #  ANALYSE M15 — SETUP COMPLET
 # ═══════════════════════════════════════════════════════════════════
 
-def analyse_m15(symbol, klines):
+def analyse_m5(symbol, klines):
     """
-    Analyse M15 complète :
+    Analyse M5 complète :
     1. Breaker Block ICT détecté
-    2. Direction OBLIGATOIREMENT alignée avec BTC M15
+    2. Direction OBLIGATOIREMENT alignée avec BTC M5
     3. Confirmation bougie de réaction
     4. Score et probabilité calculés
     """
@@ -1314,7 +1984,7 @@ def analyse_m15(symbol, klines):
         return {
             "symbol":      symbol,
             "side":        direction,
-            "setup":       "BB_M15_BTC_ALIGN",
+            "setup":       "BB_M5_BTC_ALIGN",
             "score":       score,
             "confluence":  conf,
             "probability": prob,
@@ -1333,22 +2003,325 @@ def analyse_m15(symbol, klines):
         return None
 
 # ═══════════════════════════════════════════════════════════════════
-#  SL STRUCTUREL — BASÉ ATR M15
+#  SL STRUCTUREL — ATR ou CRT (Candle Range Theory)
+# ═══════════════════════════════════════════════════════════════════
+#
+#  Deux méthodes disponibles, le bot choisit la plus serrée
+#  dans les limites autorisées :
+#
+#  ATR  → SL = entry ± ATR × 1.2 (adaptatif à la volatilité)
+#  CRT  → SL = low/high de la bougie précédente (structure pure)
+#
+#  Priorité : CRT si valide (dans les limites MIN/MAX SL)
+#             sinon ATR fallback
 # ═══════════════════════════════════════════════════════════════════
 
-def get_sl(ob, entry, side, atr):
-    if ob:
-        buf    = atr * 0.2
-        sl_raw = (ob["bottom"] - buf) if side == "BUY" else (ob["top"] + buf)
-        dist   = abs(entry - sl_raw)
-        if entry * MIN_SL_PCT <= dist <= entry * MAX_SL_PCT:
-            return sl_raw
+def get_sl_atr(entry, side, atr):
+    """SL basé sur ATR × ATR_SL_MULT."""
     dist = atr * ATR_SL_MULT
     dist = max(dist, entry * MIN_SL_PCT)
     dist = min(dist, entry * MAX_SL_PCT)
     return (entry - dist) if side == "BUY" else (entry + dist)
 
-def find_tp_for_rr(entry, sl, direction, rr_target=4.0):
+def get_sl_crt(entry, side, prev_high, prev_low):
+    """
+    SL basé sur CRT (Candle Range Theory) :
+      BUY  → SL = low de la bougie précédente (- petit buffer 0.01%)
+      SELL → SL = high de la bougie précédente (+ petit buffer 0.01%)
+    """
+    buf = entry * 0.0001   # buffer 0.01%
+    if side == "BUY":
+        return prev_low - buf
+    else:
+        return prev_high + buf
+
+def get_sl(ob, entry, side, atr, candles_ohlc=None):
+    """
+    Sélectionne le SL optimal entre ATR et CRT.
+    Priorité CRT si la distance est dans les limites,
+    sinon utilise ATR.
+    Retourne aussi la méthode choisie pour le logging.
+    """
+    pp_entry = entry if entry > 0 else 1.0
+
+    # Calcul SL ATR
+    sl_atr = get_sl_atr(entry, side, atr)
+
+    # Calcul SL CRT (si bougies disponibles)
+    sl_crt = None
+    if candles_ohlc and len(candles_ohlc) >= 2:
+        prev_high = candles_ohlc[-2]["high"]
+        prev_low  = candles_ohlc[-2]["low"]
+        sl_raw    = get_sl_crt(entry, side, prev_high, prev_low)
+        dist_crt  = abs(entry - sl_raw)
+        # CRT valide uniquement si dans les bornes MIN/MAX SL
+        if pp_entry * MIN_SL_PCT <= dist_crt <= pp_entry * MAX_SL_PCT:
+            sl_crt = sl_raw
+
+    # Priorité CRT (structure pure), fallback ATR
+    if sl_crt is not None:
+        return sl_crt, "CRT"
+
+    # ATR avec Breaker Block si disponible
+    if ob:
+        buf    = atr * 0.2
+        sl_ob  = (ob["bottom"] - buf) if side == "BUY" else (ob["top"] + buf)
+        dist   = abs(entry - sl_ob)
+        if pp_entry * MIN_SL_PCT <= dist <= pp_entry * MAX_SL_PCT:
+            return sl_ob, "ATR+OB"
+
+    return sl_atr, "ATR"
+
+# ═══════════════════════════════════════════════════════════════════
+#  NOUVEAU SETUP SÉLECTIF — FVG LIQUIDITY SWEEP (ICT)
+# ═══════════════════════════════════════════════════════════════════
+#
+#  Logique (BUY) :
+#  1. SWEEP  : Prix descend sous un swing low récent (≤15 bougies)
+#              puis remonte dessus dans la même bougie → liquidity grab
+#  2. FVG    : Une Fair Value Gap haussière existe dans les 5 bougies
+#              suivant le sweep — gap entre high[i-1] et low[i+1]
+#              avec corps haussier fort (body ≥ ATR×0.8)
+#  3. RETEST : Prix actuel est dans ou juste au-dessus de la FVG
+#  4. BTC    : Aligné obligatoirement
+#  5. RSI    : Sous 55 (non surchargé) pour un BUY
+#
+#  Score 93 minimum, confluence 4/4 obligatoire
+#  → Très sélectif : 1-3 signaux/jour max
+# ═══════════════════════════════════════════════════════════════════
+
+def _find_fvg_sweep(o, h, l, cl, v, atr, direction):
+    """
+    Détecte un setup FVG + Liquidity Sweep en M5.
+    Retourne le signal ou None.
+    """
+    n = len(cl)
+    if n < 25: return None
+
+    avg_vol = sum(v[-20:]) / 20 if len(v) >= 20 else sum(v) / len(v)
+    e9  = _ema(cl, 9)
+    e21 = _ema(cl, 21)
+    rsi = _rsi(cl, 14)
+
+    if direction == "BUY":
+        # ── Étape 1 : trouver le SWEEP de liquidity ───────────────
+        # Cherche une bougie qui casse un swing low ET remonte dedans
+        sweep_idx = None
+        swept_low = None
+        for i in range(n - 3, max(n - 18, 3), -1):
+            # Swing low = low[i] < low[i-2] et low[i] < low[i-1]
+            local_low = min(l[max(0, i-10):i])
+            if l[i] < local_low * 0.9998 and cl[i] > local_low:
+                # Bougie qui pique sous le low puis referme dessus = sweep
+                sweep_idx = i
+                swept_low = local_low
+                break
+
+        if sweep_idx is None: return None
+
+        # Sweep doit être récent (≤15 bougies)
+        if n - 1 - sweep_idx > 15: return None
+
+        # Volume du sweep doit être significatif
+        vol_ok = float(v[sweep_idx]) > avg_vol * 1.2
+
+        # ── Étape 2 : FVG haussière après le sweep ────────────────
+        # FVG = high[i-1] < low[i+1] avec bougie médiane haussière forte
+        fvg_bottom = None
+        fvg_top    = None
+        fvg_idx    = None
+        for i in range(sweep_idx, min(n - 1, sweep_idx + 8)):
+            if i < 1 or i + 1 >= n: continue
+            gap = l[i + 1] - h[i - 1]
+            if gap > 0 and cl[i] > o[i]:   # FVG bullish
+                body = abs(cl[i] - o[i])
+                if body >= atr * 0.5:       # Corps fort
+                    fvg_bottom = h[i - 1]
+                    fvg_top    = l[i + 1]
+                    fvg_idx    = i
+                    break
+
+        if fvg_bottom is None: return None
+
+        # ── Étape 3 : Prix actuel en retest de la FVG ─────────────
+        price    = cl[-1]
+        fvg_mid  = (fvg_bottom + fvg_top) / 2
+        buf      = atr * 0.3
+        in_fvg   = (fvg_bottom - buf) <= price <= (fvg_top + buf)
+        if not in_fvg: return None
+
+        # ── Étape 4 : Confirmations supplémentaires ───────────────
+        ema_bull    = e9[-1] > e21[-1]                  # Tendance locale
+        rsi_ok      = rsi < 58                          # Non surchargé
+        body_ok     = (cl[-1] >= o[-1])                 # Bougie actuelle haussière
+        not_too_far = (price < fvg_top + atr * 1.5)    # Pas trop loin de la FVG
+
+        confluence = sum([
+            True,          # Setup de base (sweep + FVG)
+            vol_ok,        # Volume sweep significatif
+            ema_bull,      # EMA alignée
+            rsi_ok,        # RSI sain
+            body_ok and not_too_far,  # Confirmation bougie
+        ])
+
+        if confluence < 4: return None
+
+        score = 90 + min(confluence - 1, 4)  # 93-94 max
+
+        return {
+            "direction":   "BUY",
+            "fvg_bottom":  fvg_bottom,
+            "fvg_top":     fvg_top,
+            "fvg_mid":     fvg_mid,
+            "swept_low":   swept_low,
+            "sweep_idx":   sweep_idx,
+            "score":       score,
+            "confluence":  min(confluence, 5),
+            "atr":         atr,
+            "vol_ok":      vol_ok,
+            "ema_align":   ema_bull,
+            "ob":          {"bottom": fvg_bottom, "top": fvg_top},
+        }
+
+    elif direction == "SELL":
+        # ── Étape 1 : SWEEP de liquidity baissier ─────────────────
+        sweep_idx  = None
+        swept_high = None
+        for i in range(n - 3, max(n - 18, 3), -1):
+            local_high = max(h[max(0, i-10):i])
+            if h[i] > local_high * 1.0002 and cl[i] < local_high:
+                sweep_idx  = i
+                swept_high = local_high
+                break
+
+        if sweep_idx is None: return None
+        if n - 1 - sweep_idx > 15: return None
+
+        vol_ok = float(v[sweep_idx]) > avg_vol * 1.2
+
+        # ── Étape 2 : FVG baissière après le sweep ────────────────
+        fvg_bottom = None
+        fvg_top    = None
+        fvg_idx    = None
+        for i in range(sweep_idx, min(n - 1, sweep_idx + 8)):
+            if i < 1 or i + 1 >= n: continue
+            gap = l[i - 1] - h[i + 1]
+            if gap > 0 and cl[i] < o[i]:   # FVG bearish
+                body = abs(cl[i] - o[i])
+                if body >= atr * 0.5:
+                    fvg_top    = l[i - 1]
+                    fvg_bottom = h[i + 1]
+                    fvg_idx    = i
+                    break
+
+        if fvg_bottom is None: return None
+
+        price   = cl[-1]
+        fvg_mid = (fvg_bottom + fvg_top) / 2
+        buf     = atr * 0.3
+        in_fvg  = (fvg_bottom - buf) <= price <= (fvg_top + buf)
+        if not in_fvg: return None
+
+        ema_bear    = e9[-1] < e21[-1]
+        rsi_ok      = rsi > 42
+        body_ok     = (cl[-1] <= o[-1])
+        not_too_far = (price > fvg_bottom - atr * 1.5)
+
+        confluence = sum([
+            True,
+            vol_ok,
+            ema_bear,
+            rsi_ok,
+            body_ok and not_too_far,
+        ])
+
+        if confluence < 4: return None
+
+        score = 90 + min(confluence - 1, 4)
+
+        return {
+            "direction":   "SELL",
+            "fvg_bottom":  fvg_bottom,
+            "fvg_top":     fvg_top,
+            "fvg_mid":     fvg_mid,
+            "swept_high":  swept_high,
+            "sweep_idx":   sweep_idx,
+            "score":       score,
+            "confluence":  min(confluence, 5),
+            "atr":         atr,
+            "vol_ok":      vol_ok,
+            "ema_align":   ema_bear,
+            "ob":          {"bottom": fvg_bottom, "top": fvg_top},
+        }
+
+    return None
+
+def analyse_fvg_sweep(symbol, klines):
+    """
+    Setup FVG + Liquidity Sweep M5.
+    Plus sélectif que le Breaker Block — score 93+ requis.
+    """
+    try:
+        if not klines or len(klines) < 25:
+            return None
+
+        o, h, l, cl, v = _parse_klines(klines)
+        atr = _atr(h, l, cl, 14)
+        rsi = _rsi(cl, 14)
+
+        btc = get_btc_direction()
+        btc_dir = btc["direction"]
+        if btc_dir == 0: return None
+
+        candidates = []
+        if btc_dir == 1  and (cl[-1] > _ema(cl, 21)[-1] or rsi < 55):
+            candidates.append("BUY")
+        if btc_dir == -1 and (cl[-1] < _ema(cl, 21)[-1] or rsi > 45):
+            candidates.append("SELL")
+        if not candidates: return None
+
+        fvg = None
+        for direction in candidates:
+            fvg = _find_fvg_sweep(o, h, l, cl, v, atr, direction)
+            if fvg: break
+
+        if not fvg: return None
+
+        direction = fvg["direction"]
+        score     = fvg["score"]
+        conf      = fvg["confluence"]
+
+        # Seuil élevé pour ce setup sélectif
+        if score < 93 or conf < 4: return None
+
+        prob = min(85.0 + conf * 2.0, 95.0)
+
+        # Bougies OHLC pour SL CRT
+        candles_ohlc = [{"high": h[i], "low": l[i]} for i in range(len(h))]
+
+        return {
+            "symbol":       symbol,
+            "side":         direction,
+            "setup":        "FVG_SWEEP_M5",
+            "score":        score,
+            "confluence":   conf,
+            "probability":  prob,
+            "ob":           fvg["ob"],
+            "atr":          atr,
+            "rsi":          round(rsi, 1),
+            "vol_spike":    fvg.get("vol_ok", False),
+            "fvg_bottom":   fvg["fvg_bottom"],
+            "fvg_top":      fvg["fvg_top"],
+            "closes":       cl,
+            "candles_ohlc": candles_ohlc,
+            "btc_strength": btc.get("strength", "NORMAL"),
+        }
+
+    except Exception as e:
+        logger.debug("analyse_fvg_sweep {}: {}".format(symbol, e))
+        return None
+
+def find_tp_for_rr(entry, sl, direction, rr_target=3.0):
     loss_gross = abs(sl - entry)
     fee_e  = entry * BINANCE_FEE_RATE
     fee_sl = sl    * BINANCE_FEE_RATE
@@ -1435,33 +2408,39 @@ def place_market(symbol, side, qty):
     return None
 
 def place_sl_binance(symbol, sl, close_side):
-    """3 stratégies : MARK_PRICE → CONTRACT_PRICE → SL logiciel"""
+    """3 stratégies : MARK_PRICE → CONTRACT_PRICE → SL logiciel
+    PATCH 4 : retry avec micro-ajustement ±1 tick si -2010/-4161
+    """
     info = symbol_info_cache.get(symbol, {})
     pp   = info.get("pricePrecision", 4)
+    tick = 10 ** (-pp)
 
-    for _ in range(3):
+    for attempt in range(4):
+        # Micro-décalage progressif si retry (±1, ±2, ±3 ticks selon la direction)
+        adj_sl = round(sl - tick * attempt if close_side == "SELL" else sl + tick * attempt, pp)
         r = request_binance("POST", "/fapi/v1/order", {
             "symbol": symbol, "side": close_side, "type": "STOP_MARKET",
-            "stopPrice": round(sl, pp), "closePosition": "true",
+            "stopPrice": adj_sl, "closePosition": "true",
             "workingType": "MARK_PRICE"})
         if r and r.get("orderId"):
             logger.info("🛡️  {} SL ✅ MARK_PRICE @ {:.{}f} id={}".format(
-                symbol, sl, pp, r["orderId"]))
+                symbol, adj_sl, pp, r["orderId"]))
             return {"sent": True, "order_id": r["orderId"], "method": "MARK_PRICE"}
         if r and r.get("_already_triggered"):
             return {"sent": False, "order_id": None, "triggered": True}
-        time.sleep(0.5)
+        time.sleep(0.4)
 
     logger.warning("⚠️  {} MARK_PRICE rejeté → CONTRACT_PRICE".format(symbol))
-    for _ in range(2):
+    for attempt in range(3):
+        adj_sl = round(sl - tick * attempt if close_side == "SELL" else sl + tick * attempt, pp)
         r = request_binance("POST", "/fapi/v1/order", {
             "symbol": symbol, "side": close_side, "type": "STOP_MARKET",
-            "stopPrice": round(sl, pp), "closePosition": "true",
+            "stopPrice": adj_sl, "closePosition": "true",
             "workingType": "CONTRACT_PRICE"})
         if r and r.get("orderId"):
-            logger.info("🛡️  {} SL ✅ CONTRACT_PRICE @ {:.{}f}".format(symbol, sl, pp))
+            logger.info("🛡️  {} SL ✅ CONTRACT_PRICE @ {:.{}f}".format(symbol, adj_sl, pp))
             return {"sent": True, "order_id": r["orderId"], "method": "CONTRACT_PRICE"}
-        time.sleep(0.5)
+        time.sleep(0.4)
 
     logger.error("🚨 {} SL Binance impossible → SL LOGICIEL @ {:.{}f}".format(symbol, sl, pp))
     send_telegram("🚨 <b>SL {} non posé Binance</b>\nSL logiciel actif @ {:.{}f}".format(
@@ -1469,16 +2448,20 @@ def place_sl_binance(symbol, sl, close_side):
     return {"sent": False, "order_id": None, "method": "SOFTWARE"}
 
 def place_tp_binance(symbol, tp, close_side):
+    """PATCH 4 : retry avec micro-ajustement ±tick si rejet prix"""
     info = symbol_info_cache.get(symbol, {})
     pp   = info.get("pricePrecision", 4)
+    tick = 10 ** (-pp)
+
     for wtype in ["MARK_PRICE", "CONTRACT_PRICE"]:
-        for _ in range(2):
+        for attempt in range(3):
+            adj_tp = round(tp + tick * attempt if close_side == "SELL" else tp - tick * attempt, pp)
             r = request_binance("POST", "/fapi/v1/order", {
                 "symbol": symbol, "side": close_side, "type": "TAKE_PROFIT_MARKET",
-                "stopPrice": round(tp, pp), "closePosition": "true",
+                "stopPrice": adj_tp, "closePosition": "true",
                 "workingType": wtype})
             if r and r.get("orderId"):
-                logger.info("🎯 {} TP ✅ {} @ {:.{}f}".format(symbol, wtype, tp, pp))
+                logger.info("🎯 {} TP ✅ {} @ {:.{}f}".format(symbol, wtype, adj_tp, pp))
                 return {"sent": True, "order_id": r["orderId"]}
             time.sleep(0.3)
     logger.warning("⚠️  {} TP non posé → trailing SL gère la sortie".format(symbol))
@@ -1677,20 +2660,39 @@ def open_position(signal):
         min_qty      = info.get("minQty", 0.001)
         min_notional = info.get("minNotional", MIN_NOTIONAL)
 
+        # PATCH 6 — Garde-fou risque global ouvert (max 4% balance)
+        with balance_lock:
+            cur_bal = account_balance
+        with trade_lock:
+            total_risk_open = sum(
+                abs(t["entry"] - t["sl"]) * t.get("qty", 0)
+                for t in trade_log.values()
+                if t.get("status") == "OPEN" and t.get("entry", 0) > 0 and t.get("sl", 0) > 0
+            )
+        max_open_risk = cur_bal * 0.04
+        if total_risk_open > max_open_risk and cur_bal > 0:
+            logger.warning("⚠️ PATCH6 Risque global ouvert ${:.4f} > max ${:.4f} → skip {}".format(
+                total_risk_open, max_open_risk, symbol))
+            return
+
         entry = get_price(symbol)
         if not entry: return
 
         lev        = get_leverage(score)
         max_sl_pct = get_max_sl_pct()
 
-        # ── Marge dynamique ──────────────────────────────────────
-        margin_pct, mm_detail = compute_dynamic_margin(
-            score, fond_score, btc_strength, side=side, symbol=symbol)
-        margin  = account_balance * margin_pct
+        # ── Mise Paroli (anti-martingale) ajustée par brain ─────────
         session = get_session()
+        margin, paroli_level = paroli_get_margin(symbol, setup, session)
+        with balance_lock:
+            cur_bal = account_balance
+        margin_pct = margin / cur_bal if cur_bal > 0 else 0.10
+        mm_detail  = "Paroli niv.{} ${:.2f} (streak={})".format(
+            paroli_level, margin, _paroli["win_streak"])
 
-        # ── SL structurel ATR M15 ────────────────────────────────
-        sl = get_sl(ob, entry, side, atr)
+        # ── SL ATR ou CRT ────────────────────────────────────────
+        candles_ohlc = signal.get("candles_ohlc")
+        sl, sl_method = get_sl(ob, entry, side, atr, candles_ohlc)
         if side == "BUY":
             sl_dist = max(entry - sl, entry * MIN_SL_PCT)
             sl_dist = min(sl_dist, entry * max_sl_pct)
@@ -1738,6 +2740,40 @@ def open_position(signal):
         set_isolated(symbol)
         actual_lev = set_leverage_sym(symbol, lev)
         if actual_lev != lev: lev = actual_lev
+
+        # v4.5 — Double vérification spread AVANT l'ordre market
+        # Le spread peut s'élargir entre le scan et l'ouverture
+        spread_now = get_mark_spread(symbol)
+        if abs(spread_now) > SPREAD_MAX_PCT:
+            logger.warning("⚠️ v4.5 {} spread {:.3f}% au moment de l'ordre → annulé".format(
+                symbol, spread_now))
+            send_telegram("⚠️ {} annulé — spread {:.3f}% trop large".format(symbol, spread_now))
+            return
+
+        # PATCH 5 — Vérification levier réel via positionRisk
+        # Si Binance a bridé le levier (meme coin pump/dump), on l'applique
+        # Si < 50% du demandé → skip pour éviter sizing erroné
+        try:
+            pos_check = request_binance("GET", "/fapi/v2/positionRisk",
+                                        {"symbol": symbol}, signed=True)
+            if pos_check:
+                for p in pos_check:
+                    if p.get("symbol") == symbol:
+                        real_lev = int(float(p.get("leverage", actual_lev)))
+                        if real_lev < actual_lev * 0.5:
+                            logger.warning("⚠️ PATCH5 {} levier réel {}x << demandé {}x → skip".format(
+                                symbol, real_lev, actual_lev))
+                            send_telegram("⚠️ {} levier réduit par Binance {}x → skip".format(
+                                symbol, real_lev))
+                            cleanup_orders(symbol)
+                            return
+                        if real_lev != actual_lev:
+                            logger.info("  {} levier ajusté {}x→{}x (Binance)".format(
+                                symbol, actual_lev, real_lev))
+                            lev = real_lev
+        except Exception as _pe:
+            logger.debug("PATCH5 positionRisk check: {}".format(_pe))
+
         cleanup_orders(symbol)
 
         order = place_market(symbol, side, qty)
@@ -1758,17 +2794,31 @@ def open_position(signal):
         if actual_entry <= 0:
             actual_entry = get_price(symbol) or entry
 
+        # PATCH 3 — Si actual_entry toujours 0 : position ouverte mais non trackée
+        # → fermeture market immédiate + alerte CRITICAL
+        if actual_entry <= 0:
+            logger.critical("🚨 PATCH3 {} actual_entry=0 après 5 tentatives — FERMETURE FORCÉE".format(symbol))
+            send_telegram(
+                "🚨 <b>CRITICAL {} — actual_entry=0</b>\n"
+                "Position ouverte mais non confirmée.\n"
+                "Fermeture market forcée.".format(symbol))
+            close_side_forced = "SELL" if side == "BUY" else "BUY"
+            place_market(symbol, close_side_forced, qty)
+            return
+
         # Recalcul SL/TP sur vrai entry
+        sl2, sl_method2 = get_sl(ob, actual_entry, side, atr, candles_ohlc)
         if side == "BUY":
-            sl_dist2 = max(actual_entry - sl, actual_entry * MIN_SL_PCT)
+            sl_dist2 = max(actual_entry - sl2, actual_entry * MIN_SL_PCT)
             sl_dist2 = min(sl_dist2, actual_entry * MAX_SL_PCT)
             sl = round(actual_entry - sl_dist2, pp)
             tp = round(find_tp_for_rr(actual_entry, sl, side, TP_RR), pp)
         else:
-            sl_dist2 = max(sl - actual_entry, actual_entry * MIN_SL_PCT)
+            sl_dist2 = max(sl2 - actual_entry, actual_entry * MIN_SL_PCT)
             sl_dist2 = min(sl_dist2, actual_entry * MAX_SL_PCT)
             sl = round(actual_entry + sl_dist2, pp)
             tp = round(find_tp_for_rr(actual_entry, sl, side, TP_RR), pp)
+        sl_method = sl_method2
 
         close_side = "SELL" if side == "BUY" else "BUY"
         sl_r = place_sl_binance(symbol, sl, close_side)
@@ -1797,13 +2847,13 @@ def open_position(signal):
         _, fg_det  = get_fg_margin_mult(side)
         _, dom_det = get_btc_dom_mult(symbol, side)
 
-        logger.info("✅ {} {} @ {:.{}f} | SL {:.{}f} | TP {:.{}f} | {}x | marge={:.0f}% | {}".format(
-            symbol, side, actual_entry, pp, sl, pp, tp, pp, lev,
+        logger.info("✅ {} {} @ {:.{}f} | SL [{} {:.{}f}] | TP {:.{}f} RR{} | {}x | marge={:.0f}% | {}".format(
+            symbol, side, actual_entry, pp, sl_method, sl, pp, tp, pp, TP_RR, lev,
             margin_pct*100, get_tier_label()))
 
         send_telegram(
             "🚀 <b>{} {}</b> @ {:.{}f}\n"
-            "SL: {:.{}f} ({:.3f}%) {}\n"
+            "SL: [{} {:.{}f}] ({:.3f}%) {}\n"
             "BE: {:.{}f} | TP: {:.{}f} (RR{})\n"
             "Setup: {} | Score:{} | Conf:{}/5\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -1818,6 +2868,7 @@ def open_position(signal):
                 symbol, side,
                 actual_entry, pp,
                 sl, pp, sl_dist2/actual_entry*100,
+                sl_method,
                 "✅Binance" if sl_r["sent"] else "⚠️logiciel",
                 be_price, pp, tp, pp, TP_RR,
                 setup, score, signal.get("confluence", 0),
@@ -1840,15 +2891,33 @@ def open_position(signal):
 
 def _on_closed(symbol, trade, is_win):
     global consec_losses, cooldown_until
-    side  = trade.get("side", "?")
-    setup = trade.get("setup", "?")
-    info  = symbol_info_cache.get(symbol, {})
-    pp    = info.get("pricePrecision", 4)
+    side     = trade.get("side", "?")
+    setup    = trade.get("setup", "?")
+    session  = trade.get("session", "UNKNOWN")
+    info     = symbol_info_cache.get(symbol, {})
+    pp       = info.get("pricePrecision", 4)
+
+    # Durée du trade pour détecter les SL trop rapides
+    opened_at      = trade.get("opened_at", time.time())
+    trade_duration = time.time() - opened_at
+
+    # ── Brain : apprentissage ─────────────────────────────────────
+    brain_record_trade(symbol, setup, session, side, is_win, trade_duration_s=trade_duration)
+
+    # ── Paroli : mise à jour niveau ───────────────────────────────
+    if is_win:
+        paroli_on_win()
+    else:
+        paroli_on_loss()
 
     if is_win:
         consec_losses = 0
         symbol_stats[symbol]["wins"] += 1
-        logger.info("✅ WIN {} {} {}".format(symbol, side, setup))
+        with _paroli_lock:
+            plvl   = _paroli["level"]
+            streak = _paroli["win_streak"]
+        logger.info("✅ WIN {} {} {} | Paroli niv.{} streak={}".format(
+            symbol, side, setup, plvl, streak))
         milestone_msg = ""
         if account_balance >= TARGET_BALANCE:
             milestone_msg = "\n🏆 <b>OBJECTIF ${:.0f} ATTEINT !</b>".format(TARGET_BALANCE)
@@ -1859,23 +2928,25 @@ def _on_closed(symbol, trade, is_win):
         send_telegram(
             "✅ <b>WIN {} {}</b>\n"
             "Setup: {} | Frais couverts\n"
+            "🎲 Paroli niv.{} → prochaine mise ${:.2f}\n"
             "Balance: ${:.4f} {}{}".format(
-                symbol, side, setup, account_balance, get_progress_bar(), milestone_msg))
+                symbol, side, setup,
+                plvl, PAROLI_BASE + plvl * PAROLI_STEP,
+                account_balance, get_progress_bar(), milestone_msg))
     else:
         consec_losses += 1
         symbol_stats[symbol]["losses"] += 1
-        logger.info("🔴 LOSS {} {} {} consec={}".format(symbol, side, setup, consec_losses))
+        logger.info("🔴 LOSS {} {} {} | Paroli reset → ${}".format(
+            symbol, side, setup, PAROLI_BASE))
         send_telegram(
             "🔴 <b>LOSS {} {}</b>\n"
             "Setup: {} | Consécutives: {}\n"
+            "🎲 Paroli reset → mise ${:.2f}\n"
             "Balance: ${:.4f} {}\n{}".format(
                 symbol, side, setup, consec_losses,
-                account_balance, get_tier_label(), get_progress_bar()))
-        if consec_losses >= CONSEC_LOSS_LIMIT:
-            cooldown_until = time.time() + CONSEC_COOLDOWN
-            logger.warning("⏸ Pause {}min".format(CONSEC_COOLDOWN // 60))
-            send_telegram("⏸ <b>Pause {}min</b>\nAprès {} pertes consécutives".format(
-                CONSEC_COOLDOWN // 60, consec_losses))
+                PAROLI_BASE, account_balance,
+                get_tier_label(), get_progress_bar()))
+        # NOTE v4.4 : pas de cooldown — Paroli gère le risque après perte
 
 def _on_closed_from_binance(symbol, trade):
     try:
@@ -1947,14 +3018,25 @@ def monitor_positions():
 #  SCAN PAR SYMBOLE
 # ═══════════════════════════════════════════════════════════════════
 
-def scan_symbol(symbol):
+def prefilter_symbol(symbol):
     """
-    Scan complet d'un symbole :
-    1. Analyse technique M15 (BB aligné BTC)
-    2. Fear & Greed Index
-    3. Corrélation BTC (co-mouvement 6 bougies)
-    4. Fondamentaux (Funding + OI spike + Spread)
-    Retourne le signal enrichi ou None.
+    Phase 0 — Pré-filtre ultra-léger (0 appel API) :
+    Utilise le cache bulk ticker pour éliminer les symboles sans intérêt.
+    Critères :
+      - Volume 24h ≥ VOL_MIN_FILTER (déjà filtré au chargement)
+      - Si on a les données bulk : cohérence direction/variation
+    Retourne True si le symbole mérite un scan technique.
+    """
+    bulk = get_bulk_ticker(symbol)
+    if not bulk: return True   # Pas de données → inclus par précaution
+    vol = bulk["vol"]
+    if vol < VOL_MIN_FILTER: return False
+    return True
+
+def scan_symbol_tech(symbol):
+    """
+    Phase 1 — Scan TECHNIQUE uniquement (weight ≈ 1 appel klines).
+    Vérifie aussi les filtres brain (blacklist, side skip, score override).
     """
     try:
         with trade_lock:
@@ -1964,46 +3046,109 @@ def scan_symbol(symbol):
         if time.time() - signal_last_at.get(symbol, 0) < SIGNAL_COOLDOWN:
             return None
 
+        # Filtre brain : symbole blacklisté
+        if brain_is_blacklisted(symbol):
+            return None
+
+        # v4.5 — Filtre liquidité : spread mark/index
+        # Si spread > SPREAD_MAX_PCT → symbole illiquide → skip
+        # (0 poids API supplémentaire : get_mark_spread utilise premiumIndex déjà caché)
+        spread = get_mark_spread(symbol)
+        if abs(spread) > SPREAD_MAX_PCT:
+            logger.debug("  {} spread {:.3f}% > max {:.2f}% → skip illiquide".format(
+                symbol, spread, SPREAD_MAX_PCT))
+            return None
+
+        # v4.5 — Filtre prix minimum
+        cur_price = get_price(symbol)
+        if cur_price and cur_price < PRICE_MIN_USD:
+            logger.debug("  {} prix ${:.6f} < min ${} → skip micro-cap".format(
+                symbol, cur_price, PRICE_MIN_USD))
+            return None
+
         klines = get_klines(symbol, TIMEFRAME, LIMIT_CANDLES)
         if not klines or len(klines) < 30:
             return None
 
-        signal = analyse_m15(symbol, klines)
+        # Setup 1 : Breaker Block
+        signal_bb  = analyse_m5(symbol, klines)
+        # Setup 2 : FVG Sweep (plus sélectif)
+        signal_fvg = analyse_fvg_sweep(symbol, klines)
+
+        signal = None
+        if signal_bb and signal_fvg:
+            signal = signal_fvg if signal_fvg["score"] >= signal_bb["score"] else signal_bb
+        elif signal_fvg:
+            signal = signal_fvg
+        elif signal_bb:
+            signal = signal_bb
+
         if not signal: return None
 
-        side        = signal["side"]
-        sym_closes  = signal["closes"]
-
-        # Filtre Fear & Greed
-        fg_ok, fg_detail = check_fear_greed(side)
-        if not fg_ok:
-            logger.debug("  {} {} refusé: {}".format(symbol, side, fg_detail))
+        # Filtre brain : côté (BUY/SELL) temporairement skippé
+        if brain_is_side_skipped(signal["side"]):
+            logger.debug("  {} {} skippé par brain (mauvais winrate côté)".format(
+                symbol, signal["side"]))
             return None
-        signal["fg_detail"] = fg_detail
 
-        # Corrélation + co-mouvement BTC
-        corr_ok, corr_reason = check_btc_correlation(symbol, side, sym_closes)
-        if not corr_ok:
-            logger.debug("  {} {} refusé: {}".format(symbol, side, corr_reason))
+        # Filtre brain : score minimum override par setup
+        min_score_required = brain_get_setup_min_score(signal["setup"])
+        if signal["score"] < min_score_required:
+            logger.debug("  {} {} score={} < brain_min={} → rejeté".format(
+                symbol, signal["setup"], signal["score"], min_score_required))
             return None
-        signal["btc_corr"] = corr_reason
-
-        # Fondamentaux (avec OI spike)
-        fond_score, fond_ok, fond_detail = check_fondamentaux(symbol, side)
-        if not fond_ok:
-            logger.debug("  {} fond insuffisant ({}/100): {}".format(symbol, fond_score, fond_detail))
-            return None
-        signal["fond_score"]  = fond_score
-        signal["fond_detail"] = fond_detail
-
-        logger.debug("  {} ✅ score={} conf={}/5 fond={}/100 {}".format(
-            symbol, signal["score"], signal["confluence"], fond_score, side))
 
         return signal
 
     except Exception as e:
-        logger.debug("scan_symbol {}: {}".format(symbol, e))
+        logger.debug("scan_tech {}: {}".format(symbol, e))
         return None
+
+def scan_symbol_fond(signal):
+    """
+    Phase 2 — Scan FONDAMENTAL sur les candidats techniques.
+    Weight estimé : ≈ 3-4 appels (funding, OI, liquidations)
+    Uniquement sur les signaux qui ont passé le filtre technique.
+    Retourne le signal enrichi ou None.
+    """
+    symbol = signal["symbol"]
+    side   = signal["side"]
+    sym_closes = signal["closes"]
+    try:
+        # Filtre Fear & Greed (0 appel API si cache valide)
+        fg_ok, fg_detail = check_fear_greed(side)
+        if not fg_ok: return None
+        signal["fg_detail"] = fg_detail
+
+        # Corrélation BTC (0 appel API si cache valide)
+        corr_ok, corr_reason = check_btc_correlation(symbol, side, sym_closes)
+        if not corr_ok: return None
+        signal["btc_corr"] = corr_reason
+
+        # Fondamentaux — appels API réels ici
+        fond_score, fond_ok, fond_detail = check_fondamentaux(symbol, side)
+        if not fond_ok:
+            logger.debug("  {} fond {}/100 < {} → rejeté: {}".format(
+                symbol, fond_score, FOND_MIN_SCORE, fond_detail))
+            return None
+        signal["fond_score"]  = fond_score
+        signal["fond_detail"] = fond_detail
+
+        logger.info("  ✅ [{}] {} {} | tech={} conf={}/5 fond={}/100".format(
+            signal["setup"], symbol, side,
+            signal["score"], signal["confluence"], fond_score))
+
+        return signal
+
+    except Exception as e:
+        logger.debug("scan_fond {}: {}".format(symbol, e))
+        return None
+
+# Garde la fonction scan_symbol pour compatibilité
+def scan_symbol(symbol):
+    sig = scan_symbol_tech(symbol)
+    if not sig: return None
+    return scan_symbol_fond(sig)
 
 # ═══════════════════════════════════════════════════════════════════
 #  RECOVER POSITIONS EXISTANTES
@@ -2103,28 +3248,58 @@ def print_signal_console(sig, rank):
 # ═══════════════════════════════════════════════════════════════════
 
 def scanner_loop():
-    logger.info("🔍 Scanner M15 v2.0 — BB BTC-Aligné | RR4 | MM Dynamique")
+    """
+    Scan en 2 phases avec anti-saturation API :
+
+    PHASE 1 — TECHNIQUE (cheap, weight ≈ 1/symbole)
+      → Batches de BATCH_SIZE symboles en parallèle (MAX_WORKERS threads)
+      → Throttle adaptatif : si weight > 50% → augmente pause entre batches
+      → Collecte tous les signaux tech (max TECH_PHASE_MAX_SIGNALS candidats)
+
+    PHASE 2 — FONDAMENTALE (cher, weight ≈ 3-4/symbole)
+      → Traitée séquentiellement sur les candidats triés par score tech
+      → S'arrête dès qu'un signal complet (tech+fond) est trouvé
+      → Évite de faire des appels lourds sur des symboles qui seront rejetés
+
+    AVANTAGE :
+      Sans optimisation : 350 × 5 appels = 1750 appels/cycle
+      Avec 2 phases    : 350 × 1 + 20 × 4 = 430 appels/cycle (75% de réduction)
+    """
+    logger.info("🔍 Scanner M5 v3.0 — Scan complet {} symboles | 2 phases anti-saturation".format(
+        len(symbols_list)))
     time.sleep(5)
     count = 0
+
     while True:
         try:
             if _bot_stop:
                 time.sleep(10); continue
 
             count += 1
-            # Sync balance toutes les 2 bougies M15 (~30min)
+
+            # Sync toutes les 30min
             if count % max(1, (1800 // max(SCAN_INTERVAL, 1))) == 0:
                 sync_binance_time()
-                get_account_balance()
+                get_account_balance(force=True)
                 btc = get_btc_direction()
                 fg  = get_fear_greed()
-                logger.info("BTC: {} | Balance: ${:.4f} | F&G:{} {} | {}".format(
-                    btc["label"], account_balance,
-                    fg["value"], fg["label"], get_tier_label()))
+                logger.info("🔄 Sync | BTC: {} | Balance: ${:.4f} | F&G:{} | {}".format(
+                    btc["label"], account_balance, fg["value"], get_tier_label()))
 
-            # Reload symboles toutes les 4 bougies M15 (~1h)
+            # Reload symboles + bulk ticker toutes les heures
             if count % max(1, (3600 // max(SCAN_INTERVAL, 1))) == 0:
                 load_top_symbols()
+
+            # PATCH 7 — Nettoyage klines_cache toutes les 30min (anti-fuite mémoire)
+            if count % max(1, (1800 // max(SCAN_INTERVAL, 1))) == 0:
+                cutoff = time.time() - 300   # On garde seulement les < 5min
+                keys_before = len(klines_cache)
+                stale = [k for k, (_, ts) in list(klines_cache.items()) if ts < cutoff]
+                for k in stale:
+                    klines_cache.pop(k, None)
+                if stale:
+                    logger.debug("🧹 klines_cache: {} → {} entrées".format(
+                        keys_before, len(klines_cache)))
 
             if account_balance < HARD_FLOOR:
                 logger.warning("🛑 Hard floor ${} | ${:.4f}".format(HARD_FLOOR, account_balance))
@@ -2133,7 +3308,7 @@ def scanner_loop():
             if time.time() < cooldown_until:
                 r = int((cooldown_until - time.time()) / 60)
                 if count % 2 == 0:
-                    logger.info("⏸ Cooldown {}min".format(r))
+                    logger.info("⏸ Cooldown {}min | weight={}".format(r, get_current_weight()))
                 time.sleep(SCAN_INTERVAL); continue
 
             with trade_lock:
@@ -2141,53 +3316,118 @@ def scanner_loop():
             if n_open >= MAX_POSITIONS:
                 time.sleep(SCAN_INTERVAL); continue
 
-            # Filtre session OFF → pause (liquidité trop faible)
             session = get_session()
             if session == "OFF":
-                logger.info("🌙 Session OFF ({} UTC) — pause scan".format(
-                    datetime.now(timezone.utc).hour))
+                logger.info("🌙 Session OFF — pause scan")
                 time.sleep(SCAN_INTERVAL); continue
 
             btc = get_btc_direction()
-            # BTC neutre → scan annulé (direction obligatoire)
             if btc["direction"] == 0:
-                logger.info("⚪ BTC M15 neutre — scan annulé (direction requise)")
+                logger.info("⚪ BTC M5 neutre — scan annulé")
                 time.sleep(SCAN_INTERVAL); continue
 
-            logger.info("🔍 Scan {} symboles | {} | {} | F&G:{} | {}".format(
-                len(symbols_list), btc["label"], session,
-                _fg_cache.get("value","?"), get_tier_label()))
+            # Refresh bulk ticker si expiré
+            with _bulk_ticker_lock:
+                ticker_age = time.time() - _bulk_ticker_ts
+            if ticker_age > BULK_TICKER_TTL:
+                load_top_symbols()
 
-            # Scan parallèle — timeout par future, pas global
-            signals  = []
-            sig_lock = threading.Lock()
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-                futures = {pool.submit(scan_symbol, sym): sym for sym in symbols_list}
-                for fut in as_completed(futures, timeout=None):
-                    try:
-                        sig = fut.result(timeout=15)
-                        if sig:
-                            with sig_lock:
-                                signals.append(sig)
-                    except Exception:
-                        pass
+            # Pré-filtre léger (0 appel API)
+            candidates = [s for s in symbols_list if prefilter_symbol(s)]
 
-            if not signals:
-                logger.info("  Aucun signal qualifié sur {} symboles".format(len(symbols_list)))
+            logger.info("🔍 Phase1/Tech | {} candid → {} après pré-filtre | {} | F&G:{} | weight={}".format(
+                len(symbols_list), len(candidates), btc["label"],
+                _fg_cache.get("value","?"), get_current_weight()))
+
+            # ══════════════════════════════════════════════════════
+            # PHASE 1 : SCAN TECHNIQUE EN BATCHES ADAPTATIFS
+            # ══════════════════════════════════════════════════════
+            tech_signals = []
+            batches      = [candidates[i:i+BATCH_SIZE]
+                            for i in range(0, len(candidates), BATCH_SIZE)]
+
+            for batch_idx, batch in enumerate(batches):
+                # Vérifier weight avant chaque batch
+                w_now      = get_current_weight()
+                w_limit    = MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN
+                w_pct      = w_now / w_limit if w_limit > 0 else 0
+
+                # Throttle adaptatif basé sur le weight restant
+                # PATCH 8 : formule linéaire ×1 à ×4 selon saturation
+                if w_pct >= 1.0:
+                    sleep_t = 8.0
+                    logger.warning("🛑 Weight {}/{} — pause {}s".format(int(w_now), int(w_limit), sleep_t))
+                    time.sleep(sleep_t)
+                else:
+                    sleep_t = BATCH_SLEEP_BASE * (1 + w_pct * 3)   # ×1.0 → ×4.0 linéaire
+                    time.sleep(sleep_t)
+
+                # Scan parallèle du batch
+                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+                    futures = {pool.submit(scan_symbol_tech, sym): sym for sym in batch}
+                    for fut in as_completed(futures, timeout=None):
+                        try:
+                            sig = fut.result(timeout=12)
+                            if sig:
+                                tech_signals.append(sig)
+                        except Exception:
+                            pass
+
+                # Early exit si on a assez de candidats pour la phase 2
+                if len(tech_signals) >= TECH_PHASE_MAX_SIGNALS:
+                    logger.info("  Phase1 early exit — {} signaux tech ({}/{} batches)".format(
+                        len(tech_signals), batch_idx+1, len(batches)))
+                    break
+
+            if not tech_signals:
+                logger.info("  Aucun signal technique sur {} symboles".format(len(candidates)))
                 time.sleep(SCAN_INTERVAL); continue
 
-            # Tri composite : score × probabilité × confluence × fond
-            signals.sort(
+            # Tri des candidats tech par score (meilleurs en premier)
+            tech_signals.sort(
+                key=lambda s: s["score"] * s["confluence"] * s.get("probability", 90),
+                reverse=True)
+
+            logger.info("🔎 Phase2/Fond | {} candidats tech → analyse fondamentale | weight={}".format(
+                len(tech_signals), get_current_weight()))
+
+            # ══════════════════════════════════════════════════════
+            # PHASE 2 : ANALYSE FONDAMENTALE (séquentielle, du meilleur au moins bon)
+            # ══════════════════════════════════════════════════════
+            final_signals = []
+            for sig in tech_signals:
+                # Vérifier le weight avant chaque analyse fond (4 appels ≈ weight 23)
+                w_now = get_current_weight()
+                if w_now > MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN * 0.95:
+                    logger.warning("  Phase2 stoppée — weight {}/{}".format(
+                        int(w_now), int(MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN)))
+                    break
+
+                enriched = scan_symbol_fond(sig)
+                if enriched:
+                    final_signals.append(enriched)
+                    # Pause courte entre analyses fond pour ne pas burster
+                    time.sleep(0.4)
+
+            if not final_signals:
+                logger.info("  Aucun signal tech+fond sur {} candidats".format(len(tech_signals)))
+                time.sleep(SCAN_INTERVAL); continue
+
+            # Score composite final : tech × prob × confluence × fond
+            final_signals.sort(
                 key=lambda s: (s["score"] * s["probability"] * s["confluence"]
                                * (1 + s.get("fond_score", 0) / 60)),
                 reverse=True)
 
-            logger.info("✨ {} signaux qualifiés — meilleur: {} {} score={} conf={}/5 fond={}/100".format(
-                len(signals), signals[0]["symbol"], signals[0]["side"],
-                signals[0]["score"], signals[0]["confluence"],
-                signals[0].get("fond_score", 0)))
+            logger.info("✨ {} signaux VALIDÉS (tech+fond) | meilleur: {} {} "
+                        "score={} conf={}/5 fond={}/100 | weight={}".format(
+                len(final_signals),
+                final_signals[0]["symbol"], final_signals[0]["side"],
+                final_signals[0]["score"], final_signals[0]["confluence"],
+                final_signals[0].get("fond_score", 0),
+                get_current_weight()))
 
-            best = signals[0]
+            best = final_signals[0]
             sym  = best["symbol"]
 
             with trade_lock:
@@ -2204,10 +3444,16 @@ def scanner_loop():
 def monitor_loop():
     logger.info("📡 Monitor SL suiveur toutes les {}s".format(MONITOR_INTERVAL))
     time.sleep(10)
+    _last_balance_refresh = 0.0
     while True:
         try:
             monitor_positions()
             check_drawdown()
+            # PATCH 2 — Refresh balance toutes les 60s dans monitor
+            now = time.time()
+            if now - _last_balance_refresh > 60:
+                get_account_balance(force=True)
+                _last_balance_refresh = now
         except Exception as e:
             logger.debug("monitor_loop: {}".format(e))
         time.sleep(MONITOR_INTERVAL)
@@ -2227,12 +3473,19 @@ def dashboard_loop():
             sess = get_session()
             mmult = get_session_mult()
             logger.info("═" * 65)
-            logger.info("SCANNER M15 v2.1 | ${:.4f} | {} | {}".format(
+            logger.info("SCANNER M5 v4.5 | ${:.4f} | {} | {}".format(
                 account_balance, get_tier_label(), get_progress_bar()))
             logger.info("Pos:{}/{} | W:{} L:{} WR:{:.1f}% | {} | {}".format(
                 n_open, MAX_POSITIONS, tw, tl, wr, btc["label"], btc.get("strength","?")))
-            logger.info("Session:{} (×{}) | F&G:{} {} | DOM BTC:{}".format(
-                sess, mmult, fg["value"], fg["label"], dom["label"]))
+            logger.info("Session:{} (×{}) | F&G:{} {} | DOM BTC:{} | Weight:{}/{}".format(
+                sess, mmult, fg["value"], fg["label"], dom["label"],
+                get_current_weight(), int(MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN)))
+            logger.info("🧠 {}".format(brain_summary_log()))
+            with _paroli_lock:
+                plvl   = _paroli["level"]
+                streak = _paroli["win_streak"]
+            logger.info("🎲 Paroli: niv.{}/4 | mise ${:.2f} | streak={}W".format(
+                plvl, PAROLI_BASE + plvl * PAROLI_STEP, streak))
             logger.info("═" * 65)
 
             if n_open > 0:
@@ -2271,59 +3524,66 @@ def dashboard_loop():
 
 def main():
     logger.info("╔" + "═" * 63 + "╗")
-    logger.info("║  SCANNER M15 v2.1 — BB BTC-ALIGNÉ | RR4 | MM DYNAMIQUE  ║")
-    logger.info("║  Session Filter | Fear&Greed | OI Spike | Top 80 Cryptos ║")
+    logger.info("║  SCANNER M5 v4.5 — PAROLI | RR3 | 4 POSITIONS          ║")
+    logger.info("║  BB+FVG | CRT/ATR | BRAIN ADAPTATIF | SCAN COMPLET      ║")
     logger.info("╚" + "═" * 63 + "╝")
     logger.warning("🔥 LIVE TRADING 🔥")
 
-    logger.info("✅ SETUP         : Breaker Block M15 OBLIGATOIREMENT aligné BTC")
-    logger.info("✅ SCAN          : Top {} cryptos par volume".format(TOP_N_SYMBOLS))
-    logger.info("✅ MM DYNAMIQUE  : {:.0f}%→{:.0f}% selon score/session/BTC/fond".format(
-        MARGIN_MIN*100, MARGIN_MAX*100))
-    logger.info("✅ SESSION       : Asia×0.6 | London×1.0 | NY×1.2 | OFF=pause")
-    logger.info("✅ FEAR & GREED  : Extrême → marge ×0.5 (plus de blocage)")
-    logger.info("✅ FONDAMENTAUX  : Fund+OI+Spread+Vol24h+Liqd+DomBTC (/100)")
-    logger.info("✅ SL M15        : ATR×{} ({:.0f}%→{:.0f}%)".format(
-        ATR_SL_MULT, MIN_SL_PCT*100, MAX_SL_PCT*100))
-    logger.info("✅ RR            : {}× net après frais 0.12%".format(TP_RR))
-    logger.info("✅ SL SUIVEUR    : Bidir dès RR{} | Frais+$0.01 garanti".format(TRAIL_START_RR))
+    logger.info("  ✅ RR             : {}× (gain = {}× le risque net)".format(TP_RR, TP_RR))
+    logger.info("  ✅ MARGE          : FIXE ${:.2f} par trade (brain ajustable)".format(FIXED_MARGIN_USD))
+    logger.info("  ✅ BRAIN          : Apprentissage adaptatif — blacklist/WR/ATR/session")
+    logger.info("  ✅ SCAN           : TOUS les cryptos USDT (vol > ${:.0f}k)".format(VOL_MIN_FILTER/1000))
+    logger.info("  ✅ SETUP 1        : Breaker Block M5 BTC-aligné (score 90+)")
+    logger.info("  ✅ SETUP 2        : FVG Liquidity Sweep (score 93+)")
+    logger.info("  ✅ DOUBLE CONF    : TECH ≥ 90 + FOND ≥ {}/100".format(FOND_MIN_SCORE))
+    logger.info("  ✅ SL             : CRT prioritaire / ATR×{} fallback".format(ATR_SL_MULT))
+    logger.info("  ✅ ANTI-API       : 2 phases | weight ≤ {}/2400".format(
+        int(MAX_API_WEIGHT_PER_MIN * WEIGHT_SAFETY_MARGIN)))
 
     start_health_server()
     sync_binance_time()
+    brain_load()   # ← Charge la mémoire du brain
+    paroli_load()  # ← Charge le niveau Paroli
     load_top_symbols()
-    get_account_balance()
-    drawdown_state["ref_balance"] = account_balance
+    get_account_balance(force=True)
+    with balance_lock:
+        drawdown_state["ref_balance"] = account_balance
 
     btc = get_btc_direction()
     fg  = get_fear_greed()
     sess = get_session()
 
     logger.info("💰 Balance: ${:.4f} | Palier: {}".format(account_balance, get_tier_label()))
-    logger.info("📊 BTC M15: {} | Force: {}".format(btc["label"], btc.get("strength","?")))
+    logger.info("📊 BTC M5: {} | Force: {}".format(btc["label"], btc.get("strength","?")))
     logger.info("😱 Fear & Greed: {} ({})".format(fg["value"], fg["label"]))
     logger.info("🕐 Session: {} (mult ×{})".format(sess, get_session_mult()))
 
     send_telegram(
-        "🚀 <b>SCANNER M15 v2.1 DÉMARRÉ</b>\n\n"
+        "🚀 <b>SCANNER M5 v4.5 DÉMARRÉ</b>\n\n"
         "💰 Balance: <b>${:.4f}</b> | {}\n"
         "🎯 Objectif: ${:.0f} | {}\n\n"
-        "📊 BTC M15: {} | Force: {}\n"
-        "😱 Fear & Greed: {} ({}) \n"
+        "📊 BTC M5: {} | Force: {}\n"
+        "😱 Fear & Greed: {} ({})\n"
         "🕐 Session: {} (×{})\n\n"
         "⚙️ CONFIG :\n"
-        "  BB M15 BTC-aligné obligatoire\n"
-        "  Top {} cryptos | OI Spike filtré\n"
-        "  MM: {:.0f}%→{:.0f}% dynamique\n"
-        "  SL ATR×{} | RR{}× | SL suiveur bidir\n"
-        "  Sessions: Asia×0.6 London×1.0 NY×1.2".format(
+        "  🎲 Paroli: niv.{} | mise actuelle <b>${:.2f}</b>\n"
+        "  📈 Niveaux: $0.60→$0.75→$0.90→$1.05→$1.20\n"
+        "  🎯 RR: <b>{}×</b> | 4 positions max\n"
+        "  🧠 Brain: {} trades mémorisés\n"
+        "  🌐 Scan TOUS cryptos (vol > ${:.0f}k)\n"
+        "  🔵 BB (90+) + 🟣 FVG Sweep (93+)\n"
+        "  🛡️ SL CRT/ATR×{:.2f} | TECH+FOND ≥ {}".format(
             account_balance, get_tier_label(),
             TARGET_BALANCE, get_progress_bar(),
             btc["label"], btc.get("strength","?"),
             fg["value"], fg["label"],
             sess, get_session_mult(),
-            TOP_N_SYMBOLS,
-            MARGIN_MIN*100, MARGIN_MAX*100,
-            ATR_SL_MULT, TP_RR
+            _paroli["level"], PAROLI_BASE + _paroli["level"] * PAROLI_STEP,
+            TP_RR,
+            _brain.get("total_trades", 0),
+            VOL_MIN_FILTER / 1000,
+            _brain.get("atr_mult", ATR_SL_MULT),
+            FOND_MIN_SCORE
         )
     )
 
@@ -2333,7 +3593,7 @@ def main():
     threading.Thread(target=monitor_loop,   daemon=True).start()
     threading.Thread(target=dashboard_loop, daemon=True).start()
 
-    logger.info("✅ SCANNER M15 v2.0 ONLINE 🚀")
+    logger.info("✅ SCANNER M5 v4.5 ONLINE 🚀")
     try:
         while True:
             time.sleep(60)
