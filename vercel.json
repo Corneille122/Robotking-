@@ -1,10 +1,6 @@
 {
-  "version": 2,
-  "builds": [
-    { "src": "alphabot_v18.html", "use": "@vercel/static" }
-  ],
-  "routes": [
-    { "src": "/", "dest": "/alphabot_v18.html" },
-    { "src": "/(.*)", "dest": "/alphabot_v18.html" }
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/", "destination": "/index.html" }
   ]
 }
