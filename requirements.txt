@@ -9,3 +9,7 @@ flask
 requests
 flask
 gunicorn
+python-binance
+pandas
+numpy
+flask
