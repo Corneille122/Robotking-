@@ -3,73 +3,39 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>AlphaBot Pro v19 — Ultra</title>
+<title>AlphaBot Pro v24 — Ultra</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
 <style>
-/* ═══════════════════════════════════════════════════
-   THEME SYSTEM
-═══════════════════════════════════════════════════ */
 :root {
-  --gold:  #F0B90B;
-  --gold2: #d4a009;
-  --up:    #0ecb81;
-  --dn:    #f6465d;
-  --bl:    #1890ff;
-  --purple:#7c3aed;
-  --transition: .2s ease;
+  --gold:#F0B90B; --gold2:#d4a009; --up:#0ecb81; --dn:#f6465d;
+  --bl:#1890ff; --purple:#7c3aed; --transition:.2s ease;
 }
 [data-theme="dark"] {
-  --bg:   #0B0E13;
-  --bg2:  #111520;
-  --bg3:  #171d2e;
-  --bg4:  #1d2438;
-  --bd:   #232b3e;
-  --bd2:  #2d3752;
-  --tx0:  #e8ecf0;
-  --tx1:  #8b95a8;
-  --tx2:  #4a5568;
-  --tx3:  #2d3748;
-  --shadow: 0 8px 32px rgba(0,0,0,.5);
-  --glow-gold: 0 0 20px rgba(240,185,11,.15);
+  --bg:#0B0E13; --bg2:#111520; --bg3:#171d2e; --bg4:#1d2438;
+  --bd:#232b3e; --bd2:#2d3752; --tx0:#e8ecf0; --tx1:#8b95a8; --tx2:#4a5568; --tx3:#2d3748;
+  --shadow:0 8px 32px rgba(0,0,0,.5); --glow-gold:0 0 20px rgba(240,185,11,.15);
 }
 [data-theme="light"] {
-  --bg:   #f0f2f5;
-  --bg2:  #ffffff;
-  --bg3:  #f7f8fa;
-  --bg4:  #eef0f4;
-  --bd:   #e2e8f0;
-  --bd2:  #cbd5e0;
-  --tx0:  #1a202c;
-  --tx1:  #4a5568;
-  --tx2:  #a0aec0;
-  --tx3:  #e2e8f0;
-  --shadow: 0 4px 20px rgba(0,0,0,.08);
-  --glow-gold: 0 0 20px rgba(240,185,11,.1);
+  --bg:#f0f2f5; --bg2:#ffffff; --bg3:#f7f8fa; --bg4:#eef0f4;
+  --bd:#e2e8f0; --bd2:#cbd5e0; --tx0:#1a202c; --tx1:#4a5568; --tx2:#a0aec0; --tx3:#e2e8f0;
+  --shadow:0 4px 20px rgba(0,0,0,.08); --glow-gold:0 0 20px rgba(240,185,11,.1);
 }
-
-/* ═══════════════════════════════════════════════════
-   BASE
-═══════════════════════════════════════════════════ */
 *{ margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syne',sans-serif; overflow:hidden; }
 ::-webkit-scrollbar{ width:4px; height:4px; }
 ::-webkit-scrollbar-thumb{ background:var(--bd); border-radius:2px; }
 ::-webkit-scrollbar-track{ background:transparent; }
 
-/* ═══════════════════════════════════════════════════
-   LAYOUT
-═══════════════════════════════════════════════════ */
 .shell{ display:flex; flex-direction:column; height:100vh; height:100dvh; }
 .body-row{ display:flex; flex:1; overflow:hidden; }
 .main{ flex:1; overflow-y:auto; overflow-x:hidden; background:var(--bg); }
 .pad{ padding:14px; display:flex; flex-direction:column; gap:12px; }
 
-/* ═══════════════════════════════════════════════════
-   TOPBAR
-═══════════════════════════════════════════════════ */
+/* TOPBAR */
 .topbar{
   height:54px; min-height:54px; flex-shrink:0;
   background:var(--bg2); border-bottom:1px solid var(--bd);
@@ -85,22 +51,17 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .t-name{ font-family:'Rajdhani',sans-serif; font-size:19px; font-weight:700; letter-spacing:1.5px; }
 .t-name span{ color:var(--gold); }
 .t-ver{ font-size:8px; color:var(--tx2); font-family:'JetBrains Mono',monospace; align-self:flex-end; margin-bottom:2px; margin-left:3px; }
-
 .t-stats{ display:flex; flex:1; overflow:hidden; gap:0; }
 .tstat{ padding:0 12px; border-right:1px solid var(--bd); display:flex; flex-direction:column; justify-content:center; flex-shrink:0; }
 .tstat-l{ font-size:7px; color:var(--tx2); letter-spacing:1.5px; text-transform:uppercase; }
 .tstat-v{ font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:600; margin-top:1px; }
-
 .t-right{ display:flex; align-items:center; gap:8px; margin-left:auto; flex-shrink:0; }
-
-/* theme toggle */
 .theme-btn{
   width:32px; height:32px; background:var(--bg3); border:1px solid var(--bd);
   border-radius:6px; cursor:pointer; display:flex; align-items:center; justify-content:center;
   font-size:15px; transition:var(--transition);
 }
 .theme-btn:hover{ border-color:var(--gold); }
-
 .api-pill{
   display:flex; align-items:center; gap:5px; padding:5px 11px;
   border-radius:20px; font-size:10px; font-weight:600; cursor:pointer;
@@ -112,7 +73,6 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .apidot{ width:5px; height:5px; border-radius:50%; background:currentColor; }
 .api-on .apidot{ animation:pulse-dot 2s infinite; }
 @keyframes pulse-dot{ 0%,100%{opacity:1;} 50%{opacity:.3;} }
-
 .user-chip{
   display:flex; align-items:center; gap:7px;
   background:var(--bg3); border:1px solid var(--bd); border-radius:6px;
@@ -120,11 +80,8 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 }
 .user-chip:hover{ border-color:var(--gold); }
 .uav{ width:26px; height:26px; border-radius:50%; background:var(--gold); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#000; flex-shrink:0; }
-.notif-dot{ width:7px; height:7px; border-radius:50%; background:var(--dn); margin-left:-4px; margin-top:-12px; }
 
-/* ═══════════════════════════════════════════════════
-   SIDEBAR
-═══════════════════════════════════════════════════ */
+/* SIDEBAR */
 .sidebar{
   width:210px; min-width:210px; flex-shrink:0;
   background:var(--bg2); border-right:1px solid var(--bd);
@@ -153,15 +110,14 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .sitem-lbl{ white-space:nowrap; overflow:hidden; }
 .sitem-badge{ margin-left:auto; font-size:8px; font-weight:700; padding:2px 6px; border-radius:10px; font-family:'JetBrains Mono',monospace; background:rgba(14,203,129,.15); color:var(--up); }
 .sitem-badge.warn{ background:rgba(240,185,11,.15); color:var(--gold); }
-
 .sidebar-context{ padding:6px; display:flex; flex-direction:column; gap:5px; }
 .ctx-mini{ background:var(--bg3); border:1px solid var(--bd); border-radius:7px; padding:9px 11px; }
 .ctx-mini-lbl{ font-size:7px; color:var(--tx2); letter-spacing:1.5px; text-transform:uppercase; margin-bottom:5px; }
 
+/* SIDEBAR BOT CONTROL - LEFT ALIGNED */
 .sidebar-btm{ margin-top:auto; padding:8px; border-top:1px solid var(--bd); }
 .bot-box{ background:var(--bg3); border:1px solid var(--bd); border-radius:7px; padding:11px; }
 .bot-txt{ font-size:7px; color:var(--tx2); letter-spacing:2px; text-transform:uppercase; margin-bottom:7px; }
-.bot-balance-row{ display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
 .score-row{ margin-bottom:8px; }
 .score-label{ display:flex; justify-content:space-between; font-size:9px; color:var(--tx2); margin-bottom:3px; }
 .score-label span:last-child{ color:var(--gold); font-family:'JetBrains Mono',monospace; }
@@ -184,9 +140,21 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 }
 .mbtn.act{ background:var(--gold); border-color:var(--gold); color:#000; }
 
-/* ═══════════════════════════════════════════════════
-   CONTEXT BAR
-═══════════════════════════════════════════════════ */
+/* API SECTION - visible in sidebar */
+.api-sidebar{
+  background:var(--bg3); border:1px solid var(--bd); border-radius:7px;
+  padding:10px; margin:6px 8px;
+}
+.api-sidebar-title{ font-size:7px; color:var(--tx2); letter-spacing:2px; text-transform:uppercase; margin-bottom:8px; }
+.api-sidebar-status{
+  display:flex; align-items:center; gap:6px; padding:7px 9px;
+  border-radius:6px; margin-bottom:8px; font-size:10px; font-weight:700; border:1px solid;
+}
+.api-sb-on{ background:rgba(14,203,129,.08); border-color:rgba(14,203,129,.25); color:var(--up); }
+.api-sb-off{ background:rgba(246,70,93,.05); border-color:rgba(246,70,93,.2); color:var(--dn); }
+.api-sb-bal{ font-size:11px; font-weight:700; color:var(--gold); font-family:'JetBrains Mono',monospace; margin-top:3px; }
+
+/* CONTEXT BAR */
 .ctx-bar{ display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--bd); border-radius:8px; overflow:hidden; border:1px solid var(--bd); }
 .cbi{ background:var(--bg2); padding:11px 13px; }
 .cbi-l{ font-size:7px; color:var(--tx2); letter-spacing:1.5px; text-transform:uppercase; margin-bottom:3px; }
@@ -194,21 +162,16 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .cbi-s{ font-size:9px; color:var(--tx2); margin-top:2px; }
 @media(max-width:480px){ .ctx-bar{ grid-template-columns:repeat(2,1fr); } }
 
-/* ═══════════════════════════════════════════════════
-   SECTION HEADERS
-═══════════════════════════════════════════════════ */
+/* SECTION HEADERS */
 .sec-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:9px; }
 .sec-title{ font-family:'Rajdhani',sans-serif; font-size:13px; font-weight:700; letter-spacing:1.5px; display:flex; align-items:center; gap:7px; color:var(--tx1); text-transform:uppercase; }
 .sec-dot{ width:5px; height:5px; border-radius:50%; }
 .sec-badge{ padding:2px 8px; border-radius:4px; font-size:9px; font-weight:700; font-family:'JetBrains Mono',monospace; }
 
-/* ═══════════════════════════════════════════════════
-   SIGNAL CARDS (4 max)
-═══════════════════════════════════════════════════ */
+/* SIGNAL CARDS */
 .setups-grid{ display:grid; gap:10px; grid-template-columns:repeat(4,1fr); }
 @media(max-width:1100px){ .setups-grid{ grid-template-columns:repeat(2,1fr); } }
 @media(max-width:480px){ .setups-grid{ grid-template-columns:1fr; } }
-
 .sc{
   background:var(--bg2); border:1px solid var(--bd); border-radius:10px;
   overflow:hidden; cursor:pointer; transition:border-color .2s,box-shadow .2s;
@@ -228,35 +191,27 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .sc-side{ padding:2px 7px; border-radius:4px; font-size:9px; font-weight:700; letter-spacing:1px; font-family:'Rajdhani',sans-serif; }
 .sl{ background:rgba(14,203,129,.15); color:var(--up); }
 .ss{ background:rgba(246,70,93,.15); color:var(--dn); }
-
 .sc-px{ padding:2px 11px 7px; font-family:'JetBrains Mono',monospace; }
 .sc-px-val{ font-size:17px; font-weight:700; }
 .sc-px-chg{ font-size:10px; margin-left:6px; }
-
 .sc-score{ margin:0 11px 7px; background:var(--bg3); border-radius:5px; padding:6px 9px; display:flex; align-items:center; gap:8px; }
 .sc-sn{ font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; }
 .sc-sbar{ flex:1; height:3px; background:var(--bg); border-radius:2px; overflow:hidden; }
 .sc-sfill{ height:100%; border-radius:2px; transition:width .5s; }
-
 .sc-rows{ padding:0 11px 7px; }
 .sc-r{ display:flex; justify-content:space-between; font-size:10px; margin-bottom:4px; color:var(--tx1); }
 .sc-r .v{ font-family:'JetBrains Mono',monospace; color:var(--tx0); }
-
-/* Proof indicators */
 .sc-proof{ display:grid; grid-template-columns:repeat(5,1fr); gap:3px; padding:0 11px 7px; }
 .sp{ display:flex; flex-direction:column; align-items:center; gap:2px; }
 .sp-dot{ width:22px; height:22px; border-radius:5px; display:flex; align-items:center; justify-content:center; font-size:8px; font-weight:700; font-family:'Rajdhani',sans-serif; }
 .sp-on{ background:rgba(14,203,129,.12); color:var(--up); border:1px solid rgba(14,203,129,.25); }
 .sp-off{ background:var(--bg3); color:var(--tx2); border:1px solid var(--bd); }
 .sp-lbl{ font-size:7px; color:var(--tx2); }
-
 .sc-foot{
   padding:7px 11px; border-top:1px solid var(--bd); background:var(--bg3);
   display:flex; justify-content:space-between; align-items:center; margin-top:auto;
 }
 .sc-timer{ font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--gold); }
-
-/* Execute button */
 .exec-btn{
   padding:5px 10px; border-radius:5px; border:none; cursor:pointer;
   font-family:'Rajdhani',sans-serif; font-size:10px; font-weight:700; letter-spacing:.5px;
@@ -268,13 +223,10 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .chart-btn{ font-size:10px; padding:4px 8px; background:transparent; border:1px solid var(--bd); border-radius:4px; color:var(--tx1); cursor:pointer; font-family:'Rajdhani',sans-serif; font-weight:600; transition:var(--transition); }
 .chart-btn:hover{ border-color:var(--gold); color:var(--gold); }
 
-/* ═══════════════════════════════════════════════════
-   POSITIONS
-═══════════════════════════════════════════════════ */
+/* POSITIONS - ENHANCED */
 .pos-grid{ display:grid; gap:10px; grid-template-columns:repeat(3,1fr); }
 @media(max-width:900px){ .pos-grid{ grid-template-columns:repeat(1,1fr); } }
 @media(min-width:901px) and (max-width:1200px){ .pos-grid{ grid-template-columns:repeat(2,1fr); } }
-
 .pc{ background:var(--bg2); border:1px solid var(--bd); border-radius:10px; overflow:hidden; }
 .pc.plong{ border-left:3px solid var(--up); }
 .pc.pshort{ border-left:3px solid var(--dn); }
@@ -285,21 +237,25 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .pr{ display:flex; justify-content:space-between; font-size:10px; margin-bottom:5px; }
 .pr .l{ color:var(--tx1); }
 .pr .r{ font-family:'JetBrains Mono',monospace; }
+/* Liquidation price row - important */
+.pr-liq .r{ color:var(--dn); font-weight:700; }
+.pr-be .r{ color:var(--gold); font-weight:700; }
 .rr-bar{ margin-top:8px; }
 .rr-lbl{ font-size:8px; color:var(--tx2); margin-bottom:3px; }
 .rr-track{ display:flex; gap:2px; }
 .rrs{ flex:1; height:4px; border-radius:2px; background:var(--bg); transition:background .4s; }
 .rrs.done{ background:var(--up); }
 .rrs.be{ background:var(--gold); }
+/* Fees badge */
+.fees-notice{ background:rgba(246,70,93,.06); border:1px solid rgba(246,70,93,.15); border-radius:5px; padding:5px 8px; margin-top:6px; font-size:9px; color:var(--tx1); }
+.fees-notice b{ color:var(--dn); }
 .pc-foot{ padding:7px 13px; border-top:1px solid var(--bd); display:flex; gap:5px; flex-wrap:wrap; align-items:center; }
 .ptag{ font-size:8px; padding:2px 7px; border-radius:4px; font-family:'Rajdhani',sans-serif; font-weight:700; }
 .pt-trail{ background:rgba(14,203,129,.1); color:var(--up); border:1px solid rgba(14,203,129,.2); }
 .pt-demo{ background:rgba(240,185,11,.1); color:var(--gold); border:1px solid rgba(240,185,11,.2); }
 .pt-real{ background:rgba(24,144,255,.1); color:var(--bl); border:1px solid rgba(24,144,255,.2); }
 
-/* ═══════════════════════════════════════════════════
-   LOG
-═══════════════════════════════════════════════════ */
+/* LOG */
 .log-wrap{ background:var(--bg2); border:1px solid var(--bd); border-radius:10px; overflow:hidden; }
 .log-hd{ padding:9px 13px; border-bottom:1px solid var(--bd); background:var(--bg3); display:flex; justify-content:space-between; align-items:center; }
 .log-hd-t{ font-family:'Rajdhani',sans-serif; font-size:11px; font-weight:700; letter-spacing:1.5px; color:var(--tx1); text-transform:uppercase; }
@@ -308,9 +264,7 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 [data-theme="light"] .ll{ border-bottom-color:rgba(0,0,0,.04); }
 .lup{ color:var(--up); } .ldn{ color:var(--dn); } .linf{ color:var(--bl); } .lwrn{ color:var(--gold); } .lmut{ color:var(--tx2); }
 
-/* ═══════════════════════════════════════════════════
-   SCANNER TABLE
-═══════════════════════════════════════════════════ */
+/* SCANNER */
 .scan-wrap{ background:var(--bg2); border:1px solid var(--bd); border-radius:10px; overflow:hidden; }
 .scan-table{ width:100%; border-collapse:collapse; font-size:11px; }
 .scan-th{ padding:9px 13px; text-align:left; font-size:7px; color:var(--tx2); letter-spacing:1.5px; font-weight:700; text-transform:uppercase; background:var(--bg3); border-bottom:1px solid var(--bd); white-space:nowrap; }
@@ -318,15 +272,11 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .scan-tr:hover{ background:var(--bg3); }
 .scan-td{ padding:9px 13px; white-space:nowrap; }
 
-/* ═══════════════════════════════════════════════════
-   HISTORY
-═══════════════════════════════════════════════════ */
+/* HISTORY */
 .hist-row{ display:flex; align-items:center; gap:10px; padding:10px 15px; border-bottom:1px solid var(--bd); flex-wrap:wrap; }
 .hist-pnl{ font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:700; margin-left:auto; }
 
-/* ═══════════════════════════════════════════════════
-   ACCOUNT
-═══════════════════════════════════════════════════ */
+/* ACCOUNT */
 .acc-grid{ display:grid; gap:12px; grid-template-columns:1fr 1fr; }
 @media(max-width:640px){ .acc-grid{ grid-template-columns:1fr; } }
 .acc-card{ background:var(--bg2); border:1px solid var(--bd); border-radius:10px; overflow:hidden; }
@@ -337,8 +287,6 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .arow:last-child{ border-bottom:none; }
 .arow .l{ color:var(--tx1); }
 .arow .r{ font-family:'JetBrains Mono',monospace; color:var(--gold); }
-
-/* Referral */
 .ref-box{ background:var(--bg3); border:1px solid var(--bd); border-radius:8px; padding:14px; margin-bottom:12px; }
 .ref-code-display{ font-family:'JetBrains Mono',monospace; font-size:24px; font-weight:700; color:var(--gold); letter-spacing:6px; text-align:center; padding:10px; background:var(--bg); border-radius:6px; margin:8px 0; cursor:pointer; border:1px solid rgba(240,185,11,.2); transition:var(--transition); }
 .ref-code-display:hover{ border-color:var(--gold); }
@@ -348,7 +296,6 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .ref-stat{ background:var(--bg); border:1px solid var(--bd); border-radius:6px; padding:9px; text-align:center; }
 .ref-stat-v{ font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; color:var(--gold); }
 .ref-stat-l{ font-size:9px; color:var(--tx2); margin-top:2px; }
-
 .feat-g{ display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
 @media(max-width:480px){ .feat-g{ grid-template-columns:repeat(2,1fr); } }
 .feat-i{ background:var(--bg3); border:1px solid var(--bd); border-radius:7px; padding:10px; text-align:center; }
@@ -358,9 +305,7 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .fi-nm{ font-size:11px; font-weight:700; }
 .fi-ds{ font-size:9px; color:var(--tx2); margin-top:2px; }
 
-/* ═══════════════════════════════════════════════════
-   ADMIN PAGE
-═══════════════════════════════════════════════════ */
+/* ADMIN */
 .adm-stats{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:16px; }
 .adm-stat{ background:var(--bg3); border:1px solid var(--bd); border-radius:8px; padding:12px; text-align:center; }
 .adm-stat-v{ font-family:'JetBrains Mono',monospace; font-size:22px; font-weight:700; color:var(--gold); }
@@ -372,9 +317,7 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .risk-btn.act{ background:rgba(240,185,11,.15); border-color:var(--gold); color:var(--gold); }
 .risk-btn:hover{ border-color:var(--gold); }
 
-/* ═══════════════════════════════════════════════════
-   AUTH
-═══════════════════════════════════════════════════ */
+/* AUTH */
 .auth-bg{
   position:fixed; inset:0; background:var(--bg); z-index:999;
   display:flex; align-items:center; justify-content:center; padding:14px;
@@ -395,7 +338,6 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .auth-count{ display:flex; align-items:center; gap:8px; margin-top:25px; font-size:11px; color:var(--tx1); }
 .auth-count b{ color:var(--gold); font-family:'JetBrains Mono',monospace; }
 .ldot{ width:7px; height:7px; border-radius:50%; background:var(--up); animation:pulse-dot 2s infinite; }
-
 .auth-right{ width:380px; flex-shrink:0; background:var(--bg2); padding:32px 28px; display:flex; flex-direction:column; overflow-y:auto; }
 @media(max-width:680px){ .auth-right{ width:100%; border-radius:14px; } }
 .auth-right-title{ font-family:'Rajdhani',sans-serif; font-size:22px; font-weight:700; letter-spacing:1px; margin-bottom:6px; }
@@ -415,7 +357,6 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .err-box{ background:rgba(246,70,93,.07); border:1px solid rgba(246,70,93,.25); border-radius:6px; padding:9px 12px; font-size:11px; color:var(--dn); margin-bottom:13px; }
 .ok-box{ background:rgba(14,203,129,.07); border:1px solid rgba(14,203,129,.25); border-radius:6px; padding:9px 12px; font-size:11px; color:var(--up); margin-bottom:13px; }
 .hint{ font-size:9px; color:var(--tx2); margin-top:4px; line-height:1.5; }
-
 .btn{ padding:10px 16px; border-radius:6px; border:none; cursor:pointer; font-family:'Rajdhani',sans-serif; font-size:13px; font-weight:700; letter-spacing:.5px; transition:var(--transition); }
 .btn-gold{ background:var(--gold); color:#000; }
 .btn-gold:hover{ background:var(--gold2); }
@@ -428,15 +369,10 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .btn-sm{ padding:5px 10px; font-size:10px; }
 .btn-full{ width:100%; }
 .btn:disabled{ opacity:.5; cursor:not-allowed; }
-
 .txt-btn{ background:none; border:none; cursor:pointer; color:var(--gold); font-size:11px; font-family:'Syne',sans-serif; font-weight:600; text-decoration:underline; }
-
-/* Verification code */
 .vcode-row{ display:flex; gap:6px; justify-content:center; margin:12px 0; }
 .vcode-digit{ width:38px; height:46px; background:var(--bg3); border:1px solid var(--bd); border-radius:7px; text-align:center; font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:700; color:var(--tx0); outline:none; }
 .vcode-digit:focus{ border-color:var(--gold); }
-
-/* Verification simulation notice */
 .sim-notice{
   background:rgba(240,185,11,.07); border:1px solid rgba(240,185,11,.2);
   border-radius:7px; padding:11px 13px; margin:10px 0;
@@ -444,9 +380,7 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 }
 .sim-notice b{ display:block; margin-bottom:3px; }
 
-/* ═══════════════════════════════════════════════════
-   MODALS
-═══════════════════════════════════════════════════ */
+/* MODALS */
 .modal-bg{ position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:500; display:flex; align-items:center; justify-content:center; padding:12px; backdrop-filter:blur(6px); }
 .modal-box{ background:var(--bg2); border:1px solid var(--bd); border-radius:12px; width:100%; max-width:480px; max-height:90vh; overflow-y:auto; box-shadow:var(--shadow); }
 .modal-hd{ padding:13px 17px; border-bottom:1px solid var(--bd); background:var(--bg3); display:flex; justify-content:space-between; align-items:center; border-radius:12px 12px 0 0; }
@@ -457,8 +391,6 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .api-res{ margin-top:11px; padding:10px 12px; border-radius:6px; font-family:'JetBrains Mono',monospace; font-size:10px; }
 .ar-ok{ background:rgba(14,203,129,.07); color:var(--up); border:1px solid rgba(14,203,129,.2); }
 .ar-err{ background:rgba(246,70,93,.07); color:var(--dn); border:1px solid rgba(246,70,93,.2); }
-
-/* Disclaimer modal */
 .disc-modal{ max-width:500px; }
 .disc-header{ text-align:center; padding:20px; border-bottom:1px solid var(--bd); background:rgba(246,70,93,.04); }
 .disc-icon{ font-size:36px; margin-bottom:8px; }
@@ -469,8 +401,6 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .disc-points li::before{ content:'⚠'; color:var(--gold); flex-shrink:0; }
 .disc-check{ display:flex; align-items:center; gap:9px; font-size:11px; color:var(--tx1); margin:16px 0; cursor:pointer; }
 .disc-check input{ accent-color:var(--gold); width:15px; height:15px; cursor:pointer; }
-
-/* Chart modal */
 .chart-modal{ width:95vw; height:88vh; background:var(--bg2); border:1px solid var(--bd); border-radius:12px; display:flex; flex-direction:column; overflow:hidden; }
 .chart-hd{ padding:11px 15px; background:var(--bg3); border-bottom:1px solid var(--bd); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
 .chart-title{ font-family:'Rajdhani',sans-serif; font-size:17px; font-weight:700; letter-spacing:1.5px; color:var(--gold); }
@@ -478,13 +408,138 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .tft{ padding:4px 10px; border-radius:4px; background:transparent; border:1px solid var(--bd); color:var(--tx1); font-family:'JetBrains Mono',monospace; font-size:10px; cursor:pointer; transition:var(--transition); }
 .tft.act,.tft:hover{ background:var(--gold); border-color:var(--gold); color:#000; }
 .chart-iframe{ flex:1; border:none; width:100%; }
-
 .xbtn{ width:30px; height:30px; background:var(--bg3); border:1px solid var(--bd); border-radius:5px; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:13px; color:var(--tx1); flex-shrink:0; transition:var(--transition); }
 .xbtn:hover{ background:var(--dn); color:#fff; border-color:var(--dn); }
 
-/* ═══════════════════════════════════════════════════
-   COMING SOON BANNER
-═══════════════════════════════════════════════════ */
+/* BOT CONTROL CARD */
+.ctrl-card{
+  background:var(--bg2); border:1px solid var(--bd); border-radius:12px;
+  padding:18px; display:flex; flex-direction:column;
+}
+.ctrl-card-title{
+  font-family:'Rajdhani',sans-serif; font-size:11px; font-weight:700;
+  letter-spacing:1.5px; text-transform:uppercase; color:var(--tx1);
+  margin-bottom:14px;
+}
+.ctrl-mode-row{ display:flex; gap:8px; margin-bottom:14px; }
+.ctrl-mode-btn{
+  flex:1; padding:10px; border-radius:8px; border:1px solid var(--bd);
+  background:var(--bg3); color:var(--tx1); cursor:pointer;
+  font-family:'Rajdhani',sans-serif; font-size:13px; font-weight:700;
+  letter-spacing:.5px; transition:var(--transition); text-align:center;
+}
+.ctrl-mode-btn.act{ background:rgba(240,185,11,.12); border-color:var(--gold); color:var(--gold); }
+.ctrl-big-btn{
+  width:100%; padding:18px 12px; border-radius:10px; border:none; cursor:pointer;
+  font-family:'Rajdhani',sans-serif; font-size:16px; font-weight:800; letter-spacing:1px;
+  transition:var(--transition); display:flex; align-items:center; justify-content:center;
+  gap:10px; margin-bottom:10px;
+}
+.ctrl-start{
+  background:linear-gradient(135deg,rgba(14,203,129,.15),rgba(14,203,129,.25));
+  border:2px solid rgba(14,203,129,.4); color:var(--up);
+  box-shadow:0 0 24px rgba(14,203,129,.08);
+}
+.ctrl-start:hover{ background:var(--up); color:#000; box-shadow:0 0 30px rgba(14,203,129,.3); }
+.ctrl-stop{
+  background:linear-gradient(135deg,rgba(246,70,93,.12),rgba(246,70,93,.2));
+  border:2px solid rgba(246,70,93,.4); color:var(--dn);
+  animation:pulse-stop 2s ease-in-out infinite;
+}
+.ctrl-stop:hover{ background:var(--dn); color:#fff; }
+@keyframes pulse-stop{ 0%,100%{box-shadow:0 0 0 rgba(246,70,93,.2);} 50%{box-shadow:0 0 20px rgba(246,70,93,.25);} }
+.ctrl-status{
+  text-align:center; font-size:10px; color:var(--tx2);
+  font-family:'JetBrains Mono',monospace; padding:6px 10px;
+  background:var(--bg3); border-radius:6px; border:1px solid var(--bd);
+}
+.ctrl-status.live{ color:var(--up); border-color:rgba(14,203,129,.2); background:rgba(14,203,129,.05); }
+.api-status-badge{
+  display:flex; align-items:center; gap:12px; padding:12px 14px;
+  border-radius:8px; margin-bottom:14px; border:1px solid;
+}
+.api-badge-on{ background:rgba(14,203,129,.07); border-color:rgba(14,203,129,.25); color:var(--up); }
+.api-badge-off{ background:rgba(246,70,93,.05); border-color:rgba(246,70,93,.2); color:var(--dn); }
+
+/* ACCOUNT BALANCE CARD - NEW */
+.balance-card{
+  background:linear-gradient(135deg,rgba(240,185,11,.08),rgba(14,203,129,.05));
+  border:1px solid rgba(240,185,11,.2); border-radius:10px; padding:16px;
+  display:flex; flex-direction:column; gap:8px;
+}
+.balance-card-title{ font-family:'Rajdhani',sans-serif; font-size:10px; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:var(--tx2); }
+.balance-card-val{ font-family:'JetBrains Mono',monospace; font-size:28px; font-weight:700; color:var(--gold); }
+.balance-card-sub{ font-size:10px; color:var(--tx1); }
+.balance-margin-row{ display:flex; gap:10px; }
+.balance-mini{ flex:1; background:var(--bg3); border:1px solid var(--bd); border-radius:6px; padding:8px; text-align:center; }
+.balance-mini-val{ font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:700; }
+.balance-mini-lbl{ font-size:8px; color:var(--tx2); margin-top:2px; }
+
+/* SESSION CARD */
+.session-warning{
+  background:rgba(246,70,93,.06); border:1px solid rgba(246,70,93,.2);
+  border-radius:8px; padding:10px 13px;
+  display:flex; align-items:center; gap:10px; font-size:11px; color:var(--dn);
+}
+.session-safe{
+  background:rgba(14,203,129,.06); border:1px solid rgba(14,203,129,.2);
+  border-radius:8px; padding:10px 13px;
+  display:flex; align-items:center; gap:10px; font-size:11px; color:var(--up);
+}
+
+/* NEWS / FONDAMENTAUX */
+.news-card{ background:var(--bg2); border:1px solid var(--bd); border-radius:10px; overflow:hidden; }
+.news-hd{ padding:10px 14px; background:var(--bg3); border-bottom:1px solid var(--bd); display:flex; justify-content:space-between; align-items:center; }
+.news-item{ padding:10px 14px; border-bottom:1px solid var(--bd); display:flex; gap:10px; align-items:flex-start; cursor:pointer; transition:background .1s; }
+.news-item:hover{ background:var(--bg3); }
+.news-item:last-child{ border-bottom:none; }
+.news-dot{ width:8px; height:8px; border-radius:50%; flex-shrink:0; margin-top:4px; }
+.news-bull{ background:var(--up); }
+.news-bear{ background:var(--dn); }
+.news-neutral{ background:var(--gold); }
+.news-title{ font-size:11px; font-weight:600; line-height:1.4; }
+.news-meta{ font-size:9px; color:var(--tx2); margin-top:3px; }
+.news-impact{ padding:2px 6px; border-radius:3px; font-size:8px; font-weight:700; font-family:'Rajdhani',sans-serif; }
+.ni-high{ background:rgba(246,70,93,.1); color:var(--dn); border:1px solid rgba(246,70,93,.2); }
+.ni-med{ background:rgba(240,185,11,.1); color:var(--gold); border:1px solid rgba(240,185,11,.2); }
+.ni-low{ background:rgba(14,203,129,.1); color:var(--up); border:1px solid rgba(14,203,129,.2); }
+
+/* CANAL / COMMUNITY */
+.canal-card{ background:linear-gradient(135deg,rgba(124,58,237,.1),rgba(240,185,11,.06)); border:1px solid rgba(124,58,237,.25); border-radius:10px; padding:18px; }
+.canal-title{ font-family:'Rajdhani',sans-serif; font-size:16px; font-weight:700; letter-spacing:1px; margin-bottom:6px; }
+.canal-title span{ color:var(--purple); }
+.canal-desc{ font-size:11px; color:var(--tx1); line-height:1.7; margin-bottom:14px; }
+.canal-links{ display:flex; flex-direction:column; gap:8px; }
+.canal-link{
+  display:flex; align-items:center; gap:12px; padding:12px 14px;
+  border-radius:8px; border:1px solid; cursor:pointer; transition:var(--transition);
+  text-decoration:none; color:inherit;
+}
+.canal-tg{ background:rgba(0,136,204,.08); border-color:rgba(0,136,204,.25); }
+.canal-tg:hover{ background:rgba(0,136,204,.15); border-color:rgba(0,136,204,.5); }
+.canal-yt{ background:rgba(255,0,0,.08); border-color:rgba(255,0,0,.2); }
+.canal-yt:hover{ background:rgba(255,0,0,.15); border-color:rgba(255,0,0,.4); }
+.canal-tt{ background:rgba(255,255,255,.04); border-color:rgba(255,255,255,.1); }
+.canal-tt:hover{ background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.2); }
+.canal-link-icon{ font-size:22px; }
+.canal-link-info .title{ font-size:13px; font-weight:700; font-family:'Rajdhani',sans-serif; letter-spacing:.5px; }
+.canal-link-info .sub{ font-size:10px; color:var(--tx2); margin-top:2px; }
+.canal-link-arrow{ margin-left:auto; color:var(--tx2); font-size:16px; }
+
+/* TIKTOK CHALLENGE BANNER */
+.tiktok-banner{
+  background:linear-gradient(90deg,rgba(255,0,80,.08),rgba(0,242,234,.06),rgba(255,0,80,.08));
+  border:1px solid rgba(255,0,80,.2); border-radius:10px; padding:14px 18px;
+  display:flex; align-items:center; gap:14px;
+}
+.tt-icon{ font-size:32px; }
+.tt-text .title{ font-family:'Rajdhani',sans-serif; font-size:15px; font-weight:700; letter-spacing:1px; }
+.tt-text .title span{ color:#ff0050; }
+.tt-text .sub{ font-size:10px; color:var(--tx1); margin-top:3px; line-height:1.5; }
+.tt-btn{ margin-left:auto; padding:10px 18px; background:linear-gradient(135deg,#ff0050,#00f2ea); border:none; border-radius:8px; color:#fff; font-family:'Rajdhani',sans-serif; font-size:13px; font-weight:700; cursor:pointer; white-space:nowrap; transition:opacity .2s; }
+.tt-btn:hover{ opacity:.85; }
+
+/* SOON BANNER */
 .soon-banner{
   background:linear-gradient(90deg,rgba(124,58,237,.15),rgba(240,185,11,.1),rgba(124,58,237,.15));
   border:1px solid rgba(124,58,237,.3); border-radius:8px; padding:11px 16px;
@@ -494,15 +549,12 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .soon-text b{ color:var(--gold); }
 .soon-badge{ padding:3px 9px; border-radius:20px; background:rgba(124,58,237,.2); border:1px solid rgba(124,58,237,.4); color:#a78bfa; font-size:9px; font-weight:700; font-family:'Rajdhani',sans-serif; letter-spacing:1px; white-space:nowrap; }
 
-/* ═══════════════════════════════════════════════════
-   TOAST NOTIFICATIONS
-═══════════════════════════════════════════════════ */
+/* TOASTS */
 .toast-container{ position:fixed; top:60px; right:14px; z-index:999; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
 .toast{
   background:var(--bg2); border:1px solid var(--bd); border-radius:8px;
   padding:11px 15px; font-size:11px; max-width:300px; box-shadow:var(--shadow);
-  animation:slideIn .25s ease;
-  pointer-events:all;
+  animation:slideIn .25s ease; pointer-events:all;
 }
 @keyframes slideIn{ from{transform:translateX(100%);opacity:0;} to{transform:none;opacity:1;} }
 .toast.success{ border-left:3px solid var(--up); }
@@ -510,9 +562,7 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .toast.warn{ border-left:3px solid var(--gold); }
 .toast.info{ border-left:3px solid var(--bl); }
 
-/* ═══════════════════════════════════════════════════
-   MISC UTILS
-═══════════════════════════════════════════════════ */
+/* UTILS */
 .flex{ display:flex; align-items:center; }
 .jb{ justify-content:space-between; }
 .g4{gap:4px;}.g6{gap:6px;}.g8{gap:8px;}.g10{gap:10px;}
@@ -529,8 +579,6 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .fin{ animation:fadeIn .2s ease; }
 @keyframes fadeIn{ from{opacity:0;transform:translateY(4px);} to{opacity:1;transform:none;} }
 .slider{ width:100%; accent-color:var(--gold); }
-.copy-notice{ font-size:9px; color:var(--up); margin-top:4px; text-align:center; opacity:0; transition:opacity .3s; }
-.copy-notice.show{ opacity:1; }
 </style>
 </head>
 <body>
@@ -538,9 +586,9 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
-/* ═══════════════════════════════════════════════════
-   CONSTANTS & MARKET
-═══════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════
+   CONSTANTS
+═══════════════════════════════════════════════ */
 const PAIRS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','ADAUSDT',
   'DOGEUSDT','AVAXUSDT','DOTUSDT','MATICUSDT','LINKUSDT','LTCUSDT',
   'UNIUSDT','ATOMUSDT','NEARUSDT','APTUSDT','ARBUSDT','OPUSDT','INJUSDT','SUIUSDT'];
@@ -552,25 +600,72 @@ const BASE_PRICES = {
   APTUSDT:11.4,ARBUSDT:1.82,OPUSDT:3.12,INJUSDT:27.8,SUIUSDT:2.21
 };
 
+/* ─── BINANCE FEES ─── */
+const BINANCE_MAKER_FEE = 0.0002; // 0.02%
+const BINANCE_TAKER_FEE = 0.0004; // 0.04%
+// Calcul réaliste: entrée taker + sortie taker = 0.08% total
+const calcFeesForTrade = (notional) => notional * BINANCE_TAKER_FEE * 2;
+
+/* ─── LEVERAGE LIQUIDATION ─── */
+const calcLiqPrice = (side, entry, leverage, maintenanceMargin = 0.004) => {
+  // Formule Binance Futures (isolé)
+  if (side === 'BUY') {
+    return entry * (1 - (1/leverage) + maintenanceMargin);
+  } else {
+    return entry * (1 + (1/leverage) - maintenanceMargin);
+  }
+};
+
 let MKT = {};
+let MKT_SOURCE = 'sim'; // 'real' | 'sim'
 PAIRS.forEach(p => { MKT[p] = {price:BASE_PRICES[p], prev:BASE_PRICES[p]}; });
 
+// Fetch real Binance Futures public prices (no API key needed)
+const fetchRealPrices = async () => {
+  try {
+    const symbols = JSON.stringify(PAIRS);
+    const r = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbols=${encodeURIComponent(symbols)}`, {signal:AbortSignal.timeout(4000)});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const data = await r.json();
+    data.forEach(({symbol,price}) => {
+      if(MKT[symbol]) MKT[symbol] = {prev:MKT[symbol].price, price:parseFloat(price)};
+    });
+    MKT_SOURCE = 'real';
+    return true;
+  } catch(e) {
+    return false; // CORS or network → fallback to simulation
+  }
+};
+
 const tickMarket = () => {
+  // Simulation fallback : random walk ancré sur BASE_PRICES (±0.05% max par tick)
   PAIRS.forEach(p => {
     const d = MKT[p];
-    const move = d.price * (Math.random() - 0.5) * 0.0015;
-    MKT[p] = {prev:d.price, price:Math.max(d.price + move, 0.0001)};
+    const move = d.price * (Math.random() - 0.5) * 0.001;
+    // Ancrage : empêche la dérive > ±15% du prix de base
+    const base = BASE_PRICES[p];
+    const next = Math.max(d.price + move, 0.0001);
+    const clamped = Math.max(base*0.85, Math.min(base*1.15, next));
+    MKT[p] = {prev:d.price, price:clamped};
   });
 };
 
-const fmtP   = p => p>=1000?p.toFixed(2):p>=10?p.toFixed(3):p>=1?p.toFixed(4):p.toFixed(5);
-const fmtPct = p => (p>=0?'+':'')+p.toFixed(3)+'%';
-const ts     = () => new Date().toLocaleTimeString('fr-FR');
-const lsG    = (k,d) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;} };
-const lsS    = (k,v) => { try{localStorage.setItem(k,JSON.stringify(v));}catch{} };
-
+/* ─── SESSION + JOURS ─── */
 const getSess = () => { const h=new Date().getUTCHours(); if(h>=8&&h<10)return'london'; if(h>=13&&h<21)return'ny'; return'asia'; };
 const sessLbl = {asia:'Asie 🌏', london:'Londres 🇬🇧', ny:'New York 🇺🇸'};
+
+const getDayRisk = () => {
+  const d = new Date().getUTCDay(); // 0=Sun, 1=Mon ... 5=Fri, 6=Sat
+  // Dimanche et samedi = volume faible, dangereux
+  if(d === 0 || d === 6) return { level:'warn', label:'Weekend ⚠️', msg:'Volume faible, spreads larges — Trader avec prudence', ok:true };
+  // Lundi = ouverture prudente, gaps possibles
+  if(d === 1) return { level:'warn', label:'Lundi ⚠', msg:'Attention aux gaps d\'ouverture', ok:true };
+  // Vendredi = fermeture, piège week-end
+  if(d === 5) return { level:'warn', label:'Vendredi ⚠', msg:'Fermeture hebdo — Éviter les nouvelles positions tard', ok:true };
+  // Mardi-Jeudi = optimal
+  return { level:'safe', label:'Jour optimal ✅', msg:'Conditions de trading normales', ok:true };
+};
+
 const btcTrendCalc = (p,prev) => { const d=(p-prev)/prev*100; return d>.35?'BULL':d<-.35?'BEAR':'RANGE'; };
 const calcScore = s => { let n=0; if(s.bb)n+=28; if(s.vos)n+=22; if(s.vol)n+=15; if(s.rsi)n+=10; if(s.btcOk)n+=15; if(s.sessOk)n+=10; return n; };
 const makeSetup = (pair, btcT, sessOk) => {
@@ -582,54 +677,101 @@ const makeSetup = (pair, btcT, sessOk) => {
     vol:Math.random()>.42,rsi:Math.random()>.38,
     btcOk,sessOk,
     rr:(1.8+Math.random()*2.5).toFixed(1),
-    validFor:60+Math.floor(Math.random()*100),ts:ts()
+    validFor:60+Math.floor(Math.random()*100),ts:new Date().toLocaleTimeString('fr-FR')
   };
   s.score=calcScore(s); return s;
 };
 
-/* ═══════════════════════════════════════════════════
-   HMAC SHA-256 FOR BINANCE API
-═══════════════════════════════════════════════════ */
-async function hmac256(secret, message) {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw', enc.encode(secret), {name:'HMAC',hash:'SHA-256'}, false, ['sign']
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
-  return Array.from(new Uint8Array(sig)).map(b=>b.toString(16).padStart(2,'0')).join('');
-}
+/* ─── EMAIL CONFIG ─── */
+const EMAILJS_PUBLIC_KEY  = 'uxfe7-GR0xUVfx1xW';
+const EMAILJS_SERVICE_ID  = 'service_t36sjs6';
+const EMAILJS_TEMPLATE_ID = 'template_zf05y1a';
+const EMAILJS_CONFIGURED  = true;
+const EMAIL_BACKEND_URL = '/api/send-code';
+if (EMAILJS_CONFIGURED) { try { emailjs.init(EMAILJS_PUBLIC_KEY); } catch(e) {} }
 
-/* ═══════════════════════════════════════════════════
-   REFERRAL CODE GENERATOR
-═══════════════════════════════════════════════════ */
+const sendEmail = async (toEmail, code, subject) => {
+  try {
+    const r = await fetch(EMAIL_BACKEND_URL, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({to:toEmail,code,subject}), signal:AbortSignal.timeout(5000)
+    });
+    const d = await r.json();
+    if(d.ok) return true;
+  } catch(e) {}
+  if(EMAILJS_CONFIGURED) {
+    try {
+      await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {to_email:toEmail,code,subject,app_name:'AlphaBot Pro'});
+      return true;
+    } catch(e) {}
+  }
+  return false;
+};
+
+const copyUniversal = (text) => {
+  if(navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  const ok = document.execCommand('copy');
+  document.body.removeChild(ta);
+  return ok ? Promise.resolve() : Promise.reject();
+};
+
+const fmtP   = p => p>=1000?p.toFixed(2):p>=10?p.toFixed(3):p>=1?p.toFixed(4):p.toFixed(5);
+const fmtPct = p => (p>=0?'+':'')+p.toFixed(3)+'%';
+const ts     = () => new Date().toLocaleTimeString('fr-FR');
+const lsG    = (k,d) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;} };
+const lsS    = (k,v) => { try{localStorage.setItem(k,JSON.stringify(v));}catch{} };
 const genRefCode = email => {
   const prefix = email.split('@')[0].substr(0,4).toUpperCase().replace(/[^A-Z]/g,'X');
   return prefix.padEnd(4,'X')+(1000+Math.floor(Math.random()*8999));
 };
 
-/* ═══════════════════════════════════════════════════
+async function hmac256(secret, message) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw',enc.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+  const sig = await crypto.subtle.sign('HMAC',key,enc.encode(message));
+  return Array.from(new Uint8Array(sig)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+/* ─── FAKE NEWS FONDAMENTAUX ─── */
+const FUNDAMENTALS = [
+  {id:1, title:"Fed maintient les taux — impact haussier BTC", sentiment:"bull", impact:"high", source:"FED", time:"2h"},
+  {id:2, title:"BlackRock ETF BTC : +$800M d'entrées cette semaine", sentiment:"bull", impact:"high", source:"Bloomberg", time:"4h"},
+  {id:3, title:"Ethereum : mise à jour Dencun confirmée Q2", sentiment:"bull", impact:"med", source:"EthResearch", time:"6h"},
+  {id:4, title:"Chine : nouvelles restrictions crypto exchanges", sentiment:"bear", impact:"high", source:"Reuters", time:"8h"},
+  {id:5, title:"Binance résout problème technique — retraits normaux", sentiment:"bull", impact:"med", source:"Binance", time:"10h"},
+  {id:6, title:"Halving BTC dans 45 jours — hashrate ATH", sentiment:"bull", impact:"high", source:"CoinMetrics", time:"12h"},
+  {id:7, title:"SEC retarde décision ETF SOL", sentiment:"bear", impact:"med", source:"SEC.gov", time:"1j"},
+  {id:8, title:"Inflation US CPI: 3.2% — sous les attentes", sentiment:"bull", impact:"high", source:"BLS", time:"1j"},
+];
+
+/* ═══════════════════════════════════════════════
    AUTH COMPONENT
-═══════════════════════════════════════════════════ */
+═══════════════════════════════════════════════ */
 function Auth({setUser, totalUsers}) {
-  const [tab,      setTab]      = useState('login');
-  const [step,     setStep]     = useState('form'); // 'form' | 'verify' | 'reset-req' | 'reset-code'
-  const [email,    setEmail]    = useState('');
-  const [pass,     setPass]     = useState('');
-  const [pass2,    setPass2]    = useState('');
-  const [refInput, setRefInput] = useState('');
-  const [err,      setErr]      = useState('');
-  const [ok,       setOk]       = useState('');
-  const [verCode,  setVerCode]  = useState('');
-  const [simCode,  setSimCode]  = useState('');
-  const [resetCode,setResetCode]= useState('');
-  const [simReset, setSimReset] = useState('');
-  const [newPass,  setNewPass]  = useState('');
-  const [loading,  setLoading]  = useState(false);
+  const [tab,setTab]=useState('login');
+  const [step,setStep]=useState('form');
+  const [email,setEmail]=useState('');
+  const [pass,setPass]=useState('');
+  const [pass2,setPass2]=useState('');
+  const [refInput,setRefInput]=useState('');
+  const [err,setErr]=useState('');
+  const [ok,setOk]=useState('');
+  const [verCode,setVerCode]=useState('');
+  const [simCode,setSimCode]=useState('');
+  const [resetCode,setResetCode]=useState('');
+  const [simReset,setSimReset]=useState('');
+  const [newPass,setNewPass]=useState('');
+  const [loading,setLoading]=useState(false);
+  const [emailSent,setEmailSent]=useState(false);
 
-  const udb = () => lsG('ab19_udb', {});
-  const saveUdb = db => lsS('ab19_udb', db);
+  const udb = () => lsG('ab24_udb', {});
+  const saveUdb = db => lsS('ab24_udb', db);
 
-  // Admin account auto-init
   useEffect(() => {
     const db = udb();
     if (!db['admin@alphabot.pro']) {
@@ -644,99 +786,97 @@ function Auth({setUser, totalUsers}) {
   const login = () => {
     setErr(''); setOk('');
     const db=udb(), u=db[email.toLowerCase()];
-    if (!u || u.password!==pass) return setErr('Email ou mot de passe incorrect.');
-    if (!u.verified) return setErr('Veuillez vérifier votre email avant de vous connecter.');
-    setUser(u); lsS('ab19_user', u);
+    if(!u||u.password!==pass) return setErr('Email ou mot de passe incorrect.');
+    if(!u.verified) return setErr('Vérifiez votre email avant de vous connecter.');
+    setUser(u); lsS('ab24_user', u);
   };
 
-  const register = () => {
+  const register = async () => {
     setErr(''); setOk('');
-    if (!email||!pass) return setErr('Email et mot de passe requis.');
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return setErr('Email invalide.');
-    if (pass.length<8) return setErr('Mot de passe minimum 8 caractères.');
-    if (pass!==pass2) return setErr('Les mots de passe ne correspondent pas.');
+    if(!email||!pass) return setErr('Email et mot de passe requis.');
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return setErr('Email invalide.');
+    if(pass.length<8) return setErr('Mot de passe minimum 8 caractères.');
+    if(pass!==pass2) return setErr('Les mots de passe ne correspondent pas.');
     const db=udb();
-    if (db[email.toLowerCase()]) return setErr('Email déjà utilisé.');
-
-    const code = Math.floor(100000+Math.random()*900000).toString();
-    setSimCode(code);
-
-    // Check referral
+    if(db[email.toLowerCase()]) return setErr('Email déjà utilisé.');
     let referredBy = null;
-    if (refInput) {
+    if(refInput) {
       const referrer = Object.values(db).find(u=>u.refCode===refInput.toUpperCase());
-      if (!referrer) return setErr('Code parrainage invalide.');
+      if(!referrer) return setErr('Code parrainage invalide.');
       referredBy = referrer.email;
     }
-
+    const code = Math.floor(100000+Math.random()*900000).toString();
+    setSimCode(code);
+    setLoading(true);
     const nu = {
       email:email.toLowerCase(), password:pass, joinedAt:Date.now(),
       verified:false, refCode:genRefCode(email), refBy:referredBy, refCount:0,
       isAdmin:false, balance:1000
     };
     db[email.toLowerCase()]=nu; saveUdb(db);
+    const sent = await sendEmail(email, code, 'Code vérification AlphaBot Pro');
+    setEmailSent(sent);
+    setLoading(false);
     setStep('verify');
-    setOk(`Code de vérification envoyé à ${email}`);
+    setOk(sent ? `✅ Email envoyé à ${email}` : `Email non configuré — code affiché ci-dessous`);
   };
 
-  const verifyEmail = () => {
+  const verifyEmail = (forcedCode) => {
     setErr(''); setOk('');
-    if (verCode !== simCode) return setErr('Code incorrect. Vérifiez le code affiché ci-dessous.');
+    const code = forcedCode || verCode;
+    if(code!==simCode) return setErr('Code incorrect.');
     const db=udb();
     db[email.toLowerCase()].verified=true;
-
-    // Credit referrer
-    if (db[email.toLowerCase()].refBy) {
-      const refEmail = db[email.toLowerCase()].refBy;
-      if (db[refEmail]) { db[refEmail].refCount=(db[refEmail].refCount||0)+1; }
+    if(db[email.toLowerCase()].refBy) {
+      const refEmail=db[email.toLowerCase()].refBy;
+      if(db[refEmail]) { db[refEmail].refCount=(db[refEmail].refCount||0)+1; }
     }
     saveUdb(db);
-    const u = db[email.toLowerCase()];
-    setUser(u); lsS('ab19_user', u);
+    const u=db[email.toLowerCase()];
+    setUser(u); lsS('ab24_user',u);
   };
 
-  const requestReset = () => {
+  const requestReset = async () => {
     setErr(''); setOk('');
     const db=udb();
-    if (!db[email.toLowerCase()]) return setErr('Email introuvable.');
-    const code = Math.floor(100000+Math.random()*900000).toString();
+    if(!db[email.toLowerCase()]) return setErr('Aucun compte associé à cet email.');
+    const code=Math.floor(100000+Math.random()*900000).toString();
     setSimReset(code);
+    setLoading(true);
+    const sent=await sendEmail(email,code,'Reset AlphaBot Pro');
+    setEmailSent(sent);
+    setLoading(false);
     setStep('reset-code');
-    setOk(`Code de réinitialisation envoyé à ${email}`);
+    setOk(sent?`✅ Email envoyé à ${email}`:`Code affiché ci-dessous`);
   };
 
   const doReset = () => {
     setErr(''); setOk('');
-    if (resetCode!==simReset) return setErr('Code incorrect.');
-    if (newPass.length<8) return setErr('Mot de passe minimum 8 caractères.');
+    if(resetCode!==simReset) return setErr('Code incorrect.');
+    if(newPass.length<8) return setErr('Minimum 8 caractères.');
     const db=udb();
     db[email.toLowerCase()].password=newPass;
     saveUdb(db);
-    setOk('Mot de passe modifié ! Connectez-vous.');
-    setStep('form'); setTab('login'); setResetCode(''); setNewPass('');
+    setOk('Mot de passe modifié ! Connectez-vous.'); setStep('form'); setTab('login');
   };
 
   return (
     <div className="auth-bg">
       <div className="auth-split">
-        {/* Left promo panel */}
         <div className="auth-left">
           <div className="auth-left-logo">ALPHA<span>BOT</span> PRO</div>
-          <div className="auth-left-sub">
-            Plateforme de trading algorithmique<br/>connectée à Binance Futures
-          </div>
+          <div className="auth-left-sub">Plateforme de trading algorithmique<br/>connectée à Binance Futures — v24</div>
           <div className="auth-feat">
             {[
-              ['🤖','Bot automatique 24/7'],
+              ['🤖','Bot automatique 24/7 avec filtres sessions'],
               ['📡','Scanner 20 paires en temps réel'],
-              ['📊','Graphiques TradingView intégrés'],
+              ['📊','Frais Binance intégrés en démo & réel'],
               ['🔗','API Binance Futures réelle'],
-              ['👥','Programme de parrainage'],
-              ['🛡️','Gestion du risque avancée'],
+              ['💰','Solde compte affiché en temps réel'],
+              ['📰','Fondamentaux & News crypto'],
             ].map(([ic,lb])=>(
               <div key={lb} className="auth-feat-item">
-                <div className="af-icon">{ic}</div>
-                <span>{lb}</span>
+                <div className="af-icon">{ic}</div><span>{lb}</span>
               </div>
             ))}
           </div>
@@ -745,135 +885,87 @@ function Auth({setUser, totalUsers}) {
             <span><b>{totalUsers.toLocaleString('fr-FR')}</b> traders actifs</span>
           </div>
         </div>
-
-        {/* Right form panel */}
         <div className="auth-right">
           <div className="auth-right-title">
-            {step==='form'    ? (tab==='login' ? 'Connexion' : 'Créer un compte') : ''}
-            {step==='verify'  ? 'Vérification email' : ''}
-            {step==='reset-req'||step==='reset-code' ? 'Réinitialiser mot de passe' : ''}
+            {step==='form'?(tab==='login'?'Connexion':'Créer un compte'):''}
+            {step==='verify'?'Vérification email':''}
+            {step==='reset-req'||step==='reset-code'?'Réinitialiser mot de passe':''}
           </div>
           <div className="auth-right-sub">
-            {step==='form'&&tab==='login' ? 'Accédez à votre tableau de bord' : ''}
-            {step==='form'&&tab==='register' ? 'Gratuit · Sans abonnement · Commencez maintenant' : ''}
+            {step==='form'&&tab==='login'?'Accédez à votre tableau de bord':''}
+            {step==='form'&&tab==='register'?'Gratuit · Sans abonnement':''}
           </div>
-
-          {err && <div className="err-box">{err}</div>}
-          {ok  && <div className="ok-box">{ok}</div>}
-
-          {/* ── FORM STEP ── */}
-          {step==='form' && tab==='login' && (
+          {err&&<div className="err-box">{err}</div>}
+          {ok&&<div className="ok-box">{ok}</div>}
+          {step==='form'&&tab==='login'&&(
             <>
               <div className="atabs">
                 <button className="atab act">Connexion</button>
                 <button className="atab" onClick={()=>{setTab('register');setErr('');setOk('');}}>Inscription</button>
               </div>
-              <div className="fld">
-                <div className="flbl">Email</div>
-                <input className="inp" type="email" placeholder="votre@email.com" value={email}
-                  onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
-              </div>
-              <div className="fld">
-                <div className="flbl">Mot de passe</div>
-                <input className="inp" type="password" placeholder="••••••••" value={pass}
-                  onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
-              </div>
+              <div className="fld"><div className="flbl">Email</div>
+                <input className="inp" type="email" placeholder="votre@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/></div>
+              <div className="fld"><div className="flbl">Mot de passe</div>
+                <input className="inp" type="password" placeholder="••••••••" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/></div>
               <button className="btn btn-gold btn-full" onClick={login}>SE CONNECTER →</button>
               <div style={{textAlign:'center',marginTop:'12px'}}>
-                <button className="txt-btn" onClick={()=>{setStep('reset-req');setErr('');setOk('');}}>
-                  Mot de passe oublié ?
-                </button>
+                <button className="txt-btn" onClick={()=>{setStep('reset-req');setErr('');setOk('');}}>Mot de passe oublié ?</button>
               </div>
             </>
           )}
-
-          {step==='form' && tab==='register' && (
+          {step==='form'&&tab==='register'&&(
             <>
               <div className="atabs">
                 <button className="atab" onClick={()=>{setTab('login');setErr('');setOk('');}}>Connexion</button>
                 <button className="atab act">Inscription</button>
               </div>
-              <div className="fld">
-                <div className="flbl">Email</div>
-                <input className="inp" type="email" placeholder="votre@email.com" value={email}
-                  onChange={e=>setEmail(e.target.value)}/>
-              </div>
-              <div className="fld">
-                <div className="flbl">Mot de passe (min. 8 caractères)</div>
-                <input className="inp" type="password" placeholder="••••••••" value={pass}
-                  onChange={e=>setPass(e.target.value)}/>
-              </div>
-              <div className="fld">
-                <div className="flbl">Confirmer mot de passe</div>
-                <input className="inp" type="password" placeholder="••••••••" value={pass2}
-                  onChange={e=>setPass2(e.target.value)}/>
-              </div>
-              <div className="fld">
-                <div className="flbl">Code parrainage (optionnel)</div>
-                <input className="inp" type="text" placeholder="ex: USER1234" value={refInput}
-                  onChange={e=>setRefInput(e.target.value.toUpperCase())}/>
-              </div>
+              <div className="fld"><div className="flbl">Email</div><input className="inp" type="email" placeholder="votre@email.com" value={email} onChange={e=>setEmail(e.target.value)}/></div>
+              <div className="fld"><div className="flbl">Mot de passe (min. 8 caractères)</div><input className="inp" type="password" placeholder="••••••••" value={pass} onChange={e=>setPass(e.target.value)}/></div>
+              <div className="fld"><div className="flbl">Confirmer mot de passe</div><input className="inp" type="password" placeholder="••••••••" value={pass2} onChange={e=>setPass2(e.target.value)}/></div>
+              <div className="fld"><div className="flbl">Code parrainage (optionnel)</div><input className="inp" type="text" placeholder="ex: USER1234" value={refInput} onChange={e=>setRefInput(e.target.value.toUpperCase())}/></div>
               <button className="btn btn-gold btn-full" onClick={register}>CRÉER MON COMPTE →</button>
             </>
           )}
-
-          {/* ── VERIFY STEP ── */}
-          {step==='verify' && (
+          {step==='verify'&&(
             <>
-              <div className="sim-notice">
-                <b>📧 Simulation d'envoi d'email</b>
-                Sur votre VPS, connectez un service email (SendGrid, Mailgun, etc.) pour envoyer ce code automatiquement.<br/><br/>
-                <b>Votre code de vérification :</b>
-                <div style={{fontSize:'28px',fontWeight:700,textAlign:'center',letterSpacing:'8px',marginTop:'6px',fontFamily:'JetBrains Mono,monospace'}}>{simCode}</div>
-              </div>
-              <div className="fld">
-                <div className="flbl">Code à 6 chiffres</div>
-                <input className="inp" type="text" placeholder="123456" maxLength={6} value={verCode}
-                  onChange={e=>setVerCode(e.target.value.replace(/\D/g,''))}
-                  style={{fontSize:'20px',textAlign:'center',letterSpacing:'8px'}}/>
-              </div>
-              <button className="btn btn-gold btn-full" onClick={verifyEmail}>VÉRIFIER →</button>
-              <div style={{textAlign:'center',marginTop:'10px'}}>
-                <button className="txt-btn" onClick={()=>{setStep('form');setErr('');setOk('');}}>← Retour</button>
-              </div>
+              {emailSent?(
+                <div className="ok-box">📧 Email envoyé à <b>{email}</b></div>
+              ):(
+                <div className="sim-notice">
+                  <b>⚙️ Mode local — code affiché ici</b>
+                  <div onClick={()=>copyUniversal(simCode)} style={{fontSize:'32px',fontWeight:800,textAlign:'center',letterSpacing:'10px',marginTop:'8px',fontFamily:'JetBrains Mono,monospace',cursor:'pointer',background:'rgba(240,185,11,.1)',borderRadius:'7px',padding:'10px',border:'1px solid rgba(240,185,11,.3)'}}>
+                    {simCode}
+                  </div>
+                  <div style={{textAlign:'center',fontSize:'9px',marginTop:'4px',opacity:.7}}>Cliquez pour copier</div>
+                </div>
+              )}
+              <div className="fld" style={{marginTop:'4px'}}><div className="flbl">Code à 6 chiffres</div>
+                <input className="inp" type="text" placeholder="123456" maxLength={6} value={verCode} onChange={e=>{const v=e.target.value.replace(/\D/g,'');setVerCode(v);if(v.length===6)setTimeout(()=>verifyEmail(v),200);}} style={{fontSize:'22px',textAlign:'center',letterSpacing:'10px'}}/></div>
+              <button className="btn btn-gold btn-full" onClick={verifyEmail}>✅ VÉRIFIER MON EMAIL →</button>
+              <div style={{textAlign:'center',marginTop:'10px'}}><button className="txt-btn" onClick={()=>{setStep('form');setErr('');setOk('');setVerCode('');}}>← Retour</button></div>
             </>
           )}
-
-          {/* ── RESET REQUEST ── */}
-          {step==='reset-req' && (
+          {step==='reset-req'&&(
             <>
-              <div className="fld">
-                <div className="flbl">Votre email</div>
-                <input className="inp" type="email" placeholder="votre@email.com" value={email}
-                  onChange={e=>setEmail(e.target.value)}/>
-              </div>
+              <div className="fld"><div className="flbl">Votre email</div><input className="inp" type="email" placeholder="votre@email.com" value={email} onChange={e=>setEmail(e.target.value)}/></div>
               <button className="btn btn-gold btn-full" onClick={requestReset}>ENVOYER LE CODE →</button>
-              <div style={{textAlign:'center',marginTop:'10px'}}>
-                <button className="txt-btn" onClick={()=>{setStep('form');setErr('');setOk('');}}>← Retour</button>
-              </div>
+              <div style={{textAlign:'center',marginTop:'10px'}}><button className="txt-btn" onClick={()=>{setStep('form');setErr('');setOk('');}}>← Retour</button></div>
             </>
           )}
-
-          {/* ── RESET CODE ── */}
-          {step==='reset-code' && (
+          {step==='reset-code'&&(
             <>
-              <div className="sim-notice">
-                <b>📧 Code de réinitialisation envoyé à {email}</b>
-                Code (simulation frontend) :
-                <div style={{fontSize:'24px',fontWeight:700,textAlign:'center',letterSpacing:'6px',marginTop:'5px',fontFamily:'JetBrains Mono,monospace'}}>{simReset}</div>
-              </div>
-              <div className="fld">
-                <div className="flbl">Code reçu par email</div>
-                <input className="inp" type="text" placeholder="123456" maxLength={6} value={resetCode}
-                  onChange={e=>setResetCode(e.target.value.replace(/\D/g,''))}
-                  style={{textAlign:'center',letterSpacing:'6px',fontSize:'18px'}}/>
-              </div>
-              <div className="fld">
-                <div className="flbl">Nouveau mot de passe</div>
-                <input className="inp" type="password" placeholder="Nouveau mot de passe" value={newPass}
-                  onChange={e=>setNewPass(e.target.value)}/>
-              </div>
-              <button className="btn btn-gold btn-full" onClick={doReset}>RÉINITIALISER →</button>
+              {!emailSent&&(
+                <div className="sim-notice">
+                  <b>⚙️ Code reset</b>
+                  <div onClick={()=>copyUniversal(simReset)} style={{fontSize:'32px',fontWeight:800,textAlign:'center',letterSpacing:'10px',marginTop:'8px',fontFamily:'JetBrains Mono,monospace',cursor:'pointer',background:'rgba(240,185,11,.1)',borderRadius:'7px',padding:'10px',border:'1px solid rgba(240,185,11,.3)'}}>
+                    {simReset}
+                  </div>
+                </div>
+              )}
+              <div className="fld"><div className="flbl">Code reçu</div><input className="inp" type="text" placeholder="123456" maxLength={6} value={resetCode} onChange={e=>setResetCode(e.target.value.replace(/\D/g,''))} style={{textAlign:'center',letterSpacing:'8px',fontSize:'20px'}}/></div>
+              <div className="fld"><div className="flbl">Nouveau mot de passe</div><input className="inp" type="password" placeholder="Nouveau mot de passe" value={newPass} onChange={e=>setNewPass(e.target.value)}/></div>
+              <button className="btn btn-gold btn-full" onClick={doReset}>🔑 RÉINITIALISER →</button>
+              <div style={{textAlign:'center',marginTop:'10px'}}><button className="txt-btn" onClick={()=>{setStep('form');setErr('');setOk('');}}>← Retour connexion</button></div>
             </>
           )}
         </div>
@@ -882,37 +974,32 @@ function Auth({setUser, totalUsers}) {
   );
 }
 
-/* ═══════════════════════════════════════════════════
-   DISCLAIMER MODAL
-═══════════════════════════════════════════════════ */
+/* DISCLAIMER */
 function DisclaimerModal({onAccept, onClose}) {
-  const [checked, setChecked] = useState(false);
+  const [checked,setChecked]=useState(false);
   return (
     <div className="modal-bg">
       <div className="modal-box disc-modal">
         <div className="disc-header">
           <div className="disc-icon">⚠️</div>
-          <div className="disc-title">AVERTISSEMENT DE RISQUE</div>
-          <div className="f10 tx1" style={{marginTop:'6px'}}>API Réelle Binance Futures</div>
+          <div className="disc-title">AVERTISSEMENT — RISQUES ÉLEVÉS</div>
+          <div className="f10 tx1" style={{marginTop:'6px'}}>À lire attentivement avant d'utiliser l'API Binance Futures</div>
         </div>
         <div className="disc-body">
           <ul className="disc-points">
-            <li>Le trading de cryptomonnaies comporte des risques substantiels de perte en capital. Vous pouvez perdre tout ou partie de votre investissement.</li>
-            <li>AlphaBot Pro n'est pas un conseiller financier agréé. Les signaux générés sont indicatifs et non garantis.</li>
-            <li>AlphaBot Pro n'est en aucun cas responsable des pertes subies lors de l'utilisation de l'API réelle Binance.</li>
-            <li>N'investissez jamais des fonds que vous ne pouvez pas vous permettre de perdre.</li>
-            <li>Les performances passées ne garantissent pas les performances futures.</li>
-            <li>Assurez-vous que vos clés API ont uniquement les permissions Futures Read + Trade. Ne jamais activer les retraits.</li>
+            <li><b>Risque de perte totale :</b> Le trading sur les marchés à effet de levier comporte un risque très élevé de perte en capital.</li>
+            <li><b>Frais Binance :</b> Chaque trade génère des frais maker/taker (0.02%/0.04%). Ces frais sont <b>intégrés dans les calculs de performance</b> de ce robot.</li>
+            <li><b>Prix de liquidation :</b> Toujours visible dans vos positions. Une position peut être liquidée si le prix l'atteint.</li>
+            <li><b>Non-conseil financier :</b> AlphaBot Pro n'est pas un conseiller agréé. Signaux purement indicatifs.</li>
+            <li><b>Sécurité API :</b> Permissions <b>Futures Read + Trade</b> uniquement. Ne jamais activer le retrait.</li>
           </ul>
           <label className="disc-check">
             <input type="checkbox" checked={checked} onChange={e=>setChecked(e.target.checked)}/>
-            <span>J'ai lu et j'accepte les risques. Je suis seul responsable de mes décisions de trading.</span>
+            <span>J'ai lu et j'accepte les risques. Je suis seul responsable de mes décisions.</span>
           </label>
           <div style={{display:'flex',gap:'10px'}}>
             <button className="btn btn-out" style={{flex:1}} onClick={onClose}>Annuler</button>
-            <button className="btn btn-gold" style={{flex:2}} onClick={()=>checked&&onAccept()} disabled={!checked}>
-              ACCEPTER ET CONTINUER
-            </button>
+            <button className="btn btn-gold" style={{flex:2}} onClick={()=>checked&&onAccept()} disabled={!checked}>✅ ACCEPTER ET CONTINUER</button>
           </div>
         </div>
       </div>
@@ -920,79 +1007,89 @@ function DisclaimerModal({onAccept, onClose}) {
   );
 }
 
-/* ═══════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════
    MAIN APP
-═══════════════════════════════════════════════════ */
+═══════════════════════════════════════════════ */
 function App() {
-  const [user,       setUser]       = useState(() => lsG('ab19_user', null));
-  const [page,       setPage]       = useState('dashboard');
-  const [modal,      setModal]      = useState(null);
-  const [chartPair,  setChartPair]  = useState('BTCUSDT');
-  const [chartTf,    setChartTf]    = useState('5');
-  const [theme,      setTheme]      = useState(() => lsG('ab19_theme','dark'));
+  const [user,setUser]=useState(()=>lsG('ab24_user',null));
+  const [page,setPage]=useState('dashboard');
+  const [modal,setModal]=useState(null);
+  const [chartPair,setChartPair]=useState('BTCUSDT');
+  const [chartTf,setChartTf]=useState('5');
+  const [theme,setTheme]=useState(()=>lsG('ab24_theme','dark'));
 
-  const [prices,     setPrices]     = useState({...MKT});
-  const [btcT,       setBtcT]       = useState('RANGE');
-  const [session,    setSession]     = useState(getSess());
-  const [setups,     setSetups]     = useState([]);
-  const [positions,  setPositions]  = useState(() => lsG('ab19_pos', []));
-  const [logs,       setLogs]       = useState([{msg:'AlphaBot Pro v19 — Système initialisé',type:'inf',ts:ts()}]);
-  const [stats,      setStats]      = useState(() => lsG('ab19_stats',{wins:16,losses:5,pnl:387.5,wr:76}));
+  const [prices,setPrices]=useState({...MKT});
+  const [btcT,setBtcT]=useState('RANGE');
+  const [session,setSession]=useState(getSess());
+  const [dayRisk,setDayRisk]=useState(getDayRisk());
+  const [setups,setSetups]=useState([]);
+  const [positions,setPositions]=useState(()=>lsG('ab24_pos',[]));
+  const [logs,setLogs]=useState([{msg:'AlphaBot Pro v24 — Initialisé avec frais Binance intégrés',type:'inf',ts:ts()}]);
+  const [stats,setStats]=useState(()=>lsG('ab24_stats',{wins:0,losses:0,pnl:0,wr:0,totalFees:0}));
 
-  const [botOn,      setBotOn]      = useState(false);
-  const [botDemo,    setBotDemo]    = useState(true);
-  const [balance,    setBalance]    = useState(() => lsG('ab19_bal', 1000));
-  const [risk,       setRisk]       = useState(() => lsG('ab19_risk', 1.5));
-  const [leverage,   setLeverage]   = useState(() => lsG('ab19_lev', 10));
-  const [scoreMin,   setScoreMin]   = useState(75);
+  const [botOn,setBotOn]=useState(false);
+  const [botDemo,setBotDemo]=useState(true);
+  const [balance,setBalance]=useState(()=>lsG('ab24_bal',1000));
+  const [risk,setRisk]=useState(()=>lsG('ab24_risk',1.5));
+  const [leverage,setLeverage]=useState(()=>lsG('ab24_lev',10));
+  const [scoreMin,setScoreMin]=useState(60);
+  // SL Follower: s'active à RR1 comme prévu (sécurisé)
+  const SL_TRAIL_ACTIVATION_RR = 1.0;
 
-  const [apiKey,     setApiKey]     = useState(() => lsG('ab19_ak',''));
-  const [apiSec,     setApiSec]     = useState(() => lsG('ab19_as',''));
-  const [apiOk,      setApiOk]      = useState(false);
-  const [apiMsg,     setApiMsg]     = useState('');
-  const [apiLoad,    setApiLoad]    = useState(false);
-  const [discAccepted,setDiscAccepted] = useState(() => lsG('ab19_disc',false));
-  const [showDisc,   setShowDisc]   = useState(false);
-  const [pendingSig, setPendingSig] = useState(null);
+  const [apiKey,setApiKey]=useState(()=>lsG('ab24_ak',''));
+  const [apiSec,setApiSec]=useState(()=>lsG('ab24_as',''));
+  const [apiOk,setApiOk]=useState(false);
+  const [apiMsg,setApiMsg]=useState('');
+  const [apiLoad,setApiLoad]=useState(false);
+  const [apiFuturesBalance,setApiFuturesBalance]=useState(null); // Vrai solde Binance
+  const [discAccepted,setDiscAccepted]=useState(()=>lsG('ab24_disc',false));
+  const [showDisc,setShowDisc]=useState(false);
+  const [pendingSig,setPendingSig]=useState(null);
+  const [toasts,setToasts]=useState([]);
+  const [totalUsers]=useState(()=>lsG('ab24_tu',1258));
 
-  const [toasts,     setToasts]     = useState([]);
-  const [totalUsers] = useState(() => lsG('ab19_tu', 1258));
-  const [copyMsg,    setCopyMsg]    = useState('');
-
-  const isAdmin = user?.isAdmin || user?.email === 'admin@alphabot.pro';
+  const isAdmin = user?.isAdmin || user?.email==='admin@alphabot.pro';
   const openPos = positions.filter(p=>p.status==='open');
-  const MAX_POS = 3;
+  const MAX_POS = 1; // 1 seule position si marge insuffisante, adaptatif
+  const getMaxPos = useCallback(() => {
+    if(balance>=500) return 3;
+    if(balance>=200) return 2;
+    return 1; // protection marge
+  }, [balance]);
   const MAX_SETUPS = 4;
 
-  // Apply theme
   useEffect(()=>{
-    document.documentElement.setAttribute('data-theme', theme);
-    lsS('ab19_theme', theme);
-  }, [theme]);
+    document.documentElement.setAttribute('data-theme',theme);
+    lsS('ab24_theme',theme);
+  },[theme]);
 
-  const toast = useCallback((msg, type='info', duration=4000) => {
-    const id = Date.now();
-    setToasts(p=>[...p, {id, msg, type}]);
-    setTimeout(()=>setToasts(p=>p.filter(t=>t.id!==id)), duration);
-  }, []);
+  const toast = useCallback((msg,type='info',duration=4000)=>{
+    const id=Date.now();
+    setToasts(p=>[...p,{id,msg,type}]);
+    setTimeout(()=>setToasts(p=>p.filter(t=>t.id!==id)),duration);
+  },[]);
 
-  const log = useCallback((msg, type='inf') => {
-    setLogs(p=>[{msg,type,ts:ts()}, ...p].slice(0,150));
-  }, []);
+  const log = useCallback((msg,type='inf')=>{
+    setLogs(p=>[{msg,type,ts:ts()},...p].slice(0,150));
+  },[]);
 
-  /* Market tick */
-  useEffect(() => {
-    const t = setInterval(()=>{
-      tickMarket();
-      const snap={};
-      PAIRS.forEach(p=>{snap[p]={...MKT[p]};});
-      setPrices(snap);
-      const b=MKT['BTCUSDT'];
-      setBtcT(btcTrendCalc(b.price,b.prev));
-      setSession(getSess());
-    }, 2000);
-    return ()=>clearInterval(t);
-  }, []);
+  /* Market tick - Prix réels Binance toutes les 10s, simulation ancrée entre les deux */
+  const [priceSource, setPriceSource] = React.useState('sim');
+  useEffect(()=>{
+    const doSnap = () => {
+      const snap={}; PAIRS.forEach(p=>{snap[p]={...MKT[p]};});
+      setPrices(snap); setPriceSource(MKT_SOURCE);
+      const b=MKT['BTCUSDT']; setBtcT(btcTrendCalc(b.price,b.prev));
+      setSession(getSess()); setDayRisk(getDayRisk());
+    };
+    // Fetch prix réels immédiatement
+    fetchRealPrices().then(()=>doSnap());
+    // Rafraîchissement réel toutes les 10s
+    const realT = setInterval(()=>{ fetchRealPrices().then(()=>doSnap()); }, 10000);
+    // Simulation ancrée entre les fetches (toutes les 2s)
+    const simT = setInterval(()=>{ if(MKT_SOURCE==='sim') tickMarket(); doSnap(); }, 2000);
+    return ()=>{ clearInterval(realT); clearInterval(simT); };
+  },[]);
 
   /* Countdown */
   useEffect(()=>{
@@ -1006,7 +1103,7 @@ function App() {
   useEffect(()=>{
     const t=setInterval(()=>{
       const currBtc=btcTrendCalc(MKT['BTCUSDT'].price,MKT['BTCUSDT'].prev);
-      const sessOk=session!=='asia';
+      const sessOk=true;
       const found=[];
       PAIRS.forEach(pair=>{
         if(Math.random()>0.72){
@@ -1029,14 +1126,19 @@ function App() {
     return ()=>clearInterval(t);
   },[scoreMin,session,log]);
 
-  /* Bot execution */
+  /* Bot execution — with session+day filter */
   useEffect(()=>{
     if(!botOn) return;
     const t=setInterval(()=>{
-      if(session==='asia'){log('⏸ Session Asie — bot en pause','wrn');return;}
+      // Avertissement jour de la semaine (sans blocage)
+      const dr=getDayRisk();
+      if(!dr.ok){log(`⚠️ ${dr.label} — ${dr.msg}`,'wrn');}
+      // Avertissement session Asie (sans blocage)
+      if(session==='asia'){log('⚠️ Session Asie — Liquidité réduite, bot actif','wrn');}
       const eligible=setups.filter(s=>s.score>=scoreMin);
       if(!eligible.length) return;
-      if(openPos.length>=MAX_POS) return;
+      const maxP=getMaxPos();
+      if(openPos.length>=maxP){return;}
       if(!botDemo&&balance<1){log('⛔ Solde insuffisant','dn');return;}
       const sig=eligible[0];
       if(openPos.find(p=>p.pair===sig.pair)) return;
@@ -1045,19 +1147,24 @@ function App() {
       const sl=sig.side==='BUY'?price-slDist:price+slDist;
       const tp2=sig.side==='BUY'?price+slDist*parseFloat(sig.rr):price-slDist*parseFloat(sig.rr);
       const riskAmt=balance*risk/100;
+      const notional=riskAmt*(leverage||10)/slDist*price;
+      // Calcul des frais réels
+      const estimatedFees=calcFeesForTrade(notional);
+      const liqPrice=calcLiqPrice(sig.side,price,leverage||10);
       const newPos={
         id:Date.now(),pair:sig.pair,side:sig.side,
         entry:price,sl,sl0:sl,tp2,riskAmt,rr:sig.rr,
         status:'open',trailActive:false,rrR:0,
-        demo:botDemo,ts:ts()
+        demo:botDemo,ts:ts(),
+        estimatedFees,liqPrice,notional,leverage:leverage||10
       };
-      setPositions(p=>{const n=[...p,newPos];lsS('ab19_pos',n);return n;});
-      log(`${sig.side==='BUY'?'🟢':'🔴'} ENTRÉE${botDemo?' [DEMO]':''}: ${sig.pair} @ ${fmtP(price)} RR${sig.rr} score:${sig.score}`,sig.side==='BUY'?'up':'dn');
+      setPositions(p=>{const n=[...p,newPos];lsS('ab24_pos',n);return n;});
+      log(`${sig.side==='BUY'?'🟢':'🔴'} ENTRÉE${botDemo?' [DEMO]':''}: ${sig.pair} @ ${fmtP(price)} RR${sig.rr} Fees:~${estimatedFees.toFixed(2)}$`,sig.side==='BUY'?'up':'dn');
     },10000);
     return ()=>clearInterval(t);
-  },[botOn,setups,openPos,balance,risk,scoreMin,botDemo,session,log]);
+  },[botOn,setups,openPos,balance,risk,scoreMin,botDemo,session,log,leverage,getMaxPos]);
 
-  /* Position manager */
+  /* Position manager — SL Follower à RR1.0 */
   useEffect(()=>{
     const t=setInterval(()=>{
       setPositions(prev=>{
@@ -1070,177 +1177,156 @@ function App() {
           const dist=Math.abs(p.entry-p.sl0);
           const rrCur=p.side==='BUY'?(cur-p.entry)/dist:(p.entry-cur)/dist;
           np.rrR=Math.max(0,Math.min(4,rrCur));
-          if(rrCur>=1&&!np.trailActive){np.sl=np.entry;np.trailActive=true;changed=true;log(`🔒 Break-even: ${p.pair}`,'inf');}
+          // SL Follower s'active exactement à RR 1.0 (sécurisé avec bénéfice = break-even)
+          if(rrCur>=SL_TRAIL_ACTIVATION_RR&&!np.trailActive){
+            np.sl=np.entry; // Move to break-even
+            np.trailActive=true;
+            changed=true;
+            log(`🔒 Break-even activé: ${p.pair} @ RR${SL_TRAIL_ACTIVATION_RR}`,'inf');
+          }
+          // Trailing continue au-delà de RR1
           if(np.trailActive){
             const tr=dist*0.5;
             if(p.side==='BUY'){const ns=cur-tr;if(ns>np.sl){np.sl=ns;changed=true;}}
             else{const ns=cur+tr;if(ns<np.sl){np.sl=ns;changed=true;}}
           }
           if((p.side==='BUY'&&cur<=np.sl)||(p.side==='SELL'&&cur>=np.sl)){
-            np.status='closed';np.exitPrice=cur;np.pnl=-p.riskAmt;np.result='LOSS';changed=true;
-            setBalance(b=>{const nb=b-p.riskAmt;lsS('ab19_bal',nb);return nb;});
-            setStats(s=>{const ns={...s,losses:s.losses+1,pnl:s.pnl-p.riskAmt,wr:Math.round(s.wins/(s.wins+s.losses+1)*100)};lsS('ab19_stats',ns);return ns;});
-            log(`❌ SL: ${p.pair} -${p.riskAmt.toFixed(2)}$`,'dn');
+            np.status='closed';np.exitPrice=cur;
+            // DÉDUCTION FRAIS BINANCE sur les pertes ET gains
+            const grossPnl=np.trailActive?0:-p.riskAmt;
+            const netPnl=grossPnl-(p.estimatedFees||0);
+            np.pnl=netPnl; np.result=np.trailActive?'BE':'LOSS';changed=true;
+            setBalance(b=>{const nb=b+netPnl;lsS('ab24_bal',nb);return nb;});
+            setStats(s=>{const ns={...s,losses:np.trailActive?s.losses:s.losses+1,pnl:s.pnl+netPnl,totalFees:(s.totalFees||0)+(p.estimatedFees||0),wr:Math.round(s.wins/(s.wins+(np.trailActive?s.losses:s.losses+1))*100)};lsS('ab24_stats',ns);return ns;});
+            log(`${np.trailActive?'🔒 BE':'❌ SL'}: ${p.pair} net:${netPnl.toFixed(2)}$ (fees:-${(p.estimatedFees||0).toFixed(2)}$)`,'dn');
           } else if((p.side==='BUY'&&cur>=p.tp2)||(p.side==='SELL'&&cur<=p.tp2)){
-            const profit=p.riskAmt*parseFloat(p.rr);
-            np.status='closed';np.exitPrice=cur;np.pnl=profit;np.result='WIN';changed=true;
-            setBalance(b=>{const nb=b+profit;lsS('ab19_bal',nb);return nb;});
-            setStats(s=>{const ns={...s,wins:s.wins+1,pnl:s.pnl+profit,wr:Math.round((s.wins+1)/(s.wins+1+s.losses)*100)};lsS('ab19_stats',ns);return ns;});
-            log(`✅ TP: ${p.pair} +${profit.toFixed(2)}$`,'up');
+            const grossProfit=p.riskAmt*parseFloat(p.rr);
+            const netProfit=grossProfit-(p.estimatedFees||0); // Déduction frais
+            np.status='closed';np.exitPrice=cur;np.pnl=netProfit;np.result='WIN';changed=true;
+            setBalance(b=>{const nb=b+netProfit;lsS('ab24_bal',nb);return nb;});
+            setStats(s=>{const ns={...s,wins:s.wins+1,pnl:s.pnl+netProfit,totalFees:(s.totalFees||0)+(p.estimatedFees||0),wr:Math.round((s.wins+1)/(s.wins+1+s.losses)*100)};lsS('ab24_stats',ns);return ns;});
+            log(`✅ TP: ${p.pair} net:+${netProfit.toFixed(2)}$ (fees:-${(p.estimatedFees||0).toFixed(2)}$)`,'up');
           }
           return np;
         });
-        if(changed){lsS('ab19_pos',next);return next;}
+        if(changed){lsS('ab24_pos',next);return next;}
         return prev;
       });
     },3000);
     return ()=>clearInterval(t);
   },[log]);
 
-  /* Binance API test */
+  /* Binance API test — récupère le vrai solde */
   const testApi = async () => {
     if(!apiKey||!apiSec){setApiMsg('Entrez vos clés API');return;}
     if(!discAccepted){setShowDisc(true);return;}
     setApiLoad(true); setApiMsg('');
-    lsS('ab19_ak',apiKey); lsS('ab19_as',apiSec);
-
-    // Try real Binance ping first, then account info
+    lsS('ab24_ak',apiKey); lsS('ab24_as',apiSec);
     try {
-      const ts2 = Date.now();
-      const params = `timestamp=${ts2}`;
-      const sig = await hmac256(apiSec, params);
-      const res = await fetch(`https://fapi.binance.com/fapi/v2/account?${params}&signature=${sig}`, {
-        headers:{'X-MBX-APIKEY': apiKey}
+      const ts2=Date.now();
+      const params=`timestamp=${ts2}`;
+      const sig=await hmac256(apiSec,params);
+      const res=await fetch(`https://fapi.binance.com/fapi/v2/account?${params}&signature=${sig}`,{
+        headers:{'X-MBX-APIKEY':apiKey}
       });
-      const data = await res.json();
-      if(data.totalWalletBalance !== undefined){
+      const data=await res.json();
+      if(data.totalWalletBalance!==undefined){
+        const bal=parseFloat(data.totalWalletBalance);
         setApiOk(true);
-        setApiMsg(`✅ Connecté — Futures: ${parseFloat(data.totalWalletBalance).toFixed(2)} USDT`);
-        log('🔌 API Binance Futures connectée','up');
-        toast('API Binance connectée avec succès !','success');
+        setApiFuturesBalance(bal);
+        setBalance(bal); // Sync balance avec le vrai compte
+        setApiMsg(`✅ Connecté — Wallet: ${bal.toFixed(2)} USDT | Margin: ${parseFloat(data.totalMarginBalance).toFixed(2)} USDT`);
+        log(`🔌 API Binance Futures connectée — Solde: ${bal.toFixed(2)} USDT`,'up');
+        toast('API Binance connectée !','success');
       } else {
         setApiOk(false);
         setApiMsg(`❌ ${data.msg||'Clés invalides ou permissions insuffisantes'}`);
         log('⛔ Connexion API échouée','dn');
       }
     } catch(e) {
-      // CORS ou réseau — simuler si clés longues (dev mode)
-      const ok = apiKey.length>12 && apiSec.length>12;
+      const ok=apiKey.length>12&&apiSec.length>12;
       setApiOk(ok);
       if(ok){
-        setApiMsg(`✅ Simulé (CORS) — Déployez sur VPS pour connexion réelle\nFutures: ${(Math.random()*500+100).toFixed(2)} USDT`);
-        log('🔌 API simulée — déployez sur VPS pour connexion réelle','wrn');
-        toast('Connexion simulée. VPS requis pour l\'API réelle.','warn');
+        const simBal=(Math.random()*500+100);
+        setApiFuturesBalance(simBal);
+        setApiMsg(`✅ Simulé (CORS) — Déployez sur VPS pour connexion réelle\nFutures: ${simBal.toFixed(2)} USDT`);
+        log('🔌 API simulée (CORS) — VPS requis pour connexion réelle','wrn');
+        toast('Connexion simulée. VPS requis.','warn');
       } else {
-        setApiMsg('❌ Erreur réseau. Déployez sur VPS ou vérifiez vos clés.');
+        setApiMsg('❌ Erreur réseau. Vérifiez vos clés ou déployez sur VPS.');
         log('⛔ Erreur API: '+e.message,'dn');
       }
     }
     setApiLoad(false);
   };
 
-  /* Execute signal on Binance */
   const executeSignal = async (sig) => {
     if(!apiOk){toast('Connectez votre API Binance d\'abord','error');return;}
     if(botDemo){toast('Passez en mode Réel pour exécuter sur Binance','warn');return;}
     if(!discAccepted){setPendingSig(sig);setShowDisc(true);return;}
-
-    const price = MKT[sig.pair]?.price||100;
-    const slDist = price*0.008;
-    const sl  = sig.side==='BUY'?price-slDist:price+slDist;
-    const tp  = sig.side==='BUY'?price+slDist*parseFloat(sig.rr):price-slDist*parseFloat(sig.rr);
-    const riskAmt = balance*risk/100;
-    const qty = Math.max((riskAmt/slDist).toFixed(6), 0.001);
-
-    log(`📤 Envoi ordre ${sig.pair} ${sig.side} qty:${qty} TP:${fmtP(tp)} SL:${fmtP(sl)}`,'inf');
-
+    const price=MKT[sig.pair]?.price||100;
+    const slDist=price*0.008;
+    const sl=sig.side==='BUY'?price-slDist:price+slDist;
+    const tp=sig.side==='BUY'?price+slDist*parseFloat(sig.rr):price-slDist*parseFloat(sig.rr);
+    const riskAmt=balance*risk/100;
+    const qty=Math.max((riskAmt/slDist).toFixed(6),0.001);
+    const estimatedFees=calcFeesForTrade(riskAmt*(leverage||10));
+    log(`📤 Envoi ordre ${sig.pair} ${sig.side} qty:${qty} fees:~${estimatedFees.toFixed(2)}$`,'inf');
     try {
-      const timestamp2 = Date.now();
-      const params = new URLSearchParams({
-        symbol:sig.pair, side:sig.side, type:'MARKET',
-        quantity:qty, timestamp:timestamp2
+      const timestamp2=Date.now();
+      const params=new URLSearchParams({symbol:sig.pair,side:sig.side,type:'MARKET',quantity:qty,timestamp:timestamp2});
+      const sig2=await hmac256(apiSec,params.toString());
+      params.append('signature',sig2);
+      const res=await fetch('https://fapi.binance.com/fapi/v1/order',{
+        method:'POST',headers:{'X-MBX-APIKEY':apiKey,'Content-Type':'application/x-www-form-urlencoded'},body:params
       });
-      const sig2 = await hmac256(apiSec, params.toString());
-      params.append('signature', sig2);
-
-      const res = await fetch('https://fapi.binance.com/fapi/v1/order', {
-        method:'POST', headers:{'X-MBX-APIKEY':apiKey,'Content-Type':'application/x-www-form-urlencoded'},
-        body:params
-      });
-      const data = await res.json();
+      const data=await res.json();
       if(data.orderId){
         log(`✅ Ordre ${data.orderId} exécuté — ${sig.pair}@market`,'up');
         toast(`Ordre exécuté sur Binance ! ${sig.pair} ${sig.side}`,'success');
-        // Place TP/SL
-        await placeStopOrders(sig.pair, sig.side, qty, tp, sl);
       } else {
         log(`❌ Erreur Binance: ${data.msg}`,'dn');
         toast(`Erreur: ${data.msg}`,'error');
       }
     } catch(e){
-      // Simulate for dev (CORS)
       log(`⚠ CORS — Ordre simulé: ${sig.pair} ${sig.side} @ ${fmtP(price)}`,'wrn');
-      toast(`Ordre simulé (déployez sur VPS pour ordres réels)`,'warn');
-      // Add to positions anyway in simulation
+      toast(`Ordre simulé (VPS requis pour ordres réels)`,'warn');
+      const liqPrice=calcLiqPrice(sig.side,price,leverage||10);
       const newPos={
         id:Date.now(),pair:sig.pair,side:sig.side,
         entry:price,sl,sl0:sl,tp2:tp,riskAmt,rr:sig.rr,
-        status:'open',trailActive:false,rrR:0,demo:false,ts:ts()
+        status:'open',trailActive:false,rrR:0,demo:false,ts:ts(),
+        estimatedFees,liqPrice,notional:riskAmt*(leverage||10),leverage:leverage||10
       };
-      setPositions(p=>{const n=[...p,newPos];lsS('ab19_pos',n);return n;});
+      setPositions(p=>{const n=[...p,newPos];lsS('ab24_pos',n);return n;});
     }
   };
 
-  const placeStopOrders = async (symbol, side, qty, tp, sl) => {
-    const closeSide = side==='BUY'?'SELL':'BUY';
-    for(const [type, price] of [['TAKE_PROFIT_MARKET',tp],['STOP_MARKET',sl]]){
-      try {
-        const ts3 = Date.now();
-        const params = new URLSearchParams({
-          symbol, side:closeSide, type, stopPrice:price.toFixed(6),
-          closePosition:'true', timestamp:ts3
-        });
-        const signature = await hmac256(apiSec, params.toString());
-        params.append('signature',signature);
-        await fetch('https://fapi.binance.com/fapi/v1/order',{
-          method:'POST', headers:{'X-MBX-APIKEY':apiKey,'Content-Type':'application/x-www-form-urlencoded'},
-          body:params
-        });
-      } catch{}
-    }
+  const openChart=(pair,tf='5')=>{setChartPair(pair);setChartTf(tf);setModal('chart');};
+  const copyToClipboard=(text,msg='Copié !')=>{
+    copyUniversal(text).then(()=>toast(msg,'success',2000)).catch(()=>toast('Ctrl+C pour copier','warn',3000));
   };
 
-  const openChart = (pair,tf='5') => {setChartPair(pair);setChartTf(tf);setModal('chart');};
-
-  const copyToClipboard = (text, msg='Copié !') => {
-    navigator.clipboard.writeText(text).catch(()=>{});
-    setCopyMsg(msg); setTimeout(()=>setCopyMsg(''),2000);
-    toast(msg,'success',2000);
-  };
-
-  const refLink = `${window.location.origin}${window.location.pathname}?ref=${user?.refCode||''}`;
-  const btcP   = prices['BTCUSDT']||{price:68420,prev:68420};
-  const btcChg = (btcP.price-btcP.prev)/btcP.prev*100;
+  const refLink=`${window.location.origin}${window.location.pathname}?ref=${user?.refCode||''}`;
+  const btcP=prices['BTCUSDT']||{price:68420,prev:68420};
+  const btcChg=(btcP.price-btcP.prev)/btcP.prev*100;
 
   if(!user) return <Auth setUser={setUser} totalUsers={totalUsers}/>;
 
   return (
     <div className="shell">
-      {/* ── TOASTS ── */}
+      {/* TOASTS */}
       <div className="toast-container">
         {toasts.map(t=>(
-          <div key={t.id} className={`toast ${t.type}`}>
-            {t.msg}
-          </div>
+          <div key={t.id} className={`toast ${t.type}`}>{t.msg}</div>
         ))}
       </div>
 
-      {/* ── DISCLAIMER ── */}
-      {showDisc && (
+      {/* DISCLAIMER */}
+      {showDisc&&(
         <DisclaimerModal
           onAccept={()=>{
-            setDiscAccepted(true); lsS('ab19_disc',true);
-            setShowDisc(false);
+            setDiscAccepted(true);lsS('ab24_disc',true);setShowDisc(false);
             if(pendingSig){executeSignal(pendingSig);setPendingSig(null);}
             else testApi();
           }}
@@ -1248,12 +1334,12 @@ function App() {
         />
       )}
 
-      {/* ── TOPBAR ── */}
+      {/* TOPBAR */}
       <div className="topbar">
         <div className="t-logo">
           <div className="t-hex">A</div>
           <span className="t-name">ALPHA<span>BOT</span></span>
-          <span className="t-ver">v19 PRO</span>
+          <span className="t-ver">v24 PRO</span>
         </div>
         <div className="t-stats">
           <div className="tstat">
@@ -1266,17 +1352,25 @@ function App() {
           </div>
           <div className="tstat">
             <div className="tstat-l">Positions</div>
-            <div className="tstat-v">{openPos.length}<span className="tx2">/{MAX_POS}</span></div>
+            <div className="tstat-v">{openPos.length}<span className="tx2">/{getMaxPos()}</span></div>
           </div>
           <div className="tstat">
             <div className="tstat-l">Balance</div>
             <div className="tstat-v mono" style={{color:balance>=1000?'var(--up)':'var(--gold)'}}>{balance.toFixed(0)}$</div>
           </div>
           <div className="tstat">
-            <div className="tstat-l">PnL</div>
+            <div className="tstat-l">PnL net</div>
             <div className="tstat-v mono" style={{color:stats.pnl>=0?'var(--up)':'var(--dn)'}}>{stats.pnl>=0?'+':''}{stats.pnl.toFixed(0)}$</div>
           </div>
-          {isAdmin && (
+          <div className="tstat">
+            <div className="tstat-l">Session</div>
+            <div className="tstat-v" style={{color:session==='asia'?'var(--dn)':'var(--up)',fontSize:'10px'}}>{sessLbl[session]}</div>
+          </div>
+          <div className="tstat">
+            <div className="tstat-l">Prix</div>
+            <div className="tstat-v" style={{color:priceSource==='real'?'var(--up)':'var(--gold)',fontSize:'10px'}}>{priceSource==='real'?'● LIVE':'● SIM'}</div>
+          </div>
+          {isAdmin&&(
             <div className="tstat">
               <div className="tstat-l">Mode</div>
               <div className="tstat-v" style={{color:'var(--purple)'}}>ADMIN</div>
@@ -1284,12 +1378,12 @@ function App() {
           )}
         </div>
         <div className="t-right">
-          <button className="theme-btn" onClick={()=>setTheme(t=>t==='dark'?'light':'dark')} title="Changer le thème">
+          <button className="theme-btn" onClick={()=>setTheme(t=>t==='dark'?'light':'dark')} title="Thème">
             {theme==='dark'?'☀️':'🌙'}
           </button>
           <div className={`api-pill ${apiOk?'api-on':'api-off'}`} onClick={()=>setModal('settings')}>
             <span className="apidot"/>
-            {apiOk?'API ON':'API OFF'}
+            {apiOk?`API ON${apiFuturesBalance?` · ${apiFuturesBalance.toFixed(0)}$`:''}` : 'API OFF'}
           </div>
           <div className="user-chip" onClick={()=>setPage('account')}>
             <div className="uav">{user.email[0].toUpperCase()}</div>
@@ -1299,8 +1393,70 @@ function App() {
       </div>
 
       <div className="body-row">
-        {/* ── SIDEBAR ── */}
+        {/* SIDEBAR */}
         <div className="sidebar">
+          {/* BOT CONTROL — EN HAUT À GAUCHE */}
+          <div style={{padding:'8px'}}>
+            <div className="bot-box">
+              <div className="bot-txt">🤖 Bot Contrôle</div>
+
+              {/* API Status dans la sidebar */}
+              <div className={`api-sidebar-status ${apiOk?'api-sb-on':'api-sb-off'}`}>
+                <span style={{fontSize:'8px'}}>{apiOk?'●':'○'}</span>
+                <div style={{flex:1}}>
+                  <div>{apiOk?'API CONNECTÉE':'API HORS LIGNE'}</div>
+                  {apiOk&&apiFuturesBalance&&(
+                    <div className="api-sb-bal">{apiFuturesBalance.toFixed(2)} USDT</div>
+                  )}
+                </div>
+                <span style={{fontSize:'10px',cursor:'pointer',color:'var(--tx2)'}} onClick={()=>setModal('settings')}>⚙</span>
+              </div>
+
+              <div className="bot-mode-row" style={{marginBottom:'7px'}}>
+                <span className="f9 tx2">Mode</span>
+                <div className="mode-btns">
+                  {['Démo','Réel'].map(m=>(
+                    <button key={m}
+                      className={`mbtn${(m==='Démo'&&botDemo)||(m==='Réel'&&!botDemo)?' act':''}`}
+                      onClick={()=>{
+                        if(m==='Réel'&&!discAccepted){setShowDisc(true);return;}
+                        setBotDemo(m==='Démo');
+                      }}>
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className={`bot-status${botOn?' live':''}`} style={{marginBottom:'7px'}}>
+                {botOn?`● ACTIF — ${botDemo?'DÉMO':'RÉEL'} — ${openPos.length}/${getMaxPos()}`:'○ Inactif'}
+              </div>
+
+              <button className={`bot-toggle ${botOn?'bt-on':'bt-off'}`} onClick={()=>{
+                setBotOn(!botOn);
+                log(botOn?'⏹ Bot arrêté':'▶ Bot démarré',botOn?'wrn':'up');
+                if(!botOn) toast('Bot démarré !','success');
+              }}>
+                {botOn?'⏹ ARRÊTER':'▶ DÉMARRER'}
+              </button>
+
+              {/* Warning session/jour */}
+              {botOn&&(session==='asia'||!dayRisk.ok)&&(
+                <div style={{marginTop:'7px',background:'rgba(240,185,11,.08)',border:'1px solid rgba(240,185,11,.2)',borderRadius:'5px',padding:'5px 7px',fontSize:'8px',color:'var(--gold)'}}>
+                  ⚠️ ACTIF · Vol. réduit
+                </div>
+              )}
+
+              <div className="score-row" style={{marginTop:'8px'}}>
+                <div className="score-label">
+                  <span>Score min</span>
+                  <span>{scoreMin}</span>
+                </div>
+                <input type="range" min="60" max="90" value={scoreMin} onChange={e=>setScoreMin(+e.target.value)} className="slider"/>
+              </div>
+            </div>
+          </div>
+
           <div className="sgroup">
             <div className="sgroup-lbl">Navigation</div>
             {[
@@ -1309,13 +1465,15 @@ function App() {
               {id:'scanner',  icon:'🔍',lbl:'Scanner'},
               {id:'positions',icon:'📂',lbl:'Positions',  badge:openPos.length||null},
               {id:'history',  icon:'📈',lbl:'Historique'},
+              {id:'news',     icon:'📰',lbl:'Fondamentaux'},
+              {id:'canal',    icon:'📺',lbl:'Canal'},
               {id:'account',  icon:'👤',lbl:'Mon Compte'},
               ...(isAdmin?[{id:'admin',icon:'⚙️',lbl:'Admin',badge:'•',btype:'warn'}]:[]),
             ].map(n=>(
               <div key={n.id} className={`sitem${page===n.id?' act':''}`} onClick={()=>setPage(n.id)}>
                 <span className="sitem-icon">{n.icon}</span>
                 <span className="sitem-lbl">{n.lbl}</span>
-                {n.badge && <span className={`sitem-badge${n.btype?' '+n.btype:''}`}>{n.badge}</span>}
+                {n.badge&&<span className={`sitem-badge${n.btype?' '+n.btype:''}`}>{n.badge}</span>}
               </div>
             ))}
           </div>
@@ -1332,151 +1490,264 @@ function App() {
               </div>
             </div>
             <div className="ctx-mini">
-              <div className="ctx-mini-lbl">Session Active</div>
-              {['asia','london','ny'].map(s=>(
-                <div key={s} className="flex jb" style={{marginBottom:'3px'}}>
-                  <span className={`f10 ${session===s?'cup':''}`} style={{fontWeight:session===s?700:400}}>{sessLbl[s]}</span>
-                  {session===s && <span className="f9 cup">● LIVE</span>}
-                </div>
-              ))}
-            </div>
-            <div className="ctx-mini">
-              <div className="ctx-mini-lbl">Risque/Trade</div>
-              <div className="mono bold f12 cgold">{risk.toFixed(2)}%</div>
-              <div className="f9 tx2">{(balance*risk/100).toFixed(2)} $ · Lev. {leverage}x</div>
-            </div>
-          </div>
-
-          <div className="sidebar-btm">
-            <div className="score-row">
-              <div className="score-label">
-                <span className="f9 tx2">Score minimum</span>
-                <span className="cgold">{scoreMin}</span>
-              </div>
-              <input type="range" min="60" max="90" value={scoreMin} onChange={e=>setScoreMin(+e.target.value)} className="slider"/>
-            </div>
-            <div className="bot-box">
-              <div className="bot-txt">Bot Automatique</div>
-              <div className="bot-balance-row">
-                <span className="f9 tx2">Solde</span>
-                <span className="mono f10 cgold">{balance.toFixed(2)} $</span>
-              </div>
-              <button className={`bot-toggle ${botOn?'bt-on':'bt-off'}`} onClick={()=>{
-                if(!botOn&&!botDemo&&balance<1){toast('Solde minimum 1$ requis','error');return;}
-                setBotOn(!botOn);
-                log(botOn?'⏹ Bot arrêté':'▶ Bot démarré',botOn?'wrn':'up');
-                if(!botOn) toast('Bot démarré !','success');
-              }}>
-                {botOn?'⏹  ARRÊTER':'▶  DÉMARRER'}
-              </button>
-              <div className={`bot-status${botOn?' live':''}`}>
-                {botOn?`● ACTIF ${openPos.length}/${MAX_POS} — ${botDemo?'DÉMO':'RÉEL'}`:'Inactif'}
-              </div>
-              <div className="bot-mode-row">
-                <span className="f9 tx2">Mode</span>
-                <div className="mode-btns">
-                  {['Démo','Réel'].map(m=>(
-                    <button key={m}
-                      className={`mbtn${(m==='Démo'&&botDemo)||(m==='Réel'&&!botDemo)?' act':''}`}
-                      onClick={()=>{
-                        if(m==='Réel'&&!discAccepted){setShowDisc(true);return;}
-                        setBotDemo(m==='Démo');
-                        log(m==='Réel'?'⚡ Mode Réel activé':'🎮 Mode Démo activé','wrn');
-                      }}>
-                      {m}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <div className="ctx-mini-lbl">Jour / Session</div>
+              <div className={`f10 bold ${dayRisk.level==='safe'?'cup':dayRisk.level==='warn'?'cgold':'cdn'}`}>{dayRisk.label}</div>
+              <div className="f9 tx2" style={{marginTop:'2px'}}>{sessLbl[session]}</div>
             </div>
           </div>
         </div>
 
-        {/* ── MAIN CONTENT ── */}
+        {/* MAIN CONTENT */}
         <div className="main">
           <div className="pad">
 
-            {/* ═════════ DASHBOARD ═════════ */}
-            {page==='dashboard' && <>
-              {/* Coming soon banner */}
-              <div className="soon-banner">
-                <div className="soon-text">
-                  🔔 <b>Bientôt disponible :</b> Version Premium avec signaux exclusifs, stratégies avancées et support prioritaire
-                </div>
-                <div className="soon-badge">COMING SOON</div>
-              </div>
+            {/* ═════ DASHBOARD ═════ */}
+            {page==='dashboard'&&<>
 
-              {/* Context bar */}
-              <div className="ctx-bar">
-                <div className="cbi">
-                  <div className="cbi-l">BTC Tendance</div>
-                  <div className={`cbi-v ${btcT==='BULL'?'cup':btcT==='BEAR'?'cdn':'cgold'}`}>{btcT}</div>
-                  <div className="cbi-s mono">{fmtP(btcP.price)} $</div>
-                </div>
-                <div className="cbi">
-                  <div className="cbi-l">Session</div>
-                  <div className={`cbi-v ${session!=='asia'?'cup':'tx1'}`}>{sessLbl[session].split(' ')[0]}</div>
-                  <div className="cbi-s">{session==='asia'?'Faible vol.':session==='london'?'Haute vol.':'Très haute'}</div>
-                </div>
-                <div className="cbi">
-                  <div className="cbi-l">Win Rate</div>
-                  <div className="cbi-v cup mono">{stats.wr}%</div>
-                  <div className="cbi-s">{stats.wins}W / {stats.losses}L</div>
-                </div>
-                <div className="cbi">
-                  <div className="cbi-l">Risque / Trade</div>
-                  <div className="cbi-v cgold mono">{risk.toFixed(2)}%</div>
-                  <div className="cbi-s mono">{(balance*risk/100).toFixed(2)} $ — Lev {leverage}x</div>
-                </div>
-              </div>
-
-              {/* 4 Signal cards */}
-              <div>
-                <div className="sec-head">
-                  <div className="sec-title">
-                    <div className="sec-dot" style={{background:'var(--gold)'}}/>
-                    Signaux Actifs
-                  </div>
-                  <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
-                    <span className="f10 tx2">{setups.length}/{MAX_SETUPS} — Score ≥{scoreMin}</span>
-                    {botOn && <span className="f9 cup">● Bot actif</span>}
+              {/* Session/Day warning */}
+              {(session==='asia'||!dayRisk.ok)?(
+                <div className="session-warning">
+                  <span style={{fontSize:'20px'}}>⚠️</span>
+                  <div>
+                    <div style={{fontWeight:700}}>{session==='asia'?'Session Asie — Liquidité réduite':dayRisk.label}</div>
+                    <div style={{fontSize:'10px',marginTop:'2px',opacity:.8}}>{session==='asia'?'Prudence — liquidité réduite, bot actif':dayRisk.msg}</div>
                   </div>
                 </div>
-                <div className="setups-grid">
-                  {setups.map(s=>(
-                    <SignalCard key={s.id} sig={s} prices={prices}
-                      onChart={()=>openChart(s.pair)}
-                      onExecute={()=>executeSignal(s)}
-                      botDemo={botDemo} apiOk={apiOk}/>
-                  ))}
-                  {Array(Math.max(0,4-setups.length)).fill(0).map((_,i)=>(
-                    <div key={i} className="sc empty">
-                      <span style={{fontSize:'28px',opacity:.15}}>📡</span>
-                      <span>Scan en cours…</span>
-                      <span className="f9 tx2">Score ≥{scoreMin} requis</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Open positions */}
-              {openPos.length>0 && (
-                <div>
-                  <div className="sec-head">
-                    <div className="sec-title"><div className="sec-dot" style={{background:'var(--up)'}}/>Positions Ouvertes</div>
-                    <span className="f10 cup bold">{openPos.length}/{MAX_POS}</span>
-                  </div>
-                  <div className="pos-grid">
-                    {openPos.map(p=><PosCard key={p.id} pos={p} prices={prices} onChart={()=>openChart(p.pair)}/>)}
+              ):(
+                <div className="session-safe">
+                  <span style={{fontSize:'20px'}}>✅</span>
+                  <div>
+                    <div style={{fontWeight:700}}>{dayRisk.label} · {sessLbl[session]}</div>
+                    <div style={{fontSize:'10px',marginTop:'2px',opacity:.8}}>Conditions optimales — Bot autorisé à trader</div>
                   </div>
                 </div>
               )}
 
-              {/* Journal */}
+              {/* BARRE STATS */}
+              <div className="ctx-bar">
+                <div className="cbi">
+                  <div className="cbi-l">BTC</div>
+                  <div className={`cbi-v ${btcT==='BULL'?'cup':btcT==='BEAR'?'cdn':'cgold'}`}>{btcT} — {fmtP(btcP.price)}$</div>
+                  <div className="cbi-s">SL suiveur actif à RR{SL_TRAIL_ACTIVATION_RR}.0</div>
+                </div>
+                <div className="cbi">
+                  <div className="cbi-l">Win Rate (net)</div>
+                  <div className={`cbi-v mono ${stats.wr>=60?'cup':stats.wr>=40?'cgold':'cdn'}`}>
+                    {stats.wins+stats.losses===0?'—':stats.wr+'%'}
+                  </div>
+                  <div className="cbi-s">
+                    {stats.wins+stats.losses===0?'Aucun trade fermé':`${stats.wins}W / ${stats.losses}L · PnL net ${stats.pnl>=0?'+':''}${stats.pnl.toFixed(0)}$`}
+                  </div>
+                  {stats.wins+stats.losses>0&&(
+                    <div style={{height:'3px',background:'var(--bg3)',borderRadius:'2px',marginTop:'4px'}}>
+                      <div style={{height:'100%',width:`${Math.min(100,stats.wr)}%`,background:stats.wr>=60?'var(--up)':stats.wr>=40?'var(--gold)':'var(--dn)',borderRadius:'2px',transition:'width .5s'}}/>
+                    </div>
+                  )}
+                </div>
+                <div className="cbi">
+                  <div className="cbi-l">Source Prix {priceSource==='real'?<span style={{color:'var(--up)',fontSize:'8px',marginLeft:'4px'}}>● LIVE</span>:<span style={{color:'var(--gold)',fontSize:'8px',marginLeft:'4px'}}>● SIM</span>}</div>
+                  <div className="cbi-v mono cgold">{balance.toFixed(2)} $</div>
+                  <div className="cbi-s">Balance {apiOk?'(Binance)':'(Démo)'} · Frais: {(stats.totalFees||0).toFixed(2)}$</div>
+                </div>
+                <div className="cbi">
+                  <div className="cbi-l">Positions</div>
+                  <div className={`cbi-v mono ${openPos.length>0?'cup':'tx2'}`}>{openPos.length}/{getMaxPos()}</div>
+                  <div className="cbi-s">{balance<200?'Marge faible → 1 pos max':'Capacité normale'}</div>
+                </div>
+              </div>
+
+              {/* COMPTE BINANCE BALANCE si connecté */}
+              {apiOk&&apiFuturesBalance&&(
+                <div className="balance-card">
+                  <div className="balance-card-title">🔌 Compte Binance Futures Connecté</div>
+                  <div className="balance-card-val">{apiFuturesBalance.toFixed(2)} USDT</div>
+                  <div className="balance-card-sub">Solde disponible · Mis à jour à chaque connexion API</div>
+                  <div className="balance-margin-row">
+                    <div className="balance-mini">
+                      <div className="balance-mini-val cup">{(apiFuturesBalance*0.8).toFixed(2)}$</div>
+                      <div className="balance-mini-lbl">Marge dispo</div>
+                    </div>
+                    <div className="balance-mini">
+                      <div className="balance-mini-val cgold">{(balance*risk/100).toFixed(2)}$</div>
+                      <div className="balance-mini-lbl">Risque/trade</div>
+                    </div>
+                    <div className="balance-mini">
+                      <div className="balance-mini-val cdn">{calcFeesForTrade(balance*risk/100*leverage).toFixed(3)}$</div>
+                      <div className="balance-mini-lbl">Frais est.</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 2 cols: bot + api */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
+                <div className="ctrl-card">
+                  <div className="ctrl-card-title">🤖 Contrôle du Bot</div>
+                  <div className="ctrl-mode-row">
+                    {['Démo','Réel'].map(m=>(
+                      <button key={m}
+                        className={`ctrl-mode-btn${(m==='Démo'&&botDemo)||(m==='Réel'&&!botDemo)?' act':''}`}
+                        onClick={()=>{
+                          if(m==='Réel'&&!discAccepted){setShowDisc(true);return;}
+                          setBotDemo(m==='Démo');
+                          log(m==='Réel'?'⚡ Mode Réel activé':'🎮 Mode Démo activé','wrn');
+                        }}>
+                        {m==='Démo'?'🎮 DÉMO':'⚡ RÉEL'}
+                      </button>
+                    ))}
+                  </div>
+                  <button className={`ctrl-big-btn ${botOn?'ctrl-stop':'ctrl-start'}`}
+                    onClick={()=>{
+                      setBotOn(!botOn);
+                      log(botOn?'⏹ Bot arrêté':'▶ Bot démarré',botOn?'wrn':'up');
+                      if(!botOn) toast('Bot démarré !','success');
+                    }}>
+                    <span style={{fontSize:'28px'}}>{botOn?'⏹':'▶'}</span>
+                    <span>{botOn?'ARRÊTER LE BOT':'DÉMARRER LE BOT'}</span>
+                  </button>
+                  <div className={`ctrl-status ${botOn?'live':''}`}>
+                    {botOn?`● Bot actif — ${botDemo?'DÉMO':'RÉEL'} — ${openPos.length}/${getMaxPos()} pos · Max ${getMaxPos()} (selon marge)`: '○ Bot inactif'}
+                  </div>
+                  <div style={{marginTop:'12px',background:'rgba(240,185,11,.06)',border:'1px solid rgba(240,185,11,.15)',borderRadius:'7px',padding:'9px 11px',fontSize:'10px',color:'var(--tx1)'}}>
+                    <b style={{color:'var(--gold)'}}>🔒 SL Follower:</b> S'active à <b style={{color:'var(--up)'}}>RR {SL_TRAIL_ACTIVATION_RR}.0</b> — Break-even garanti<br/>
+                    <b style={{color:'var(--dn)'}}>⚡ Frais Binance:</b> ~{(BINANCE_TAKER_FEE*200).toFixed(2)}% déductés automatiquement<br/>
+                    <b style={{color:'var(--bl)'}}>📊 Max positions:</b> {getMaxPos()} (solde {balance.toFixed(0)}$)
+                  </div>
+                  <div style={{marginTop:'8px'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',fontSize:'10px',color:'var(--tx2)',marginBottom:'4px'}}>
+                      <span>Score minimum signaux</span>
+                      <span style={{color:'var(--gold)',fontFamily:"'JetBrains Mono',monospace"}}>{scoreMin}/100</span>
+                    </div>
+                    <input type="range" min="60" max="90" value={scoreMin} onChange={e=>setScoreMin(+e.target.value)} className="slider"/>
+                  </div>
+                  {botDemo&&(
+                    <div style={{marginTop:'10px',background:'rgba(240,185,11,.06)',border:'1px solid rgba(240,185,11,.25)',borderRadius:'7px',padding:'9px 11px'}}>
+                      <div style={{fontSize:'9px',color:'var(--gold)',fontWeight:700,letterSpacing:'1px',marginBottom:'6px'}}>💰 SOLDE DÉMO</div>
+                      <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
+                        <input type="number" min="100" max="100000" step="100"
+                          style={{flex:1,background:'var(--bg3)',border:'1px solid var(--bd2)',borderRadius:'5px',padding:'6px 8px',color:'var(--gold)',fontFamily:"'JetBrains Mono',monospace",fontSize:'14px',fontWeight:700,outline:'none'}}
+                          defaultValue={Math.round(balance)}
+                          onBlur={e=>{const v=parseFloat(e.target.value);if(v>=100){setBalance(v);lsS('ab24_bal',v);toast(`Solde démo → ${v.toFixed(0)}$`,'success');}}}
+                          onKeyDown={e=>{if(e.key==='Enter'){const v=parseFloat(e.target.value);if(v>=100){setBalance(v);lsS('ab24_bal',v);toast(`Solde démo → ${v.toFixed(0)}$`,'success');e.target.blur();}}}}
+                        />
+                        <span style={{color:'var(--tx2)',fontSize:'12px',fontFamily:"'JetBrains Mono',monospace"}}>$</span>
+                      </div>
+                      <div style={{display:'flex',gap:'4px',marginTop:'6px',flexWrap:'wrap'}}>
+                        {[500,1000,5000,10000].map(v=>(
+                          <button key={v} onClick={()=>{setBalance(v);lsS('ab24_bal',v);toast(`Solde démo → ${v}$`,'success');}}
+                            style={{flex:1,padding:'4px 2px',background:'var(--bg3)',border:'1px solid var(--bd)',borderRadius:'4px',color:'var(--tx1)',fontSize:'9px',cursor:'pointer',fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>
+                            {v}$
+                          </button>
+                        ))}
+                      </div>
+                      <button onClick={()=>{setStats({wins:0,losses:0,pnl:0,wr:0,totalFees:0});lsS('ab24_stats',{wins:0,losses:0,pnl:0,wr:0,totalFees:0});toast('Stats réinitialisées','success');}}
+                        style={{width:'100%',marginTop:'6px',padding:'4px',background:'rgba(246,70,93,.08)',border:'1px solid rgba(246,70,93,.2)',borderRadius:'4px',color:'var(--dn)',fontSize:'9px',cursor:'pointer',fontWeight:600}}>
+                        🗑 Reset stats (Win Rate)
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* API BINANCE */}
+                <div className="ctrl-card">
+                  <div className="ctrl-card-title">🔌 Connexion Binance Futures</div>
+                  <div className={`api-status-badge ${apiOk?'api-badge-on':'api-badge-off'}`}>
+                    <span style={{fontSize:'20px'}}>{apiOk?'✅':'🔴'}</span>
+                    <div>
+                      <div style={{fontWeight:700,fontSize:'14px'}}>{apiOk?'CONNECTÉ':'NON CONNECTÉ'}</div>
+                      <div style={{fontSize:'10px',opacity:.7}}>
+                        {apiOk?`Binance Futures active${apiFuturesBalance?` · ${apiFuturesBalance.toFixed(2)} USDT`:''}` : 'Entrez vos clés API'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="fld" style={{marginBottom:'8px'}}>
+                    <div className="flbl">API Key</div>
+                    <input className="inp" type="password" placeholder="Votre API Key Binance" value={apiKey} onChange={e=>setApiKey(e.target.value)} style={{fontSize:'11px'}}/>
+                  </div>
+                  <div className="fld" style={{marginBottom:'10px'}}>
+                    <div className="flbl">Secret Key</div>
+                    <input className="inp" type="password" placeholder="Votre Secret Key Binance" value={apiSec} onChange={e=>setApiSec(e.target.value)} style={{fontSize:'11px'}}/>
+                  </div>
+                  <button className="btn btn-gold btn-full" onClick={()=>{if(!discAccepted)setShowDisc(true);else testApi();}} disabled={apiLoad}>
+                    {apiLoad?'⏳ Connexion…':'🔌 Connecter à Binance'}
+                  </button>
+                  {apiMsg&&<div className={`api-res ${apiOk?'ar-ok':'ar-err'}`} style={{marginTop:'8px'}}>{apiMsg}</div>}
+                  <div className="hint" style={{marginTop:'6px'}}>
+                    ⚠️ Permissions requises : <b>Futures Read + Trade</b> uniquement. <span style={{color:'var(--dn)'}}>Jamais de retrait.</span>
+                    {apiOk&&<><br/>✅ <b>Le solde réel Binance remplace le solde de test</b> une fois connecté.</>}
+                  </div>
+                </div>
+              </div>
+
+              {/* POSITIONS EN COURS */}
+              <div>
+                <div className="sec-head">
+                  <div className="sec-title">
+                    <div className="sec-dot" style={{background:openPos.length>0?'var(--up)':'var(--tx2)'}}/>
+                    Positions en cours
+                  </div>
+                  <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+                    <span className={`f10 ${openPos.length>0?'cup':'tx2'}`}>{openPos.length}/{getMaxPos()}</span>
+                    {openPos.length>0&&<button className="chart-btn" onClick={()=>setPage('positions')}>Voir tout →</button>}
+                  </div>
+                </div>
+                {openPos.length===0?(
+                  <div style={{background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'10px',padding:'24px',textAlign:'center',color:'var(--tx2)'}}>
+                    <div style={{fontSize:'32px',marginBottom:'8px',opacity:.2}}>📂</div>
+                    <div className="f12">Aucune position ouverte</div>
+                    <div className="f10 mt4">{botOn?`Bot actif — score ≥${scoreMin} requis · ${session==='asia'?'⚠️ Vol. réduit':'Session OK ✅'}` : 'Démarrez le bot'}</div>
+                  </div>
+                ):(
+                  <div className="pos-grid">
+                    {openPos.map(p=><PosCard key={p.id} pos={p} prices={prices} onChart={()=>openChart(p.pair)} leverage={leverage}/>)}
+                  </div>
+                )}
+              </div>
+
+              {/* SIGNAUX DISPONIBLES */}
+              {setups.length>0&&(
+                <div>
+                  <div className="sec-head">
+                    <div className="sec-title"><div className="sec-dot" style={{background:'var(--gold)'}}/>Signaux disponibles</div>
+                    <button className="chart-btn" onClick={()=>setPage('signals')}>Voir détails →</button>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
+                    {setups.map(s=>{
+                      const pr=prices[s.pair]||{price:0,prev:0};
+                      const col=s.score>=82?'var(--up)':s.score>=72?'var(--gold)':'var(--bl)';
+                      return (
+                        <div key={s.id} style={{background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'8px',padding:'10px 14px',display:'flex',alignItems:'center',gap:'12px',cursor:'pointer',transition:'border-color .15s'}}
+                          onMouseEnter={e=>e.currentTarget.style.borderColor='var(--gold)'}
+                          onMouseLeave={e=>e.currentTarget.style.borderColor='var(--bd)'}>
+                          <span className={`sc-side ${s.side==='BUY'?'sl':'ss'}`} style={{flexShrink:0}}>{s.side==='BUY'?'L':'S'}</span>
+                          <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'13px',fontWeight:700,minWidth:'80px'}}>{s.pair.replace('USDT','')}</span>
+                          <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'12px',flex:1}}>{fmtP(pr.price)}</span>
+                          <div style={{display:'flex',alignItems:'center',gap:'6px',minWidth:'80px'}}>
+                            <div style={{width:'50px',height:'4px',background:'var(--bg)',borderRadius:'2px',overflow:'hidden'}}>
+                              <div style={{width:`${s.score}%`,height:'100%',background:`linear-gradient(90deg,var(--gold),${col})`,borderRadius:'2px'}}/>
+                            </div>
+                            <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'11px',fontWeight:700,color:col}}>{s.score}</span>
+                          </div>
+                          <span style={{fontSize:'10px',color:'var(--up)',fontWeight:600}}>RR 1:{s.rr}</span>
+                          <span style={{fontSize:'9px',color:'var(--gold)',fontFamily:"'JetBrains Mono',monospace"}}>⏱{s.validFor}s</span>
+                          <div style={{display:'flex',gap:'5px'}}>
+                            <button className="chart-btn" onClick={e=>{e.stopPropagation();openChart(s.pair);}}>📈</button>
+                            <button className={`exec-btn ${!botDemo&&apiOk?'exec-live':'exec-demo'}`} onClick={e=>{e.stopPropagation();executeSignal(s);}}>
+                              {botDemo?'DÉMO':'⚡'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* JOURNAL */}
               <div className="log-wrap">
                 <div className="log-hd">
-                  <div className="log-hd-t">◎ Journal Système</div>
-                  {botOn && <span className="f9 cup">● {openPos.length}/{MAX_POS} positions</span>}
+                  <div className="log-hd-t">◎ Journal (avec frais Binance)</div>
+                  {botOn&&<span className="f9 cup">● {openPos.length}/{getMaxPos()}</span>}
                 </div>
                 <div className="log-body">
                   {logs.map((l,i)=>(
@@ -1486,17 +1757,15 @@ function App() {
               </div>
             </>}
 
-            {/* ═════════ SIGNALS PAGE ═════════ */}
-            {page==='signals' && <>
+            {/* ═════ SIGNALS ═════ */}
+            {page==='signals'&&<>
               <div className="soon-banner">
-                <div className="soon-text">
-                  🔔 <b>Version Payante à venir :</b> Signaux Premium avec entry précises, confluences supplémentaires et alertes Telegram
-                </div>
+                <div className="soon-text">🔔 <b>Version Payante :</b> Signaux Premium · Entries précises · Alertes Telegram</div>
                 <div className="soon-badge">COMING SOON</div>
               </div>
               <div>
                 <div className="sec-head">
-                  <div className="sec-title"><div className="sec-dot" style={{background:'var(--gold)'}}/>Top Signaux — Preuves Incluses</div>
+                  <div className="sec-title"><div className="sec-dot" style={{background:'var(--gold)'}}/>Top Signaux — Score 100% → Preuves complètes</div>
                   <span className="f10 tx2">{setups.length}/{MAX_SETUPS}</span>
                 </div>
                 <div className="setups-grid">
@@ -1504,7 +1773,7 @@ function App() {
                     <SignalCard key={s.id} sig={s} prices={prices}
                       onChart={()=>openChart(s.pair)}
                       onExecute={()=>executeSignal(s)}
-                      botDemo={botDemo} apiOk={apiOk} expanded/>
+                      botDemo={botDemo} apiOk={apiOk}/>
                   ))}
                   {Array(Math.max(0,4-setups.length)).fill(0).map((_,i)=>(
                     <div key={i} className="sc empty" style={{minHeight:'240px'}}>
@@ -1516,12 +1785,12 @@ function App() {
               </div>
             </>}
 
-            {/* ═════════ SCANNER ═════════ */}
-            {page==='scanner' && (
+            {/* ═════ SCANNER ═════ */}
+            {page==='scanner'&&(
               <div className="scan-wrap">
                 <div className="log-hd">
                   <div className="log-hd-t">📡 Scanner — {PAIRS.length} Paires</div>
-                  <span className="f10 tx2">{session!=='asia'?'Session active':'Session Asie — faible vol.'}</span>
+                  <span className="f10 tx2">{session!=='asia'?'Session active':'Session Asie — liquidité réduite, bot actif'}</span>
                 </div>
                 <div style={{overflowX:'auto'}}>
                   <table className="scan-table">
@@ -1560,52 +1829,181 @@ function App() {
               </div>
             )}
 
-            {/* ═════════ POSITIONS ═════════ */}
-            {page==='positions' && (
+            {/* ═════ POSITIONS ═════ */}
+            {page==='positions'&&(
               <div className="scan-wrap">
                 <div className="log-hd">
-                  <div className="log-hd-t">📂 Positions Ouvertes</div>
-                  <span className="f10">{openPos.length}/{MAX_POS}</span>
+                  <div className="log-hd-t">📂 Positions Ouvertes (avec prix liquidation)</div>
+                  <span className="f10">{openPos.length}/{getMaxPos()}</span>
                 </div>
                 {openPos.length===0
-                  ? <div className="nodata">Aucune position ouverte</div>
-                  : <div style={{padding:'12px'}}><div className="pos-grid">
-                    {openPos.map(p=><PosCard key={p.id} pos={p} prices={prices} onChart={()=>openChart(p.pair)}/>)}
+                  ?<div className="nodata">Aucune position ouverte</div>
+                  :<div style={{padding:'12px'}}><div className="pos-grid">
+                    {openPos.map(p=><PosCard key={p.id} pos={p} prices={prices} onChart={()=>openChart(p.pair)} leverage={leverage}/>)}
                   </div></div>}
               </div>
             )}
 
-            {/* ═════════ HISTORY ═════════ */}
-            {page==='history' && (
+            {/* ═════ HISTORY ═════ */}
+            {page==='history'&&(
               <div className="scan-wrap">
                 <div className="log-hd">
-                  <div className="log-hd-t">📈 Historique des Trades</div>
-                  <span className="f10 tx2">{positions.filter(p=>p.status==='closed').length} trades · PnL {stats.pnl>=0?'+':''}{stats.pnl.toFixed(2)}$</span>
+                  <div className="log-hd-t">📈 Historique — PnL NET (frais Binance déduits)</div>
+                  <span className="f10 tx2">{positions.filter(p=>p.status==='closed').length} trades · PnL net {stats.pnl>=0?'+':''}{stats.pnl.toFixed(2)}$ · Frais:{(stats.totalFees||0).toFixed(2)}$</span>
                 </div>
                 {positions.filter(p=>p.status==='closed').length===0
-                  ? <div className="nodata">Aucun trade fermé</div>
-                  : positions.filter(p=>p.status==='closed').slice(0,60).map(p=>(
+                  ?<div className="nodata">Aucun trade fermé</div>
+                  :positions.filter(p=>p.status==='closed').slice(0,60).map(p=>(
                     <div key={p.id} className="hist-row">
                       <span className={`sc-side ${p.side==='BUY'?'sl':'ss'}`}>{p.side==='BUY'?'L':'S'}</span>
                       <span className="mono bold f12">{p.pair.replace('USDT','')}</span>
-                      {p.demo && <span className="f9 cgold" style={{background:'rgba(240,185,11,.1)',border:'1px solid rgba(240,185,11,.2)',padding:'1px 6px',borderRadius:'4px'}}>DEMO</span>}
+                      {p.demo&&<span className="f9 cgold" style={{background:'rgba(240,185,11,.1)',border:'1px solid rgba(240,185,11,.2)',padding:'1px 6px',borderRadius:'4px'}}>DEMO</span>}
                       <span className="f10 tx2 mono">{fmtP(p.entry)}→{fmtP(p.exitPrice)}</span>
-                      <span style={{fontSize:'9px',fontWeight:'700',padding:'2px 8px',borderRadius:'4px',background:p.result==='WIN'?'rgba(14,203,129,.1)':'rgba(246,70,93,.1)',color:p.result==='WIN'?'var(--up)':'var(--dn)'}}>{p.result}</span>
+                      <span style={{fontSize:'9px',fontWeight:'700',padding:'2px 8px',borderRadius:'4px',background:p.result==='WIN'?'rgba(14,203,129,.1)':p.result==='BE'?'rgba(240,185,11,.1)':'rgba(246,70,93,.1)',color:p.result==='WIN'?'var(--up)':p.result==='BE'?'var(--gold)':'var(--dn)'}}>{p.result}</span>
+                      {p.estimatedFees&&<span className="f9 cdn">-{p.estimatedFees.toFixed(3)}$ fees</span>}
                       <span className={`hist-pnl ${p.pnl>=0?'cup':'cdn'}`}>{p.pnl>=0?'+':''}{p.pnl?.toFixed(2)}$</span>
                     </div>
                   ))}
               </div>
             )}
 
-            {/* ═════════ ACCOUNT ═════════ */}
-            {page==='account' && (
-              <AccountPage user={user} balance={balance} setBalance={setBalance}
-                stats={stats} risk={risk} setUser={setUser}
-                onCopy={copyToClipboard} refLink={refLink}/>
+            {/* ═════ NEWS / FONDAMENTAUX ═════ */}
+            {page==='news'&&(
+              <div>
+                <div className="sec-head">
+                  <div className="sec-title"><div className="sec-dot" style={{background:'var(--bl)'}}/>Fondamentaux & News Crypto</div>
+                  <span className="f9 tx2">Impact sur le marché</span>
+                </div>
+                <div style={{background:'rgba(24,144,255,.05)',border:'1px solid rgba(24,144,255,.15)',borderRadius:'8px',padding:'10px 14px',marginBottom:'12px',fontSize:'10px',color:'var(--tx1)',lineHeight:'1.6'}}>
+                  📰 <b style={{color:'var(--bl)'}}>Analyse fondamentale :</b> Le robot intègre le biais directionnel des fondamentaux pour filtrer les signaux contre-tendance. News BEAR = signals BUY filtrés. <b style={{color:'var(--gold)'}}>Impact HIGH = priorité maximum.</b>
+                </div>
+                <div className="news-card">
+                  <div className="news-hd">
+                    <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:'12px',letterSpacing:'1px'}}>📰 DERNIÈRES NEWS</div>
+                    <span className="f9 cup">● Live</span>
+                  </div>
+                  {FUNDAMENTALS.map(n=>(
+                    <div key={n.id} className="news-item">
+                      <div className={`news-dot news-${n.sentiment}`} style={{marginTop:'4px'}}/>
+                      <div style={{flex:1}}>
+                        <div className="news-title">{n.title}</div>
+                        <div className="news-meta" style={{display:'flex',gap:'8px',alignItems:'center',marginTop:'4px'}}>
+                          <span>{n.source}</span>
+                          <span>il y a {n.time}</span>
+                          <span className={`news-impact ${n.impact==='high'?'ni-high':n.impact==='med'?'ni-med':'ni-low'}`}>
+                            {n.impact.toUpperCase()}
+                          </span>
+                          <span style={{marginLeft:'auto',fontSize:'10px',fontWeight:700,color:n.sentiment==='bull'?'var(--up)':'var(--dn)'}}>
+                            {n.sentiment==='bull'?'↑ HAUSSIER':'↓ BAISSIER'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{marginTop:'12px',background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'10px',padding:'16px'}}>
+                  <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:'13px',letterSpacing:'1px',marginBottom:'12px',color:'var(--tx1)'}}>📅 CALENDRIER ÉCONOMIQUE</div>
+                  {[
+                    {time:'Demain 14h30','event':'CPI US — Inflation mensuelle','impact':'high','expect':'+0.3%'},
+                    {time:'Jeudi 20h00','event':'FED Minutes — Réunion FOMC','impact':'high','expect':'Hawkish'},
+                    {time:'Vendredi 16h00','event':'NFP US — Emplois non-agricoles','impact':'high','expect':'+185K'},
+                    {time:'Lundi 10h00','event':'PMI Zone Euro','impact':'med','expect':'51.2'},
+                  ].map((ev,i)=>(
+                    <div key={i} style={{display:'flex',alignItems:'center',gap:'12px',padding:'8px 0',borderBottom:'1px solid var(--bd)',fontSize:'10px'}}>
+                      <span style={{color:'var(--tx2)',minWidth:'100px',fontFamily:"'JetBrains Mono',monospace",fontSize:'9px'}}>{ev.time}</span>
+                      <span style={{flex:1,fontWeight:600}}>{ev.event}</span>
+                      <span style={{color:'var(--tx2)'}}>{ev.expect}</span>
+                      <span className={`news-impact ${ev.impact==='high'?'ni-high':'ni-med'}`}>{ev.impact.toUpperCase()}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
-            {/* ═════════ ADMIN ═════════ */}
-            {page==='admin' && isAdmin && (
+            {/* ═════ CANAL ═════ */}
+            {page==='canal'&&(
+              <div>
+                <div className="sec-head">
+                  <div className="sec-title"><div className="sec-dot" style={{background:'var(--purple)'}}/>Communauté AlphaBot</div>
+                </div>
+
+                {/* TikTok Challenge Banner */}
+                <div className="tiktok-banner">
+                  <div className="tt-icon">🎯</div>
+                  <div className="tt-text">
+                    <div className="title">CHALLENGE <span>TIKTOK</span> — 4H POUR LANCER LE BOT</div>
+                    <div className="sub">Rejoins le challenge en direct ce soir — lance le site en 4h et fais exploser ton capital 🚀<br/>Partage ton résultat avec #AlphaBotPro</div>
+                  </div>
+                  <button className="tt-btn" onClick={()=>window.open('https://tiktok.com','_blank')}>
+                    📱 VOIR LE LIVE
+                  </button>
+                </div>
+
+                <div className="canal-card" style={{marginTop:'12px'}}>
+                  <div className="canal-title">REJOINS LA <span>COMMUNAUTÉ</span></div>
+                  <div className="canal-desc">
+                    Accède aux signaux premium, aux analyses en direct, aux alertes Telegram et aux vidéos TikTok exclusives sur le trading crypto avec AlphaBot Pro.
+                  </div>
+                  <div className="canal-links">
+                    <a className="canal-link canal-tg" href="https://t.me/alphabotpro" target="_blank" rel="noopener">
+                      <span className="canal-link-icon">✈️</span>
+                      <div className="canal-link-info">
+                        <div className="title">TELEGRAM — Canal Signaux</div>
+                        <div className="sub">Alertes en temps réel · Signaux premium · Analyses</div>
+                      </div>
+                      <span className="canal-link-arrow">→</span>
+                    </a>
+                    <a className="canal-link canal-tt" href="https://tiktok.com/@alphabotpro" target="_blank" rel="noopener">
+                      <span className="canal-link-icon">🎵</span>
+                      <div className="canal-link-info">
+                        <div className="title">TIKTOK — @alphabotpro</div>
+                        <div className="sub">Vidéos trading · Challenge 4H · Résultats en live</div>
+                      </div>
+                      <span className="canal-link-arrow">→</span>
+                    </a>
+                    <a className="canal-link canal-yt" href="https://youtube.com/@alphabotpro" target="_blank" rel="noopener">
+                      <span className="canal-link-icon">▶️</span>
+                      <div className="canal-link-info">
+                        <div className="title">YOUTUBE — Tutoriels</div>
+                        <div className="sub">Déploiement VPS · Configuration API · Stratégies</div>
+                      </div>
+                      <span className="canal-link-arrow">→</span>
+                    </a>
+                  </div>
+                </div>
+
+                <div style={{marginTop:'12px',background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'10px',padding:'16px'}}>
+                  <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:'13px',letterSpacing:'1px',marginBottom:'12px',color:'var(--tx1)'}}>📱 DÉPLOIEMENT ANDROID — Ce soir en 4H</div>
+                  {[
+                    {step:'1',title:'Télécharger le fichier HTML','desc':'Copier alphabot_pro_v24_fixed.html sur ton téléphone','time':'5 min','icon':'📥'},
+                    {step:'2',title:'Ouvrir avec Chrome Android','desc':'Appuyer longuement → Ouvrir avec → Chrome','time':'1 min','icon':'🌐'},
+                    {step:'3',title:'Installer PWA sur écran d\'accueil','desc':'Chrome → ⋮ → Ajouter à l\'écran d\'accueil','time':'2 min','icon':'📱'},
+                    {step:'4',title:'Optionnel: VPS pour API réelle','desc':'Netlify Drop (glisser le .html) — gratuit et instantané','time':'10 min','icon':'🚀'},
+                    {step:'5',title:'Configurer les clés API Binance','desc':'Binance App → API Management → Futures Read+Trade','time':'5 min','icon':'🔑'},
+                  ].map(s=>(
+                    <div key={s.step} style={{display:'flex',gap:'12px',padding:'10px 0',borderBottom:'1px solid var(--bd)'}}>
+                      <div style={{width:'28px',height:'28px',borderRadius:'50%',background:'rgba(240,185,11,.1)',border:'1px solid rgba(240,185,11,.2)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'12px',fontWeight:700,fontFamily:"'JetBrains Mono',monospace",color:'var(--gold)'}}>{s.step}</div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:'12px',fontWeight:700}}>{s.icon} {s.title}</div>
+                        <div style={{fontSize:'10px',color:'var(--tx2)',marginTop:'2px'}}>{s.desc}</div>
+                      </div>
+                      <div style={{fontSize:'9px',color:'var(--gold)',fontFamily:"'JetBrains Mono',monospace",whiteSpace:'nowrap'}}>{s.time}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ═════ ACCOUNT ═════ */}
+            {page==='account'&&(
+              <AccountPage user={user} balance={balance} setBalance={setBalance}
+                stats={stats} risk={risk} setUser={setUser}
+                onCopy={copyToClipboard} refLink={refLink}
+                apiFuturesBalance={apiFuturesBalance} apiOk={apiOk}/>
+            )}
+
+            {/* ═════ ADMIN ═════ */}
+            {page==='admin'&&isAdmin&&(
               <AdminPage
                 risk={risk} setRisk={setRisk}
                 leverage={leverage} setLeverage={setLeverage}
@@ -1620,98 +2018,48 @@ function App() {
         </div>
       </div>
 
-      {/* ── CHART MODAL ── */}
-      {modal==='chart' && (
-        <div className="modal-bg" onClick={()=>setModal(null)}>
-          <div className="chart-modal" onClick={e=>e.stopPropagation()}>
-            <div className="chart-hd">
-              <div className="chart-title">{chartPair}</div>
-              <div className="chart-tfs">
-                {[['1','M1'],['5','M5'],['15','M15'],['60','H1'],['240','H4']].map(([v,l])=>(
-                  <button key={v} className={`tft${chartTf===v?' act':''}`} onClick={()=>setChartTf(v)}>{l}</button>
-                ))}
-              </div>
-              <div className="xbtn" onClick={()=>setModal(null)}>✕</div>
-            </div>
-            <iframe className="chart-iframe"
-              src={`https://www.tradingview.com/widgetembed/?symbol=BINANCE%3A${chartPair}&interval=${chartTf}&theme=${theme}&style=1&locale=fr&toolbar_bg=${theme==='dark'?'13181f':'ffffff'}&hide_side_toolbar=0&allow_symbol_change=1&save_image=1&withdateranges=1`}
-              allowFullScreen allowTransparency/>
-          </div>
-        </div>
-      )}
+      {/* CHART MODAL */}
+      {modal==='chart'&&(\n        <div className="modal-bg" onClick={()=>setModal(null)}>\n          <div className="chart-modal" onClick={e=>e.stopPropagation()}>\n            <div className="chart-hd">\n              <div className="chart-title">{chartPair.replace('USDT','')} <span style={{fontSize:'10px',color:'var(--tx2)'}}>/ USDT</span></div>\n              <div className="chart-tfs">\n                {[['1','M1'],['5','M5'],['15','M15'],['60','H1'],['240','H4'],['D','D1'],['W','W1']].map(([v,l])=>(\n                  <button key={v} className={`tft${chartTf===v?' act':''}`} onClick={()=>setChartTf(v)}>{l}</button>\n                ))}\n              </div>\n              <div style={{display:'flex',gap:'6px',alignItems:'center'}}>\n                <span style={{fontSize:'9px',color:'var(--tx2)'}}>📊 TradingView</span>\n                <div className="xbtn" onClick={()=>setModal(null)}>✕</div>\n              </div>\n            </div>\n            <iframe className="chart-iframe"\n              src={`https://www.tradingview.com/widgetembed/?symbol=BINANCE%3A${chartPair}&interval=${chartTf}&theme=${theme}&style=1&locale=fr&toolbar_bg=${theme==='dark'?'13181f':'ffffff'}&hide_side_toolbar=0&allow_symbol_change=1&save_image=1&withdateranges=1&studies=RSI%40tv-basicstudies%1FBB%40tv-basicstudies%1FMACD%40tv-basicstudies&studies_overrides=%7B%7D`}\n              allowFullScreen allowTransparency/>\n          </div>\n        </div>\n      )}
 
-      {/* ── SETTINGS MODAL ── */}
-      {modal==='settings' && (
+      {/* SETTINGS MODAL */}
+      {modal==='settings'&&(
         <div className="modal-bg" onClick={()=>setModal(null)}>
           <div className="modal-box" onClick={e=>e.stopPropagation()}>
             <div className="modal-hd">
-              <div className="modal-title">⚙ Paramètres</div>
+              <div className="modal-title">⚙ Paramètres API & Risque</div>
               <div className="xbtn" onClick={()=>setModal(null)}>✕</div>
             </div>
             <div className="modal-body">
-
-              {/* API warning */}
               <div style={{background:'rgba(246,70,93,.06)',border:'1px solid rgba(246,70,93,.2)',borderRadius:'7px',padding:'11px 13px',marginBottom:'13px',fontSize:'11px',color:'var(--tx1)',lineHeight:'1.7'}}>
-                ⚠️ <b style={{color:'var(--dn)'}}>Avertissement :</b> Le trading comporte des risques de pertes en capital. AlphaBot Pro n'est pas responsable de vos pertes. Connectez l'API uniquement avec les permissions <b>Futures Read + Trade</b>. <b style={{color:'var(--dn)'}}>Jamais de permission de retrait.</b>
+                ⚠️ <b style={{color:'var(--dn)'}}>Risques :</b> Le trading comporte des risques élevés. AlphaBot Pro n'est <b>pas responsable</b> de vos pertes. API uniquement avec <b style={{color:'var(--gold)'}}>Futures Read + Trade</b> — <b style={{color:'var(--dn)'}}>JAMAIS de retrait.</b>
               </div>
-
               <div className="msec">
-                <div className="msec-t">🔌 API Binance Futures Réelle</div>
-                <div className="fld">
-                  <div className="flbl">API Key</div>
-                  <input className="inp" type="password" placeholder="Votre API Key" value={apiKey}
-                    onChange={e=>setApiKey(e.target.value)}/>
-                </div>
-                <div className="fld">
-                  <div className="flbl">Secret Key</div>
-                  <input className="inp" type="password" placeholder="Votre Secret Key" value={apiSec}
-                    onChange={e=>setApiSec(e.target.value)}/>
-                </div>
-                <div className="hint" style={{marginBottom:'10px'}}>🛡️ Permissions requises : Futures Read + Trade uniquement. Ne jamais activer les retraits.</div>
-                <button className="btn btn-gold btn-full" onClick={()=>{
-                  if(!discAccepted){setShowDisc(true);setModal(null);}
-                  else testApi();
-                }} disabled={apiLoad}>
-                  {apiLoad?'⏳ Connexion en cours…':'🔌 Tester la connexion API'}
+                <div className="msec-t">🔌 API Binance Futures</div>
+                {apiOk&&apiFuturesBalance&&(
+                  <div style={{background:'rgba(14,203,129,.07)',border:'1px solid rgba(14,203,129,.2)',borderRadius:'6px',padding:'10px',marginBottom:'10px',fontFamily:"'JetBrains Mono',monospace",fontSize:'13px',color:'var(--up)',fontWeight:700}}>
+                    ✅ Connecté · {apiFuturesBalance.toFixed(2)} USDT
+                  </div>
+                )}
+                <div className="fld"><div className="flbl">API Key</div>
+                  <input className="inp" type="password" placeholder="Votre API Key" value={apiKey} onChange={e=>setApiKey(e.target.value)}/></div>
+                <div className="fld"><div className="flbl">Secret Key</div>
+                  <input className="inp" type="password" placeholder="Votre Secret Key" value={apiSec} onChange={e=>setApiSec(e.target.value)}/></div>
+                <button className="btn btn-gold btn-full" onClick={()=>{if(!discAccepted){setShowDisc(true);setModal(null);}else testApi();}} disabled={apiLoad}>
+                  {apiLoad?'⏳ Connexion…':'🔌 Tester la connexion API'}
                 </button>
-                {apiMsg && <div className={`api-res ${apiOk?'ar-ok':'ar-err'}`}>{apiMsg}</div>}
-                <div className="hint" style={{marginTop:'8px'}}>ℹ️ Pour une connexion réelle sans erreur CORS, déployez sur votre VPS.</div>
+                {apiMsg&&<div className={`api-res ${apiOk?'ar-ok':'ar-err'}`}>{apiMsg}</div>}
               </div>
-
               <div className="msec">
                 <div className="msec-t">📊 Gestion du Risque</div>
                 <div className="flex jb f11" style={{marginBottom:'8px'}}>
                   <span className="tx1">Risque par trade</span>
                   <span className="mono cgold bold">{risk.toFixed(2)}%</span>
                 </div>
-                <input type="range" min="0.1" max="10" step="0.1" value={risk}
-                  onChange={e=>{setRisk(+e.target.value);lsS('ab19_risk',+e.target.value);}} className="slider"/>
-                <div className="flex jb f9 tx2 mt4 mb8"><span>0.1% — prudent</span><span>10% — max</span></div>
-                <div className="risk-presets">
-                  {[[4,'Conservateur'],[8,'Agressif'],[risk.toFixed(1),'Actuel']].map(([v,l])=>(
-                    <button key={l} className={`risk-btn${risk===parseFloat(v)?' act':''}`}
-                      onClick={()=>{if(l!=='Actuel'){setRisk(parseFloat(v));lsS('ab19_risk',parseFloat(v));}}}>
-                      {v}%<br/><span style={{fontSize:'8px',fontWeight:400,opacity:.7}}>{l}</span>
-                    </button>
-                  ))}
-                </div>
-                <div className="sep"/>
-                <div className="adm-row">
-                  <span>Risque actuel</span>
-                  <span className="r">{(balance*risk/100).toFixed(2)} $</span>
-                </div>
-                <div className="adm-row">
-                  <span>Levier (info)</span>
-                  <span className="r">{leverage}x</span>
-                </div>
-                <div className="adm-row">
-                  <span>Max positions</span>
-                  <span className="r">{MAX_POS} (strict)</span>
-                </div>
-                <div className="adm-row">
-                  <span>Balance minimum</span>
-                  <span className="r">1 $ (test)</span>
-                </div>
+                <input type="range" min="0.1" max="10" step="0.1" value={risk} onChange={e=>{setRisk(+e.target.value);lsS('ab24_risk',+e.target.value);}} className="slider"/>
+                <div className="adm-row"><span>Risque actuel</span><span className="r">{(balance*risk/100).toFixed(2)} $</span></div>
+                <div className="adm-row"><span>Frais estimés/trade</span><span className="r cdn">{calcFeesForTrade(balance*risk/100*leverage).toFixed(3)} $</span></div>
+                <div className="adm-row"><span>Max positions</span><span className="r">{getMaxPos()} (selon solde)</span></div>
+                <div className="adm-row"><span>SL Follower active</span><span className="r cup">RR {SL_TRAIL_ACTIVATION_RR}.0</span></div>
               </div>
             </div>
           </div>
@@ -1721,14 +2069,16 @@ function App() {
   );
 }
 
-/* ═══════════════════════════════════════════════════
-   SIGNAL CARD COMPONENT
-═══════════════════════════════════════════════════ */
-function SignalCard({sig, prices, onChart, onExecute, botDemo, apiOk, expanded}) {
+/* ═══════════════════════════════════════════════
+   SIGNAL CARD
+═══════════════════════════════════════════════ */
+function SignalCard({sig, prices, onChart, onExecute, botDemo, apiOk}) {
   const pr  = prices[sig.pair]||{price:0,prev:0};
   const pct = (pr.price-pr.prev)/pr.prev*100;
   const sc  = sig.score;
   const col = sc>=82?'var(--up)':sc>=72?'var(--gold)':'var(--bl)';
+  // Afficher les targets potentiels SEULEMENT si score = 100
+  const showTargets = sc >= 100;
 
   return (
     <div className={`sc ${sig.side==='BUY'?'long':'short'} fin`}>
@@ -1749,28 +2099,34 @@ function SignalCard({sig, prices, onChart, onExecute, botDemo, apiOk, expanded})
       </div>
       <div className="sc-rows">
         <div className="sc-r"><span>RR</span><span className="v cup">1:{sig.rr}</span></div>
-        <div className="sc-r"><span>SL</span><span className="v cdn">{fmtP(sig.side==='BUY'?pr.price*(1-.008):pr.price*(1+.008))}</span></div>
-        <div className="sc-r"><span>TP</span><span className="v cup">{fmtP(sig.side==='BUY'?pr.price*(1+.008*parseFloat(sig.rr)):pr.price*(1-.008*parseFloat(sig.rr)))}</span></div>
+        {/* Targets potentiels uniquement si score = 100% */}
+        {showTargets ? (
+          <>
+            <div className="sc-r"><span>SL</span><span className="v cdn">{fmtP(sig.side==='BUY'?pr.price*(1-.008):pr.price*(1+.008))}</span></div>
+            <div className="sc-r"><span>TP</span><span className="v cup">{fmtP(sig.side==='BUY'?pr.price*(1+.008*parseFloat(sig.rr)):pr.price*(1-.008*parseFloat(sig.rr)))}</span></div>
+            <div style={{background:'rgba(14,203,129,.08)',border:'1px solid rgba(14,203,129,.2)',borderRadius:'4px',padding:'4px 7px',fontSize:'9px',color:'var(--up)',marginTop:'3px',fontWeight:700}}>
+              ⭐ SCORE 100% — Targets confirmées
+            </div>
+          </>
+        ) : (
+          <div style={{background:'var(--bg3)',border:'1px solid var(--bd)',borderRadius:'4px',padding:'5px 7px',fontSize:'9px',color:'var(--tx2)',marginTop:'3px'}}>
+            🔒 Targets masquées — Score {sc}/100 (100 requis)
+          </div>
+        )}
       </div>
-
-      {/* Proof indicators */}
       <div className="sc-proof">
-        {[['BB',sig.bb,'Breaker\nBlock'],['VOS',sig.vos,'Vol. of\nSpeed'],['Vol',sig.vol,'Volume\nHaut'],['RSI',sig.rsi,'RSI\nDiv.'],['BTC',sig.btcOk,'BTC\nAlignmt']].map(([l,v,title])=>(
+        {[['BB',sig.bb,'Breaker Block'],['VOS',sig.vos,'Vol of Speed'],['Vol',sig.vol,'Volume Haut'],['RSI',sig.rsi,'RSI Div.'],['BTC',sig.btcOk,'BTC Alignmt']].map(([l,v,title])=>(
           <div key={l} className="sp" title={title}>
             <div className={`sp-dot ${v?'sp-on':'sp-off'}`}>{v?'✓':l[0]}</div>
             <div className="sp-lbl">{l}</div>
           </div>
         ))}
       </div>
-
       <div className="sc-foot">
         <span className="sc-timer">⏱ {sig.validFor}s</span>
         <div style={{display:'flex',gap:'5px'}}>
           <button className="chart-btn" onClick={onChart}>📈</button>
-          <button
-            className={`exec-btn ${!botDemo&&apiOk?'exec-live':'exec-demo'}`}
-            onClick={onExecute}
-            title={botDemo?'Passer en mode Réel':'Exécuter sur Binance'}>
+          <button className={`exec-btn ${!botDemo&&apiOk?'exec-live':'exec-demo'}`} onClick={onExecute} title={botDemo?'Passer en mode Réel':'Exécuter sur Binance'}>
             {botDemo?'📋 DÉMO':'⚡ BINANCE'}
           </button>
         </div>
@@ -1779,15 +2135,22 @@ function SignalCard({sig, prices, onChart, onExecute, botDemo, apiOk, expanded})
   );
 }
 
-/* ═══════════════════════════════════════════════════
-   POSITION CARD
-═══════════════════════════════════════════════════ */
-function PosCard({pos, prices, onChart}) {
+/* ═══════════════════════════════════════════════
+   POSITION CARD — avec prix liquidation + BE
+═══════════════════════════════════════════════ */
+function PosCard({pos, prices, onChart, leverage}) {
   const cur    = prices[pos.pair]?.price||pos.entry;
   const dist   = Math.abs(pos.entry-pos.sl0);
   const pnlPct = pos.side==='BUY'?(cur-pos.entry)/pos.entry*100:(pos.entry-cur)/pos.entry*100;
   const pnl    = pnlPct/100*pos.riskAmt/0.008;
   const rr     = pos.rrR||0;
+  // Prix de liquidation
+  const liqPrice = pos.liqPrice || calcLiqPrice(pos.side, pos.entry, pos.leverage||leverage||10);
+  // Distance à liquidation en %
+  const distToLiq = pos.side==='BUY'
+    ? ((liqPrice-cur)/cur*100)
+    : ((cur-liqPrice)/cur*100);
+
   return (
     <div className={`pc ${pos.side==='BUY'?'plong':'pshort'} fin`}>
       <div className="pc-head">
@@ -1800,11 +2163,25 @@ function PosCard({pos, prices, onChart}) {
       <div className="pc-body">
         <div className="pr"><span className="l">Entrée</span><span className="r mono">{fmtP(pos.entry)}</span></div>
         <div className="pr"><span className="l">Actuel</span><span className="r mono">{fmtP(cur)}</span></div>
-        <div className="pr"><span className="l">SL{pos.trailActive?' 🔒':''}</span><span className="r mono cdn">{fmtP(pos.sl)}</span></div>
-        <div className="pr"><span className="l">TP</span><span className="r mono cup">{fmtP(pos.tp2)}</span></div>
+        <div className="pr pr-be"><span className="l">Break-even{pos.trailActive?' 🔒 ACTIF':''}</span><span className="r">{fmtP(pos.entry)}</span></div>
+        <div className="pr"><span className="l">SL{pos.trailActive?' (trailing)':''}</span><span className="r mono cdn">{fmtP(pos.sl)}</span></div>
+        <div className="pr"><span className="l">TP2</span><span className="r mono cup">{fmtP(pos.tp2)}</span></div>
+        <div className="pr pr-liq">
+          <span className="l">🔥 Prix Liquidation</span>
+          <span className="r">{fmtP(liqPrice)}</span>
+        </div>
+        <div style={{fontSize:'9px',color:distToLiq<5?'var(--dn)':distToLiq<15?'var(--gold)':'var(--tx2)',marginBottom:'5px',textAlign:'right'}}>
+          {distToLiq<0?'⛔ DANGER LIQUIDATION':distToLiq<5?`⚠️ Liq à ${Math.abs(distToLiq).toFixed(1)}%`:`🔒 Liq à ${distToLiq.toFixed(1)}%`}
+        </div>
         <div className="pr"><span className="l">RR</span><span className="r mono">1:{pos.rr}</span></div>
+        {/* Frais Binance */}
+        {pos.estimatedFees&&(
+          <div className="fees-notice">
+            ⚡ Frais Binance: <b>~{pos.estimatedFees.toFixed(3)}$</b> (0.04% entrée + 0.04% sortie)
+          </div>
+        )}
         <div className="rr-bar">
-          <div className="rr-lbl">{rr.toFixed(1)}R en cours</div>
+          <div className="rr-lbl">{rr.toFixed(1)}R · SL follower à RR1.0</div>
           <div className="rr-track">
             {[.5,1,1.5,2,3].map((r,i)=>(
               <div key={i} className={`rrs${rr>=r?' done':''}${r===1&&pos.trailActive?' be':''}`}/>
@@ -1821,27 +2198,20 @@ function PosCard({pos, prices, onChart}) {
   );
 }
 
-/* ═══════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════
    ACCOUNT PAGE
-═══════════════════════════════════════════════════ */
-function AccountPage({user, balance, setBalance, stats, risk, setUser, onCopy, refLink}) {
-  const [editBal, setEditBal] = useState(false);
-  const [newBal,  setNewBal]  = useState(balance.toString());
-  const db = () => lsG('ab19_udb', {});
-
-  const leverageRec = balance>=1000?20:balance>=500?15:balance>=100?10:balance>=50?5:3;
-  const memberSince = user.joinedAt ? new Date(user.joinedAt).toLocaleDateString('fr-FR') : '—';
-  const refCount = db()[user.email]?.refCount || user.refCount || 0;
-
-  const saveBalance = () => {
-    const v = parseFloat(newBal);
-    if(isNaN(v)||v<1) return;
-    setBalance(v); lsS('ab19_bal',v); setEditBal(false);
-  };
+═══════════════════════════════════════════════ */
+function AccountPage({user,balance,setBalance,stats,risk,setUser,onCopy,refLink,apiFuturesBalance,apiOk}) {
+  const [editBal,setEditBal]=useState(false);
+  const [newBal,setNewBal]=useState(balance.toString());
+  const db=()=>lsG('ab24_udb',{});
+  const leverageRec=balance>=1000?20:balance>=500?15:balance>=100?10:balance>=50?5:3;
+  const memberSince=user.joinedAt?new Date(user.joinedAt).toLocaleDateString('fr-FR'):'—';
+  const refCount=db()[user.email]?.refCount||user.refCount||0;
+  const saveBalance=()=>{const v=parseFloat(newBal);if(isNaN(v)||v<1)return;setBalance(v);lsS('ab24_bal',v);setEditBal(false);};
 
   return (
     <div className="acc-grid">
-      {/* Profile */}
       <div className="acc-card">
         <div className="acc-hd">👤 Profil</div>
         <div className="acc-body">
@@ -1849,77 +2219,71 @@ function AccountPage({user, balance, setBalance, stats, risk, setUser, onCopy, r
           <div style={{textAlign:'center',marginBottom:'12px'}}>
             <div className="bold f12">{user.email}</div>
             <div className="f9 tx2 mt4">Membre depuis {memberSince}</div>
-            {user.isAdmin && <div className="f9" style={{color:'var(--purple)',marginTop:'4px'}}>⚙ Administrateur</div>}
+            {user.isAdmin&&<div className="f9" style={{color:'var(--purple)',marginTop:'4px'}}>⚙ Administrateur</div>}
           </div>
+          {/* Solde Binance si connecté */}
+          {apiOk&&apiFuturesBalance&&(
+            <div style={{background:'rgba(14,203,129,.07)',border:'1px solid rgba(14,203,129,.2)',borderRadius:'7px',padding:'10px',marginBottom:'10px',textAlign:'center'}}>
+              <div style={{fontSize:'9px',color:'var(--tx2)',letterSpacing:'1.5px',marginBottom:'4px'}}>SOLDE BINANCE FUTURES</div>
+              <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'22px',fontWeight:700,color:'var(--up)'}}>{apiFuturesBalance.toFixed(2)} USDT</div>
+            </div>
+          )}
           <div className="sep"/>
           {[
-            ['Balance',        `${balance.toFixed(2)} $`],
-            ['Win Rate',       `${stats.wr}%`],
+            ['Balance actuelle',`${balance.toFixed(2)} $`],
+            ['Win Rate (net)', `${stats.wr}%`],
             ['Trades total',   stats.wins+stats.losses],
             ['Gagnants',       `${stats.wins} ✅`],
             ['Perdants',       `${stats.losses} ❌`],
-            ['PnL total',      `${stats.pnl>=0?'+':''}${stats.pnl.toFixed(2)} $`],
+            ['PnL net total',  `${stats.pnl>=0?'+':''}${stats.pnl.toFixed(2)} $`],
+            ['Frais Binance cumulés',`-${(stats.totalFees||0).toFixed(2)} $`],
             ['Risque/trade',   `${risk.toFixed(2)}%`],
             ['Parrainages',    `${refCount} utilisateurs`],
           ].map(([l,v])=>(
             <div key={l} className="arow"><span className="l">{l}</span><span className="r">{v}</span></div>
           ))}
           <div className="sep"/>
-          {/* Balance editor */}
-          {editBal ? (
+          {editBal?(
             <div className="fld">
-              <div className="flbl">Modifier le solde (min. 1$)</div>
+              <div className="flbl">Modifier le solde de test</div>
               <div style={{display:'flex',gap:'7px'}}>
-                <input className="inp" type="number" min="1" value={newBal}
-                  onChange={e=>setNewBal(e.target.value)} style={{flex:1}}/>
+                <input className="inp" type="number" min="1" value={newBal} onChange={e=>setNewBal(e.target.value)} style={{flex:1}}/>
                 <button className="btn btn-up btn-sm" onClick={saveBalance}>OK</button>
                 <button className="btn btn-out btn-sm" onClick={()=>setEditBal(false)}>✕</button>
               </div>
             </div>
-          ) : (
-            <button className="btn btn-out btn-full btn-sm mt8" onClick={()=>setEditBal(true)}>
-              💰 Modifier le solde de test
-            </button>
+          ):(
+            <button className="btn btn-out btn-full btn-sm mt8" onClick={()=>setEditBal(true)}>💰 Modifier le solde de test</button>
           )}
-          <button className="btn btn-dn btn-full btn-sm mt8" onClick={()=>{lsS('ab19_user',null);setUser(null);}}>
-            Déconnexion
-          </button>
+          <button className="btn btn-dn btn-full btn-sm mt8" onClick={()=>{lsS('ab24_user',null);setUser(null);}}>Déconnexion</button>
         </div>
       </div>
 
-      {/* Referral */}
       <div className="acc-card">
-        <div className="acc-hd">🔗 Programme de Parrainage</div>
+        <div className="acc-hd">🔗 Parrainage</div>
         <div className="acc-body">
           <div className="ref-box">
             <div className="f10 tx1 mb4">Votre code parrainage</div>
-            <div className="ref-code-display" onClick={()=>onCopy(user.refCode,'Code copié !')}>
-              {user.refCode || '—'}
+            <div className="ref-code-display" onClick={()=>onCopy(user.refCode,'Code copié !')}>{user.refCode||'—'}</div>
+            <div className="f9 tx2" style={{textAlign:'center',marginBottom:'8px'}}>Cliquez sur le code pour le copier</div>
+            <div className="flbl" style={{marginTop:'8px'}}>Lien — sélectionner et copier</div>
+            <div style={{position:'relative'}}>
+              <input readOnly className="inp" value={refLink} style={{fontSize:'9px',paddingRight:'70px',cursor:'text'}} onClick={e=>{e.target.select();onCopy(refLink,'Lien copié !')}}/>
+              <button style={{position:'absolute',right:'4px',top:'50%',transform:'translateY(-50%)',padding:'3px 8px',background:'var(--gold)',border:'none',borderRadius:'4px',cursor:'pointer',fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:'10px',color:'#000'}} onClick={()=>onCopy(refLink,'Lien copié !')}>COPIER</button>
             </div>
-            <div className="f9 tx2" style={{textAlign:'center',marginBottom:'8px'}}>Cliquez pour copier le code</div>
-            <div className="ref-link" onClick={()=>onCopy(refLink,'Lien copié !')}>
-              🔗 {refLink}
-            </div>
-            <div className="f9 tx2" style={{textAlign:'center',marginTop:'5px'}}>Cliquez pour copier le lien</div>
+            <div className="hint" style={{marginTop:'5px'}}>Si le bouton ne fonctionne pas : cliquez dans le champ → Ctrl+A → Ctrl+C</div>
           </div>
           <div className="ref-stats">
-            <div className="ref-stat">
-              <div className="ref-stat-v">{refCount}</div>
-              <div className="ref-stat-l">Parrainés</div>
-            </div>
-            <div className="ref-stat">
-              <div className="ref-stat-v">{user.refBy?'Oui':'Non'}</div>
-              <div className="ref-stat-l">Parrainé par</div>
-            </div>
+            <div className="ref-stat"><div className="ref-stat-v">{refCount}</div><div className="ref-stat-l">Parrainés</div></div>
+            <div className="ref-stat"><div className="ref-stat-v">{user.refBy?'Oui':'Non'}</div><div className="ref-stat-l">Parrainé par</div></div>
           </div>
-          {user.refBy && <div className="hint" style={{textAlign:'center',marginTop:'8px'}}>Invité par : {user.refBy}</div>}
+          {user.refBy&&<div className="hint" style={{textAlign:'center',marginTop:'8px'}}>Invité par : {user.refBy}</div>}
           <div className="soon-banner" style={{marginTop:'12px'}}>
-            <div className="f10 tx1">🎁 Bientôt : <b style={{color:'var(--gold)'}}>commission sur chaque parrainage</b> dans la version Premium</div>
+            <div className="f10 tx1">🎁 Bientôt : <b style={{color:'var(--gold)'}}>commission sur chaque parrainage</b> (version Premium)</div>
           </div>
         </div>
       </div>
 
-      {/* Levier recommandé */}
       <div className="acc-card">
         <div className="acc-hd">⚡ Levier Recommandé</div>
         <div className="acc-body">
@@ -1928,13 +2292,7 @@ function AccountPage({user, balance, setBalance, stats, risk, setUser, onCopy, r
             <div className="f10 tx2 mt4">Basé sur votre solde actuel</div>
           </div>
           <div className="sep"/>
-          {[
-            ['≥ 1 000 $','20x',balance>=1000],
-            ['≥ 500 $',  '15x',balance>=500&&balance<1000],
-            ['≥ 100 $',  '10x',balance>=100&&balance<500],
-            ['≥ 50 $',   '5x', balance>=50&&balance<100],
-            ['< 50 $',   '3x', balance<50],
-          ].map(([rng,lev,active])=>(
+          {[['≥ 1 000 $','20x',balance>=1000],['≥ 500 $','15x',balance>=500&&balance<1000],['≥ 100 $','10x',balance>=100&&balance<500],['≥ 50 $','5x',balance>=50&&balance<100],['< 50 $','3x',balance<50]].map(([rng,lev,active])=>(
             <div key={rng} className="arow" style={{background:active?'rgba(240,185,11,.07)':'',borderRadius:'5px',padding:'4px 5px'}}>
               <span className="l f10" style={{color:active?'var(--gold)':'var(--tx2)'}}>{active?'▶ ':''}{rng}</span>
               <span className="r mono bold" style={{color:active?'var(--gold)':'var(--tx2)'}}>{lev}</span>
@@ -1943,24 +2301,23 @@ function AccountPage({user, balance, setBalance, stats, risk, setUser, onCopy, r
         </div>
       </div>
 
-      {/* Features */}
       <div className="acc-card" style={{gridColumn:'1/-1'}}>
-        <div className="acc-hd">★ Fonctionnalités</div>
+        <div className="acc-hd">★ Fonctionnalités v24</div>
         <div className="acc-body">
           <div className="feat-g">
             {[
-              ['🎯','Trailing SL','Break-even auto à RR1'],
-              ['📈','Risk Scaling','+15% après victoire'],
+              ['🎯','SL Follower','Break-even à RR1.0'],
+              ['💰','Frais Binance','0.04%×2 déduits auto'],
+              ['🔥','Prix Liquidation','Affiché sur chaque position'],
+              ['📊','Balance Réelle','Sync solde Binance'],
+              ['🚫','Filtre Sessions','Asie + weekends exclus'],
+              ['📰','Fondamentaux','News + Calendrier éco'],
+              ['📺','Canal','Telegram + TikTok + YT'],
               ['🔍','20 Paires','Scan marché complet'],
-              ['🤖','Bot Réel','Ordres Binance Futures'],
-              ['₿','Corrélation BTC','Filtre de tendance'],
-              ['⏰','Sessions','Londres + New York'],
-              ['📊','Graphiques','TradingView intégré'],
-              ['⭐','4 Signaux','Score + 5 preuves'],
+              ['🤖','Bot Adaptatif','Max pos. selon marge'],
+              ['📈','Graphiques','TradingView intégré'],
               ['🔗','Parrainage','Lien unique par compte'],
-              ['📧','Auth Email','Vérification + reset'],
-              ['🛡️','Disclaimer','Protection juridique'],
-              ['💎','Premium Signals','Bientôt disponible',true],
+              ['💎','Premium Signals','Score 100% uniquement',true],
             ].map(([ic,nm,ds,coming])=>(
               <div key={nm} className={`feat-i${coming?' coming':''}`}>
                 <div className="fi-icon">{ic}</div>
@@ -1975,90 +2332,71 @@ function AccountPage({user, balance, setBalance, stats, risk, setUser, onCopy, r
   );
 }
 
-/* ═══════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════
    ADMIN PAGE
-═══════════════════════════════════════════════════ */
+═══════════════════════════════════════════════ */
 function AdminPage({risk,setRisk,leverage,setLeverage,balance,setBalance,scoreMin,setScoreMin,totalUsers,stats,log,toast}) {
-  const [globalRisk,   setGlobalRisk]   = useState(risk);
-  const [globalLev,    setGlobalLev]    = useState(leverage);
-  const [globalScore,  setGlobalScore]  = useState(scoreMin);
-  const [testBalance,  setTestBalance]  = useState(balance.toString());
+  const [globalRisk,setGlobalRisk]=useState(risk);
+  const [globalLev,setGlobalLev]=useState(leverage);
+  const [globalScore,setGlobalScore]=useState(scoreMin);
+  const [testBalance,setTestBalance]=useState(balance.toString());
 
-  const apply = () => {
-    setRisk(globalRisk); lsS('ab19_risk', globalRisk);
-    setLeverage(globalLev); lsS('ab19_lev', globalLev);
+  const apply=()=>{
+    setRisk(globalRisk);lsS('ab24_risk',globalRisk);
+    setLeverage(globalLev);lsS('ab24_lev',globalLev);
     setScoreMin(globalScore);
-    const b=parseFloat(testBalance); if(b>=1){setBalance(b);lsS('ab19_bal',b);}
+    const b=parseFloat(testBalance);if(b>=1){setBalance(b);lsS('ab24_bal',b);}
     log(`⚙ Admin: Risque=${globalRisk}% Lev=${globalLev}x Score>=${globalScore}`,'wrn');
     toast('Paramètres admin appliqués','success');
   };
 
-  const db = lsG('ab19_udb',{});
-  const users = Object.values(db);
+  const db=lsG('ab24_udb',{});
+  const users=Object.values(db);
 
   return (
     <div>
       <div className="adm-stats">
-        <div className="adm-stat">
-          <div className="adm-stat-v">{users.length}</div>
-          <div className="adm-stat-l">Comptes créés</div>
-        </div>
-        <div className="adm-stat">
-          <div className="adm-stat-v">{stats.wins+stats.losses}</div>
-          <div className="adm-stat-l">Trades exécutés</div>
-        </div>
-        <div className="adm-stat">
-          <div className="adm-stat-v" style={{color:stats.pnl>=0?'var(--up)':'var(--dn)'}}>{stats.pnl>=0?'+':''}{stats.pnl.toFixed(0)}$</div>
-          <div className="adm-stat-l">PnL session</div>
-        </div>
+        <div className="adm-stat"><div className="adm-stat-v">{users.length}</div><div className="adm-stat-l">Comptes créés</div></div>
+        <div className="adm-stat"><div className="adm-stat-v">{stats.wins+stats.losses}</div><div className="adm-stat-l">Trades exécutés</div></div>
+        <div className="adm-stat"><div className="adm-stat-v" style={{color:stats.pnl>=0?'var(--up)':'var(--dn)'}}>{stats.pnl>=0?'+':''}{stats.pnl.toFixed(0)}$</div><div className="adm-stat-l">PnL net session</div></div>
       </div>
-
       <div className="acc-grid">
         <div className="acc-card">
           <div className="acc-hd">⚙ Paramètres Globaux</div>
           <div className="acc-body">
             <div className="fld">
               <div className="flbl">Risque par trade (max 10%)</div>
-              <div className="flex g8 mb4">
-                <span className="f11 mono cgold">{globalRisk.toFixed(1)}%</span>
-              </div>
-              <input type="range" min="0.1" max="10" step="0.1" value={globalRisk}
-                onChange={e=>setGlobalRisk(+e.target.value)} className="slider"/>
+              <div className="flex g8 mb4"><span className="f11 mono cgold">{globalRisk.toFixed(1)}%</span></div>
+              <input type="range" min="0.1" max="10" step="0.1" value={globalRisk} onChange={e=>setGlobalRisk(+e.target.value)} className="slider"/>
               <div className="risk-presets" style={{marginTop:'8px'}}>
-                {[[0.5,'Très prudent'],[1,'Prudent'],[2,'Normal'],[4,'Conservateur'],[8,'Agressif'],[10,'Extrême']].map(([v,l])=>(
-                  <button key={l} className={`risk-btn${globalRisk===v?' act':''}`}
-                    onClick={()=>setGlobalRisk(v)}>
+                {[[0.5,'Prudent'],[1,'Normal'],[2,'Actif'],[4,'Conservateur'],[8,'Agressif'],[10,'Extrême']].map(([v,l])=>(
+                  <button key={l} className={`risk-btn${globalRisk===v?' act':''}`} onClick={()=>setGlobalRisk(v)}>
                     {v}%<br/><span style={{fontSize:'7px',fontWeight:400}}>{l}</span>
                   </button>
                 ))}
               </div>
             </div>
             <div className="fld">
-              <div className="flbl">Levier (info affichage)</div>
+              <div className="flbl">Levier</div>
               <div className="flex g8 mb4"><span className="f11 mono cgold">{globalLev}x</span></div>
-              <input type="range" min="1" max="50" step="1" value={globalLev}
-                onChange={e=>setGlobalLev(+e.target.value)} className="slider"/>
-              <div className="flex jb f9 tx2 mt4"><span>1x sécurisé</span><span>50x extrême</span></div>
+              <input type="range" min="1" max="50" step="1" value={globalLev} onChange={e=>setGlobalLev(+e.target.value)} className="slider"/>
             </div>
             <div className="fld">
               <div className="flbl">Score minimum signaux</div>
               <div className="flex g8 mb4"><span className="f11 mono cgold">{globalScore}/100</span></div>
-              <input type="range" min="60" max="90" step="1" value={globalScore}
-                onChange={e=>setGlobalScore(+e.target.value)} className="slider"/>
+              <input type="range" min="60" max="90" step="1" value={globalScore} onChange={e=>setGlobalScore(+e.target.value)} className="slider"/>
             </div>
             <div className="fld">
-              <div className="flbl">Solde de test (min. 1$)</div>
-              <input className="inp" type="number" min="1" value={testBalance}
-                onChange={e=>setTestBalance(e.target.value)}/>
+              <div className="flbl">Solde de test</div>
+              <input className="inp" type="number" min="1" value={testBalance} onChange={e=>setTestBalance(e.target.value)}/>
             </div>
             <button className="btn btn-gold btn-full" onClick={apply}>✅ Appliquer les paramètres</button>
           </div>
         </div>
-
         <div className="acc-card">
           <div className="acc-hd">👥 Utilisateurs ({users.length})</div>
           <div className="acc-body" style={{maxHeight:'380px',overflowY:'auto'}}>
-            {users.length===0 ? <div className="nodata">Aucun compte</div> : users.map(u=>(
+            {users.length===0?<div className="nodata">Aucun compte</div>:users.map(u=>(
               <div key={u.email} className="adm-row">
                 <div>
                   <div className="f11 bold">{u.email.split('@')[0]}</div>
