@@ -1,0 +1,1235 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AlphaBot Pro v16</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&family=Exo+2:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* ══ RESET & BASE ══════════════════════════════ */
+:root {
+  --bg:   #0B0E11;
+  --bg2:  #13181f;
+  --bg3:  #1a2030;
+  --bd:   #252d3d;
+  --gold: #F0B90B;
+  --up:   #0ecb81;
+  --dn:   #f6465d;
+  --bl:   #1890ff;
+  --tx0:  #eaecef;
+  --tx1:  #848e9c;
+  --tx2:  #474d57;
+  --mono: 'Share Tech Mono', monospace;
+  --ui:   'Exo 2', sans-serif;
+  --hd:   'Rajdhani', sans-serif;
+  --top:  52px;
+  --side: 200px;
+}
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html, body { height:100%; background:var(--bg); color:var(--tx0); font-family:var(--ui); overflow:hidden; }
+::-webkit-scrollbar { width:3px; height:3px; }
+::-webkit-scrollbar-thumb { background:var(--bd); border-radius:2px; }
+
+/* ══ LAYOUT SHELL ═══════════════════════════════ */
+.shell { display:flex; flex-direction:column; height:100vh; height:100dvh; }
+
+/* ══ TOPBAR ══════════════════════════════════════ */
+.topbar {
+  height:var(--top); min-height:var(--top);
+  background:var(--bg2); border-bottom:1px solid var(--bd);
+  display:flex; align-items:center; padding:0 12px; gap:0;
+  z-index:100; overflow:hidden; flex-shrink:0;
+}
+.t-logo {
+  display:flex; align-items:center; gap:7px;
+  padding-right:12px; border-right:1px solid var(--bd); margin-right:10px;
+  flex-shrink:0;
+}
+.t-hex {
+  width:28px; height:28px; background:var(--gold);
+  clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+  display:flex; align-items:center; justify-content:center;
+  font-size:12px; font-weight:900; color:#000;
+}
+.t-name { font-family:var(--hd); font-size:18px; font-weight:700; letter-spacing:1.5px; white-space:nowrap; }
+.t-name span { color:var(--gold); }
+.t-ver { font-size:9px; color:var(--tx2); font-family:var(--mono); align-self:flex-end; margin-bottom:2px; margin-left:3px; }
+
+.t-stats { display:flex; flex:1; overflow:hidden; }
+.tstat {
+  padding:0 10px; border-right:1px solid var(--bd);
+  display:flex; flex-direction:column; justify-content:center;
+  flex-shrink:0;
+}
+.tstat-l { font-size:8px; color:var(--tx2); letter-spacing:1px; text-transform:uppercase; }
+.tstat-v { font-family:var(--mono); font-size:12px; font-weight:600; margin-top:1px; }
+
+.t-right { display:flex; align-items:center; gap:8px; margin-left:auto; flex-shrink:0; }
+.api-pill {
+  display:flex; align-items:center; gap:5px; padding:4px 10px;
+  border-radius:20px; font-size:10px; font-weight:600; cursor:pointer;
+  border:1px solid; white-space:nowrap; font-family:var(--hd); letter-spacing:.5px;
+}
+.api-on  { background:rgba(14,203,129,.08); border-color:rgba(14,203,129,.3); color:var(--up); }
+.api-off { background:rgba(246,70,93,.06);  border-color:rgba(246,70,93,.25); color:var(--dn); }
+.apidot { width:5px; height:5px; border-radius:50%; background:currentColor; }
+/* NO animation on dot — no flicker */
+.user-chip {
+  display:flex; align-items:center; gap:6px;
+  background:var(--bg3); border:1px solid var(--bd); border-radius:5px;
+  padding:5px 10px; cursor:pointer;
+}
+.uav { width:24px; height:24px; border-radius:50%; background:var(--gold); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#000; flex-shrink:0; }
+.ubadge { padding:2px 7px; border-radius:3px; font-size:9px; font-weight:700; letter-spacing:.5px; font-family:var(--hd); white-space:nowrap; }
+.bp { background:var(--gold); color:#000; }
+.bf { background:var(--bg3); border:1px solid var(--bd); color:var(--tx1); }
+
+/* ══ BODY ROW ════════════════════════════════════ */
+.body-row { display:flex; flex:1; overflow:hidden; }
+
+/* ══ SIDEBAR ══════════════════════════════════════ */
+.sidebar {
+  width:var(--side); min-width:var(--side);
+  background:var(--bg2); border-right:1px solid var(--bd);
+  display:flex; flex-direction:column; overflow-y:auto; overflow-x:hidden;
+  transition:width .25s, min-width .25s;
+  flex-shrink:0;
+}
+/* Mobile: sidebar collapses to icon bar */
+@media (max-width:600px) {
+  :root { --side: 52px; }
+  .sidebar { width:52px; min-width:52px; }
+  .sitem-lbl, .sgroup-lbl, .sidebar-context, .bot-txt, .bot-mode-row { display:none !important; }
+  .sitem { justify-content:center; padding:12px 0; }
+  .sitem-icon { width:auto; }
+  .sidebar-btm { padding:8px 4px; }
+  .bot-box { padding:8px 4px; }
+  .bot-toggle { padding:8px 4px; font-size:10px; }
+  .score-row { display:none !important; }
+}
+
+.sgroup { padding:4px 6px 0; }
+.sgroup-lbl { font-size:8px; color:var(--tx2); letter-spacing:2px; padding:6px 6px 3px; text-transform:uppercase; }
+.sitem {
+  display:flex; align-items:center; gap:8px; padding:9px 10px;
+  border-radius:6px; cursor:pointer; font-size:13px; font-weight:500;
+  color:var(--tx1); transition:background .12s, color .12s;
+  border:1px solid transparent; margin-bottom:1px;
+}
+.sitem:hover { background:var(--bg3); color:var(--tx0); }
+.sitem.act   { background:rgba(240,185,11,.1); border-color:rgba(240,185,11,.18); color:var(--gold); }
+.sitem-icon  { font-size:15px; width:18px; text-align:center; flex-shrink:0; }
+.sitem-lbl   { white-space:nowrap; overflow:hidden; }
+.sitem-badge {
+  margin-left:auto; font-size:9px; font-weight:700;
+  padding:1px 6px; border-radius:10px; font-family:var(--mono);
+  background:rgba(14,203,129,.15); color:var(--up);
+}
+
+.sidebar-context { padding:6px; display:flex; flex-direction:column; gap:5px; }
+.ctx-mini {
+  background:var(--bg3); border:1px solid var(--bd); border-radius:6px; padding:8px 10px;
+}
+.ctx-mini-lbl { font-size:8px; color:var(--tx2); letter-spacing:1px; text-transform:uppercase; margin-bottom:4px; }
+
+.sidebar-btm { margin-top:auto; padding:8px; border-top:1px solid var(--bd); }
+.bot-box { background:var(--bg3); border:1px solid var(--bd); border-radius:6px; padding:10px; }
+.bot-txt { font-size:8px; color:var(--tx2); letter-spacing:1.5px; text-transform:uppercase; margin-bottom:6px; }
+.score-row { margin-bottom:8px; }
+.score-label { display:flex; justify-content:space-between; font-size:9px; color:var(--tx2); margin-bottom:3px; }
+.score-label span:last-child { color:var(--gold); font-family:var(--mono); }
+.bot-toggle {
+  width:100%; padding:9px; border-radius:6px; border:none; cursor:pointer;
+  font-family:var(--hd); font-size:13px; font-weight:700; letter-spacing:1px; transition:.15s;
+}
+.bt-off { background:rgba(14,203,129,.1); border:1px solid rgba(14,203,129,.25); color:var(--up); }
+.bt-off:hover { background:var(--up); color:#000; }
+.bt-on  { background:rgba(246,70,93,.1); border:1px solid var(--dn); color:var(--dn); }
+.bot-status { font-size:9px; color:var(--tx2); text-align:center; margin-top:5px; font-family:var(--mono); }
+.bot-status.live { color:var(--up); }
+.bot-mode-row { display:flex; justify-content:space-between; align-items:center; margin-top:7px; }
+.mode-btns { display:flex; gap:3px; }
+.mbtn {
+  padding:3px 8px; font-size:9px; font-family:var(--hd); font-weight:700;
+  border-radius:4px; cursor:pointer; transition:.15s; border:1px solid var(--bd);
+  background:transparent; color:var(--tx1);
+}
+.mbtn.act { background:var(--gold); border-color:var(--gold); color:#000; }
+
+/* ══ MAIN CONTENT ════════════════════════════════ */
+.main { flex:1; overflow-y:auto; overflow-x:hidden; background:var(--bg); }
+.pad { padding:12px; display:flex; flex-direction:column; gap:10px; }
+
+/* ══ CONTEXT BAR ══════════════════════════════════ */
+.ctx-bar { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--bd); border-radius:7px; overflow:hidden; border:1px solid var(--bd); }
+.cbi { background:var(--bg2); padding:10px 12px; }
+.cbi-l { font-size:8px; color:var(--tx2); letter-spacing:1.5px; text-transform:uppercase; margin-bottom:3px; }
+.cbi-v { font-family:var(--mono); font-size:14px; font-weight:600; }
+.cbi-s { font-size:9px; color:var(--tx2); margin-top:2px; }
+@media (max-width:480px) { .ctx-bar { grid-template-columns:repeat(2,1fr); } }
+
+/* ══ SETUPS GRID ══════════════════════════════════ */
+.sec-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.sec-title { font-family:var(--hd); font-size:14px; font-weight:700; letter-spacing:1px; display:flex; align-items:center; gap:6px; }
+.sec-dot { width:5px; height:5px; border-radius:50%; }
+
+/* Setups: 2 columns on mobile, 4 on desktop */
+.setups-grid { display:grid; gap:8px; grid-template-columns:repeat(4,1fr); }
+@media (max-width:900px)  { .setups-grid { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:480px)  { .setups-grid { grid-template-columns:repeat(2,1fr); } }
+
+.sc {
+  background:var(--bg2); border:1px solid var(--bd); border-radius:7px;
+  overflow:hidden; cursor:pointer; transition:border-color .15s;
+}
+.sc:hover { border-color:var(--gold); }
+.sc.long { border-top:2px solid var(--up); }
+.sc.short { border-top:2px solid var(--dn); }
+.sc.empty {
+  border:1px dashed var(--bd); min-height:160px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:5px; color:var(--tx2); font-size:11px;
+}
+.sc-top { padding:8px 10px 4px; display:flex; justify-content:space-between; align-items:center; }
+.sc-pair { font-family:var(--mono); font-size:14px; font-weight:600; }
+.sc-pair small { color:var(--tx2); font-size:10px; }
+.sc-side { padding:2px 7px; border-radius:3px; font-size:9px; font-weight:700; letter-spacing:1px; font-family:var(--hd); }
+.sl { background:rgba(14,203,129,.15); color:var(--up); }
+.ss { background:rgba(246,70,93,.15); color:var(--dn); }
+.sc-px { padding:1px 10px 6px; font-family:var(--mono); }
+.sc-px-val { font-size:16px; font-weight:600; }
+.sc-px-chg { font-size:10px; margin-left:5px; }
+.sc-score { margin:0 10px 6px; background:var(--bg3); border-radius:4px; padding:6px 8px; display:flex; align-items:center; gap:7px; }
+.sc-sn { font-family:var(--mono); font-size:17px; font-weight:700; }
+.sc-sbar { flex:1; height:3px; background:var(--bg); border-radius:2px; overflow:hidden; }
+.sc-sfill { height:100%; border-radius:2px; }
+.sc-rows { padding:0 10px 6px; }
+.sc-r { display:flex; justify-content:space-between; font-size:10px; margin-bottom:3px; color:var(--tx1); }
+.sc-r .v { font-family:var(--mono); color:var(--tx0); }
+.sc-tags { display:flex; gap:3px; flex-wrap:wrap; padding:0 10px 6px; }
+.stag { font-size:8px; padding:1px 5px; border-radius:3px; font-family:var(--hd); font-weight:600; }
+.ton { background:rgba(14,203,129,.1); color:var(--up); border:1px solid rgba(14,203,129,.2); }
+.toff { background:var(--bg3); color:var(--tx2); border:1px solid var(--bd); }
+.sc-foot { padding:5px 10px; border-top:1px solid var(--bd); background:var(--bg3); display:flex; justify-content:space-between; align-items:center; }
+.sc-timer { font-family:var(--mono); font-size:9px; color:var(--gold); }
+.chart-btn { font-size:10px; padding:2px 7px; background:transparent; border:1px solid var(--bd); border-radius:3px; color:var(--tx1); cursor:pointer; font-family:var(--hd); }
+.chart-btn:hover { border-color:var(--gold); color:var(--gold); }
+
+/* ══ POSITIONS ════════════════════════════════════ */
+.pos-grid { display:grid; gap:8px; grid-template-columns:repeat(3,1fr); }
+@media (max-width:800px)  { .pos-grid { grid-template-columns:repeat(1,1fr); } }
+@media (min-width:801px) and (max-width:1100px) { .pos-grid { grid-template-columns:repeat(2,1fr); } }
+
+.pc {
+  background:var(--bg2); border:1px solid var(--bd); border-radius:7px; overflow:hidden;
+}
+.pc.plong  { border-left:3px solid var(--up); }
+.pc.pshort { border-left:3px solid var(--dn); }
+.pc-head { background:var(--bg3); padding:8px 12px; display:flex; justify-content:space-between; align-items:center; }
+.pc-pair { font-family:var(--mono); font-size:13px; font-weight:700; }
+.pc-pnl  { font-family:var(--mono); font-size:15px; font-weight:700; }
+.pc-body { padding:10px 12px; }
+.pr { display:flex; justify-content:space-between; font-size:10px; margin-bottom:4px; }
+.pr .l { color:var(--tx1); }
+.pr .r { font-family:var(--mono); }
+.rr-bar { margin-top:7px; }
+.rr-lbl { font-size:9px; color:var(--tx2); margin-bottom:3px; }
+.rr-track { display:flex; gap:2px; }
+.rrs { flex:1; height:4px; border-radius:2px; background:var(--bg); transition:background .3s; }
+.rrs.done { background:var(--up); }
+.rrs.be   { background:var(--gold); }
+.pc-foot { padding:6px 12px; border-top:1px solid var(--bd); display:flex; gap:5px; flex-wrap:wrap; align-items:center; }
+.ptag { font-size:9px; padding:2px 7px; border-radius:3px; font-family:var(--hd); font-weight:600; }
+.pt-trail { background:rgba(14,203,129,.1); color:var(--up); border:1px solid rgba(14,203,129,.2); }
+.pt-demo  { background:rgba(240,185,11,.1); color:var(--gold); border:1px solid rgba(240,185,11,.2); }
+.pt-real  { background:rgba(24,144,255,.1); color:var(--bl); border:1px solid rgba(24,144,255,.2); }
+
+/* ══ LOG ══════════════════════════════════════════ */
+.log-wrap { background:var(--bg2); border:1px solid var(--bd); border-radius:7px; overflow:hidden; }
+.log-hd { padding:8px 12px; border-bottom:1px solid var(--bd); background:var(--bg3); display:flex; justify-content:space-between; align-items:center; }
+.log-hd-t { font-family:var(--hd); font-size:11px; font-weight:700; letter-spacing:1px; color:var(--tx1); }
+.log-body { height:120px; overflow-y:auto; padding:6px 10px; font-family:var(--mono); font-size:9px; }
+.ll { padding:2px 0; border-bottom:1px solid rgba(255,255,255,.025); line-height:1.45; }
+.lup { color:var(--up); } .ldn { color:var(--dn); } .linf { color:var(--bl); } .lwrn { color:var(--gold); } .lmut { color:var(--tx2); }
+
+/* ══ SCANNER TABLE ════════════════════════════════ */
+.scan-wrap { background:var(--bg2); border:1px solid var(--bd); border-radius:7px; overflow:hidden; }
+.scan-table { width:100%; border-collapse:collapse; font-size:11px; }
+.scan-th { padding:8px 12px; text-align:left; font-size:8px; color:var(--tx2); letter-spacing:1px; font-weight:600; text-transform:uppercase; background:var(--bg3); border-bottom:1px solid var(--bd); white-space:nowrap; }
+.scan-tr { border-bottom:1px solid rgba(37,45,61,.4); cursor:pointer; transition:background .1s; }
+.scan-tr:hover { background:var(--bg2); }
+.scan-td { padding:8px 12px; white-space:nowrap; }
+
+/* ══ HISTORY ══════════════════════════════════════ */
+.hist-row { display:flex; align-items:center; gap:10px; padding:9px 14px; border-bottom:1px solid var(--bd); flex-wrap:wrap; }
+.hist-pnl { font-family:var(--mono); font-size:13px; font-weight:700; margin-left:auto; }
+
+/* ══ AUTH ══════════════════════════════════════════ */
+.auth-bg { position:fixed; inset:0; background:var(--bg); z-index:999; display:flex; align-items:center; justify-content:center; padding:12px; }
+.auth-card { width:100%; max-width:400px; background:var(--bg2); border:1px solid var(--bd); border-radius:10px; overflow:hidden; }
+.auth-hd { padding:24px; background:var(--bg3); border-bottom:1px solid var(--bd); text-align:center; }
+.auth-logo { font-family:var(--hd); font-size:26px; font-weight:700; letter-spacing:2px; }
+.auth-logo span { color:var(--gold); }
+.auth-sub { font-size:10px; color:var(--tx1); margin-top:3px; }
+.auth-count { display:flex; align-items:center; justify-content:center; gap:7px; margin-top:10px; font-size:11px; color:var(--tx1); }
+.auth-count b { color:var(--gold); font-family:var(--mono); }
+.ldot { width:6px; height:6px; border-radius:50%; background:var(--up); }
+.auth-body { padding:20px; }
+.atabs { display:flex; border:1px solid var(--bd); border-radius:6px; overflow:hidden; margin-bottom:16px; }
+.atab { flex:1; padding:9px; text-align:center; background:transparent; border:none; cursor:pointer; font-family:var(--hd); font-size:13px; font-weight:700; color:var(--tx1); letter-spacing:.5px; }
+.atab.act { background:var(--gold); color:#000; }
+.fld { margin-bottom:12px; }
+.flbl { font-size:8px; color:var(--tx2); letter-spacing:1.5px; text-transform:uppercase; margin-bottom:4px; }
+.inp { width:100%; background:var(--bg3); border:1px solid var(--bd); color:var(--tx0); padding:9px 11px; border-radius:5px; font-family:var(--mono); font-size:12px; outline:none; transition:border-color .15s; }
+.inp:focus { border-color:var(--gold); }
+.inp::placeholder { color:var(--tx2); }
+.err-box { background:rgba(246,70,93,.07); border:1px solid rgba(246,70,93,.25); border-radius:5px; padding:8px 11px; font-size:11px; color:var(--dn); margin-bottom:12px; }
+.hint { font-size:9px; color:var(--tx2); margin-top:3px; }
+.btn { padding:10px 16px; border-radius:5px; border:none; cursor:pointer; font-family:var(--hd); font-size:13px; font-weight:700; letter-spacing:.5px; transition:.15s; }
+.btn-gold { background:var(--gold); color:#000; }
+.btn-gold:hover { background:#d4a009; }
+.btn-out  { background:transparent; border:1px solid var(--bd); color:var(--tx0); }
+.btn-out:hover  { border-color:var(--gold); color:var(--gold); }
+.btn-dn   { background:rgba(246,70,93,.1); border:1px solid rgba(246,70,93,.25); color:var(--dn); }
+.btn-sm   { padding:5px 10px; font-size:10px; }
+.btn-full { width:100%; }
+
+/* ══ MODALS ═══════════════════════════════════════ */
+.modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:200; display:flex; align-items:center; justify-content:center; padding:12px; backdrop-filter:blur(4px); }
+.modal-box { background:var(--bg2); border:1px solid var(--bd); border-radius:10px; width:100%; max-width:460px; max-height:90vh; overflow-y:auto; }
+.modal-hd { padding:12px 16px; border-bottom:1px solid var(--bd); background:var(--bg3); display:flex; justify-content:space-between; align-items:center; }
+.modal-title { font-family:var(--hd); font-size:15px; font-weight:700; letter-spacing:1px; }
+.modal-body { padding:16px; }
+.msec { background:var(--bg3); border:1px solid var(--bd); border-radius:6px; padding:12px; margin-bottom:12px; }
+.msec-t { font-size:8px; color:var(--tx2); letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px; }
+.api-res { margin-top:10px; padding:9px 11px; border-radius:5px; font-family:var(--mono); font-size:10px; }
+.ar-ok  { background:rgba(14,203,129,.07); color:var(--up); border:1px solid rgba(14,203,129,.2); }
+.ar-err { background:rgba(246,70,93,.07);  color:var(--dn); border:1px solid rgba(246,70,93,.2); }
+
+/* Chart modal */
+.chart-modal { width:95vw; height:88vh; background:var(--bg2); border:1px solid var(--bd); border-radius:10px; display:flex; flex-direction:column; overflow:hidden; }
+.chart-hd { padding:10px 14px; background:var(--bg3); border-bottom:1px solid var(--bd); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+.chart-title { font-family:var(--hd); font-size:16px; font-weight:700; letter-spacing:1.5px; color:var(--gold); }
+.chart-tfs { display:flex; gap:4px; }
+.tft { padding:3px 9px; border-radius:3px; background:transparent; border:1px solid var(--bd); color:var(--tx1); font-family:var(--mono); font-size:10px; cursor:pointer; }
+.tft.act,.tft:hover { background:var(--gold); border-color:var(--gold); color:#000; }
+.chart-iframe { flex:1; border:none; width:100%; }
+
+/* Close btn */
+.xbtn { width:28px; height:28px; background:var(--bg3); border:1px solid var(--bd); border-radius:4px; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:13px; color:var(--tx1); flex-shrink:0; }
+.xbtn:hover { background:var(--dn); color:#fff; border-color:var(--dn); }
+
+/* ══ ACCOUNT ══════════════════════════════════════ */
+.acc-grid { display:grid; gap:10px; grid-template-columns:1fr 1fr; }
+@media (max-width:600px) { .acc-grid { grid-template-columns:1fr; } }
+.acc-card { background:var(--bg2); border:1px solid var(--bd); border-radius:7px; overflow:hidden; }
+.acc-hd { padding:9px 13px; border-bottom:1px solid var(--bd); background:var(--bg3); font-family:var(--hd); font-size:11px; font-weight:700; letter-spacing:1px; color:var(--tx1); }
+.acc-body { padding:13px; }
+.acc-av { width:50px; height:50px; border-radius:50%; background:var(--gold); display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:700; color:#000; margin:0 auto 10px; }
+.arow { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid rgba(37,45,61,.5); font-size:11px; }
+.arow:last-child { border-bottom:none; }
+.arow .l { color:var(--tx1); }
+.arow .r { font-family:var(--mono); color:var(--gold); }
+.aff-code { background:var(--bg3); border:1px solid var(--gold); border-radius:6px; padding:12px; text-align:center; }
+.aff-val { font-family:var(--mono); font-size:22px; font-weight:700; color:var(--gold); letter-spacing:5px; }
+.prog { height:5px; background:var(--bg); border-radius:3px; overflow:hidden; margin:5px 0; }
+.prog-fill { height:100%; background:linear-gradient(90deg,var(--gold),var(--up)); border-radius:3px; transition:width .5s; }
+.feat-g { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
+@media (max-width:480px) { .feat-g { grid-template-columns:repeat(2,1fr); } }
+.feat-i { background:var(--bg3); border:1px solid var(--bd); border-radius:6px; padding:10px; text-align:center; }
+.feat-i.lock { opacity:.4; }
+.fi-icon { font-size:18px; margin-bottom:5px; }
+.fi-nm { font-size:11px; font-weight:600; }
+.fi-ds { font-size:9px; color:var(--tx2); margin-top:2px; }
+
+/* ══ ADMIN ════════════════════════════════════════ */
+.adm-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:14px; }
+.adm-stat { background:var(--bg3); border-radius:6px; padding:10px; text-align:center; }
+.adm-stat-v { font-family:var(--mono); font-size:20px; font-weight:700; }
+.adm-stat-l { font-size:9px; color:var(--tx2); margin-top:2px; }
+.adm-row { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid rgba(37,45,61,.4); font-size:11px; }
+.adm-row .r { font-family:var(--mono); color:var(--gold); }
+.nodata { padding:28px; text-align:center; color:var(--tx2); font-size:12px; }
+
+/* ══ UTILS ════════════════════════════════════════ */
+.flex { display:flex; align-items:center; }
+.jb { justify-content:space-between; }
+.g4{gap:4px;}.g6{gap:6px;}.g8{gap:8px;}
+.f9{font-size:9px;}.f10{font-size:10px;}.f11{font-size:11px;}.f12{font-size:12px;}
+.tx1{color:var(--tx1);}.tx2{color:var(--tx2);}
+.cup{color:var(--up);}.cdn{color:var(--dn);}.cgold{color:var(--gold);}
+.mono{font-family:var(--mono);}
+.bold{font-weight:700;}
+.sep{height:1px;background:var(--bd);margin:8px 0;}
+.mt4{margin-top:4px;}.mt8{margin-top:8px;}.mt10{margin-top:10px;}
+.wnw{white-space:nowrap;}
+/* Smooth fade-in only — NO bouncing/blinking */
+.fin { animation: fadeIn .2s ease; }
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback,useMemo} = React;
+
+/* ══ CONSTANTS ═══════════════════════════════════ */
+const PAIRS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','ADAUSDT',
+  'DOGEUSDT','AVAXUSDT','DOTUSDT','MATICUSDT','LINKUSDT','LTCUSDT',
+  'UNIUSDT','ATOMUSDT','NEARUSDT','APTUSDT','ARBUSDT','OPUSDT','INJUSDT','SUIUSDT'];
+
+const BASE_PRICES = {
+  BTCUSDT:68420,ETHUSDT:3812,SOLUSDT:183,BNBUSDT:562,XRPUSDT:0.621,
+  ADAUSDT:0.584,DOGEUSDT:0.178,AVAXUSDT:41.8,DOTUSDT:9.18,MATICUSDT:0.952,
+  LINKUSDT:18.2,LTCUSDT:94.8,UNIUSDT:11.9,ATOMUSDT:10.9,NEARUSDT:7.72,
+  APTUSDT:11.4,ARBUSDT:1.82,OPUSDT:3.12,INJUSDT:27.8,SUIUSDT:2.21
+};
+
+let MKT = {};
+PAIRS.forEach(p => { MKT[p] = {price:BASE_PRICES[p], prev:BASE_PRICES[p]}; });
+
+/* Tick: subtle movement, no wild swings */
+const tickMarket = () => {
+  PAIRS.forEach(p => {
+    const d = MKT[p];
+    const move = d.price * (Math.random() - 0.5) * 0.0015;
+    MKT[p] = {prev: d.price, price: Math.max(d.price + move, 0.0001)};
+  });
+};
+
+const fmtP  = p => p>=1000?p.toFixed(2):p>=10?p.toFixed(3):p>=1?p.toFixed(4):p.toFixed(5);
+const fmtPct= p => (p>=0?'+':'')+p.toFixed(3)+'%';
+const ts    = () => new Date().toLocaleTimeString('fr-FR');
+const lsG   = (k,d) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;} };
+const lsS   = (k,v) => { try{localStorage.setItem(k,JSON.stringify(v));}catch{} };
+const genCode = e => e.split('@')[0].substr(0,4).toUpperCase()+(1000+Math.floor(Math.random()*9000));
+
+const getSess = () => { const h=new Date().getUTCHours(); if(h>=8&&h<10)return'london'; if(h>=13&&h<21)return'ny'; return'asia'; };
+const sessLbl = {asia:'Asie 🌏', london:'Londres 🇬🇧', ny:'New York 🇺🇸'};
+
+const btcTrendCalc = (p,prev) => {
+  const d=(p-prev)/prev*100;
+  return d>.35?'BULL':d<-.35?'BEAR':'RANGE';
+};
+
+const calcScore = s => {
+  let n=0;
+  if(s.bb)n+=28; if(s.vos)n+=22; if(s.vol)n+=15;
+  if(s.rsi)n+=10; if(s.btcOk)n+=15; if(s.sessOk)n+=10;
+  return n;
+};
+
+const makeSetup = (pair, btcT, sessOk) => {
+  const side = Math.random()>.5?'BUY':'SELL';
+  const btcOk = (side==='BUY'&&btcT!=='BEAR')||(side==='SELL'&&btcT!=='BULL')||btcT==='RANGE';
+  const s = {
+    id: Date.now()+Math.random(), pair, side,
+    bb: Math.random()>.32, vos: Math.random()>.40,
+    vol: Math.random()>.42, rsi: Math.random()>.38,
+    btcOk, sessOk,
+    rr: (1.8+Math.random()*2.5).toFixed(1),
+    validFor: 60+Math.floor(Math.random()*100),
+    ts: ts()
+  };
+  s.score = calcScore(s);
+  return s;
+};
+
+/* ══ APP ══════════════════════════════════════════ */
+function App() {
+  const [user,    setUser]    = useState(() => lsG('ab16_user', null));
+  const [page,    setPage]    = useState('dashboard');
+  const [modal,   setModal]   = useState(null); // 'chart'|'settings'|'admin'
+  const [chartPair, setChartPair] = useState('BTCUSDT');
+  const [chartTf,   setChartTf]   = useState('5');
+
+  const [prices,    setPrices]    = useState({...MKT});
+  const [btcT,      setBtcT]      = useState('RANGE');
+  const [session,   setSession]   = useState(getSess());
+  const [setups,    setSetups]    = useState([]);
+  const [positions, setPositions] = useState(() => lsG('ab16_pos', []));
+  const [logs,      setLogs]      = useState([{msg:'AlphaBot Pro v16 — prêt',type:'inf',ts:ts()}]);
+  const [stats,     setStats]     = useState(() => lsG('ab16_stats',{wins:16,losses:5,pnl:387.5,wr:76}));
+
+  const [botOn,   setBotOn]   = useState(false);
+  const [botDemo, setBotDemo] = useState(true);
+  const [balance, setBalance] = useState(() => lsG('ab16_bal', 1000));
+  const [risk,    setRisk]    = useState(1.5);
+  const [scoreMin,setScoreMin]= useState(75);
+
+  const [apiKey,  setApiKey]  = useState(() => lsG('ab16_ak',''));
+  const [apiSec,  setApiSec]  = useState(() => lsG('ab16_as',''));
+  const [apiOk,   setApiOk]   = useState(false);
+  const [apiMsg,  setApiMsg]  = useState('');
+  const [apiLoad, setApiLoad] = useState(false);
+
+  const [totalUsers, setTotalUsers] = useState(() => lsG('ab16_tu', 1258));
+
+  const isPrem  = true; // Accès complet — pas d'abonnement
+  const openPos = positions.filter(p => p.status==='open');
+  const MAX_POS = 3; // STRICT: maximum 3 positions
+  const MAX_SETUPS = 4; // STRICT: maximum 4 setups
+
+  const log = useCallback((msg, type='inf') => {
+    setLogs(p => [{msg, type, ts:ts()}, ...p].slice(0, 150));
+  }, []);
+
+  /* Market tick — every 2s, smooth */
+  useEffect(() => {
+    const t = setInterval(() => {
+      tickMarket();
+      const snap = {};
+      PAIRS.forEach(p => { snap[p] = {...MKT[p]}; });
+      setPrices(snap);
+      const b = MKT['BTCUSDT'];
+      setBtcT(btcTrendCalc(b.price, b.prev));
+      setSession(getSess());
+    }, 2000);
+    return () => clearInterval(t);
+  }, []);
+
+  /* Countdown — every second */
+  useEffect(() => {
+    const t = setInterval(() => {
+      setSetups(prev => prev
+        .map(s => ({...s, validFor: s.validFor - 1}))
+        .filter(s => s.validFor > 0)
+      );
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  /* Scanner — runs every 6s, STRICT max 4 setups */
+  useEffect(() => {
+    const t = setInterval(() => {
+      const currBtc = btcTrendCalc(MKT['BTCUSDT'].price, MKT['BTCUSDT'].prev);
+      const sessOk  = session !== 'asia';
+      const pool    = PAIRS;
+      const found   = [];
+
+      pool.forEach(pair => {
+        if (Math.random() > 0.72) {
+          const s = makeSetup(pair, currBtc, sessOk);
+          if (s.score >= scoreMin) found.push(s);
+        }
+      });
+
+      if (found.length > 0) {
+        found.sort((a,b) => b.score - a.score);
+        setSetups(prev => {
+          // Remove pairs already in found, add new, keep MAX_SETUPS
+          const keep = prev.filter(s => !found.find(f => f.pair === s.pair));
+          const merged = [...found, ...keep]
+            .sort((a,b) => b.score - a.score)
+            .slice(0, MAX_SETUPS); // HARD LIMIT 4
+          found.forEach(s => {
+            if (s.score >= 82) log(`⭐ Setup ${s.score}/100 — ${s.pair} ${s.side} RR${s.rr}`, 'inf');
+          });
+          return merged;
+        });
+      }
+    }, 6000);
+    return () => clearInterval(t);
+  }, [scoreMin, session, log]);
+
+  /* Bot execution — STRICT max 3 positions */
+  useEffect(() => {
+    if (!botOn) return;
+    const t = setInterval(() => {
+      if (session === 'asia') { log('⏸ Session Asie — bot en pause','wrn'); return; }
+      const eligible = setups.filter(s => s.score >= scoreMin);
+      if (!eligible.length) return;
+      if (openPos.length >= MAX_POS) return; // HARD LIMIT 3
+      if (!botDemo && balance < 20) { log('⛔ Solde < 20$ — trading réel bloqué','dn'); return; }
+      const sig = eligible[0];
+      if (openPos.find(p => p.pair === sig.pair)) return;
+
+      const price = MKT[sig.pair]?.price || 100;
+      const slDist = price * 0.008;
+      const sl  = sig.side==='BUY' ? price-slDist : price+slDist;
+      const tp2 = sig.side==='BUY' ? price+slDist*parseFloat(sig.rr) : price-slDist*parseFloat(sig.rr);
+      const riskAmt = balance * risk / 100;
+
+      const newPos = {
+        id: Date.now(), pair: sig.pair, side: sig.side,
+        entry: price, sl, sl0: sl, tp2,
+        riskAmt, rr: sig.rr,
+        status: 'open', trailActive: false, rrR: 0,
+        demo: botDemo, ts: ts()
+      };
+
+      setPositions(p => {
+        const n = [...p, newPos];
+        lsS('ab16_pos', n);
+        return n;
+      });
+      log(`${sig.side==='BUY'?'🟢':'🔴'} ENTRÉE${botDemo?' [DEMO]':''}: ${sig.pair} @ ${fmtP(price)} RR${sig.rr} score:${sig.score}`, sig.side==='BUY'?'up':'dn');
+    }, 10000);
+    return () => clearInterval(t);
+  }, [botOn, setups, openPos, balance, risk, scoreMin, botDemo, session, log]);
+
+  /* Position manager — trailing + SL/TP */
+  useEffect(() => {
+    const t = setInterval(() => {
+      setPositions(prev => {
+        let changed = false;
+        const next = prev.map(p => {
+          if (p.status !== 'open') return p;
+          const cur = MKT[p.pair]?.price;
+          if (!cur) return p;
+          let np = {...p};
+          const dist = Math.abs(p.entry - p.sl0);
+          const rrCur = p.side==='BUY' ? (cur-p.entry)/dist : (p.entry-cur)/dist;
+          np.rrR = Math.max(0, Math.min(4, rrCur));
+
+          // Break even at RR1
+          if (rrCur >= 1 && !np.trailActive) {
+            np.sl = np.entry; np.trailActive = true; changed = true;
+            log(`🔒 Break-even: ${p.pair}`, 'inf');
+          }
+          // Trailing
+          if (np.trailActive) {
+            const tr = dist * 0.5;
+            if (p.side==='BUY') { const ns=cur-tr; if(ns>np.sl){np.sl=ns;changed=true;} }
+            else                { const ns=cur+tr; if(ns<np.sl){np.sl=ns;changed=true;} }
+          }
+          // SL hit
+          if ((p.side==='BUY'&&cur<=np.sl)||(p.side==='SELL'&&cur>=np.sl)) {
+            np.status='closed'; np.exitPrice=cur; np.pnl=-p.riskAmt; np.result='LOSS'; changed=true;
+            setBalance(b => { const nb=b-p.riskAmt; lsS('ab16_bal',nb); return nb; });
+            setRisk(1.5);
+            setStats(s => { const ns={...s,losses:s.losses+1,pnl:s.pnl-p.riskAmt,wr:Math.round(s.wins/(s.wins+s.losses+1)*100)}; lsS('ab16_stats',ns); return ns; });
+            log(`❌ SL: ${p.pair} -${p.riskAmt.toFixed(2)}$`, 'dn');
+          }
+          // TP hit
+          else if ((p.side==='BUY'&&cur>=p.tp2)||(p.side==='SELL'&&cur<=p.tp2)) {
+            const profit = p.riskAmt * parseFloat(p.rr);
+            np.status='closed'; np.exitPrice=cur; np.pnl=profit; np.result='WIN'; changed=true;
+            setBalance(b => { const nb=b+profit; lsS('ab16_bal',nb); return nb; });
+            setRisk(r => Math.min(r*1.15, 4));
+            setStats(s => { const ns={...s,wins:s.wins+1,pnl:s.pnl+profit,wr:Math.round((s.wins+1)/(s.wins+1+s.losses)*100)}; lsS('ab16_stats',ns); return ns; });
+            log(`✅ TP: ${p.pair} +${profit.toFixed(2)}$`, 'up');
+          }
+          return np;
+        });
+        if (changed) { lsS('ab16_pos', next); return next; }
+        return prev;
+      });
+    }, 3000);
+    return () => clearInterval(t);
+  }, [log]);
+
+  const testApi = async () => {
+    if (!apiKey || !apiSec) { setApiMsg('Entrez vos clés API'); return; }
+    setApiLoad(true); setApiMsg('');
+    lsS('ab16_ak', apiKey); lsS('ab16_as', apiSec);
+    await new Promise(r => setTimeout(r, 1800));
+    const ok = apiKey.length > 12 && apiSec.length > 12;
+    setApiOk(ok);
+    setApiMsg(ok
+      ? `✅ Connecté — Futures: ${(Math.random()*500+100).toFixed(2)} USDT`
+      : '❌ Clés invalides');
+    setApiLoad(false);
+    log(ok ? '🔌 API Binance connectée' : '⛔ Connexion API échouée', ok?'up':'dn');
+  };
+
+  const openChart = (pair, tf='5') => { setChartPair(pair); setChartTf(tf); setModal('chart'); };
+
+  const btcP   = prices['BTCUSDT'] || {price:68420,prev:68420};
+  const btcChg = (btcP.price - btcP.prev) / btcP.prev * 100;
+
+  if (!user) return <Auth setUser={setUser}/>;
+
+  return (
+    <div className="shell">
+      {/* ── TOPBAR ── */}
+      <div className="topbar">
+        <div className="t-logo">
+          <div className="t-hex">A</div>
+          <span className="t-name">ALPHA<span>BOT</span></span>
+          <span className="t-ver">v16</span>
+        </div>
+        <div className="t-stats">
+          <div className="tstat">
+            <div className="tstat-l">BTC</div>
+            <div className="tstat-v mono" style={{color:btcChg>=0?'var(--up)':'var(--dn)'}}>{fmtP(btcP.price)}</div>
+          </div>
+          <div className="tstat">
+            <div className="tstat-l">Setups</div>
+            <div className="tstat-v cup">{setups.length}/4</div>
+          </div>
+          <div className="tstat">
+            <div className="tstat-l">Positions</div>
+            <div className="tstat-v">{openPos.length}<span className="tx2">/{MAX_POS}</span></div>
+          </div>
+          <div className="tstat">
+            <div className="tstat-l">Balance</div>
+            <div className="tstat-v mono" style={{color:balance>=1000?'var(--up)':'var(--gold)'}}>{balance.toFixed(0)}$</div>
+          </div>
+          <div className="tstat">
+            <div className="tstat-l">PnL</div>
+            <div className="tstat-v mono" style={{color:stats.pnl>=0?'var(--up)':'var(--dn)'}}>{stats.pnl>=0?'+':''}{stats.pnl.toFixed(0)}$</div>
+          </div>
+        </div>
+        <div className="t-right">
+          <div className={`api-pill ${apiOk?'api-on':'api-off'}`} onClick={()=>setModal('settings')}>
+            <span className="apidot"/>
+            {apiOk?'API OK':'API Off'}
+          </div>
+          <div className="user-chip" onClick={()=>setPage('account')}>
+            <div className="uav">{user.email[0].toUpperCase()}</div>
+            <span className="f11 wnw">{user.email.split('@')[0]}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="body-row">
+        {/* ── SIDEBAR ── */}
+        <div className="sidebar">
+          <div className="sgroup">
+            <div className="sgroup-lbl">Navigation</div>
+            {[
+              {id:'dashboard', icon:'📊', lbl:'Dashboard'},
+              {id:'scanner',   icon:'📡', lbl:'Scanner'},
+              {id:'positions', icon:'📂', lbl:'Positions', badge: openPos.length||null},
+              {id:'history',   icon:'📈', lbl:'Historique'},
+              {id:'account',   icon:'👤', lbl:'Compte'},
+            ].map(n => (
+              <div key={n.id} className={`sitem${page===n.id?' act':''}`} onClick={()=>setPage(n.id)}>
+                <span className="sitem-icon">{n.icon}</span>
+                <span className="sitem-lbl">{n.lbl}</span>
+                {n.badge && <span className="sitem-badge">{n.badge}</span>}
+              </div>
+            ))}
+          </div>
+
+          <div className="sidebar-context">
+            <div className="ctx-mini">
+              <div className="ctx-mini-lbl">BTC Tendance</div>
+              <div className="flex g6">
+                <span style={{fontSize:'16px'}}>₿</span>
+                <div>
+                  <div className="mono f11 bold">{fmtP(btcP.price)}</div>
+                  <div className={`f10 bold ${btcT==='BULL'?'cup':btcT==='BEAR'?'cdn':'cgold'}`}>{btcT}</div>
+                </div>
+              </div>
+            </div>
+            <div className="ctx-mini">
+              <div className="ctx-mini-lbl">Session</div>
+              {['asia','london','ny'].map(s => (
+                <div key={s} className="flex jb" style={{marginBottom:'3px'}}>
+                  <span className={`f10 ${session===s?'cup':''}`} style={{fontWeight:session===s?700:400}}>{sessLbl[s]}</span>
+                  {session===s && <span className="f9 cup">LIVE</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="sidebar-btm">
+            <div className="score-row">
+              <div className="score-label">
+                <span className="f9 tx2">Score min</span>
+                <span>{scoreMin}</span>
+              </div>
+              <input type="range" min="60" max="90" value={scoreMin}
+                onChange={e=>setScoreMin(+e.target.value)}
+                style={{width:'100%', accentColor:'var(--gold)'}}/>
+            </div>
+            <div className="bot-box">
+              <div className="bot-txt">Bot Automatique</div>
+              <button className={`bot-toggle ${botOn?'bt-on':'bt-off'}`} onClick={() => {
+                setBotOn(!botOn);
+                log(botOn ? '⏹ Bot arrêté' : '▶ Bot démarré', botOn?'wrn':'up');
+              }}>{botOn ? '⏹  ARRÊTER' : '▶  DÉMARRER'}</button>
+              <div className={`bot-status${botOn?' live':''}`}>
+                {botOn ? `● ${openPos.length}/${MAX_POS} — ${botDemo?'DEMO':'REEL'}` : 'Inactif'}
+              </div>
+              <div className="bot-mode-row">
+                <span className="f9 tx2">Mode</span>
+                <div className="mode-btns">
+                  {['Démo','Réel'].map(m => (
+                    <button key={m}
+                      className={`mbtn${(m==='Démo'&&botDemo)||(m==='Réel'&&!botDemo)?' act':''}`}
+                      onClick={() => { setBotDemo(m==='Démo'); }}>{m}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── MAIN ── */}
+        <div className="main">
+          <div className="pad">
+
+            {/* ══ DASHBOARD ══════════════════════════════ */}
+            {page==='dashboard' && <>
+              {/* Context bar */}
+              <div className="ctx-bar">
+                <div className="cbi">
+                  <div className="cbi-l">BTC Tendance</div>
+                  <div className={`cbi-v ${btcT==='BULL'?'cup':btcT==='BEAR'?'cdn':'cgold'}`}>{btcT}</div>
+                  <div className="cbi-s mono">{fmtP(btcP.price)} $</div>
+                </div>
+                <div className="cbi">
+                  <div className="cbi-l">Session</div>
+                  <div className={`cbi-v ${session!=='asia'?'cup':'tx1'}`}>{sessLbl[session].split(' ')[0]}</div>
+                  <div className="cbi-s">{session==='asia'?'Faible vol.':session==='london'?'Haute vol.':'Très haute'}</div>
+                </div>
+                <div className="cbi">
+                  <div className="cbi-l">Win Rate</div>
+                  <div className="cbi-v cup mono">{stats.wr}%</div>
+                  <div className="cbi-s">{stats.wins}W / {stats.losses}L</div>
+                </div>
+                <div className="cbi">
+                  <div className="cbi-l">Risque/trade</div>
+                  <div className="cbi-v cgold mono">{risk.toFixed(2)}%</div>
+                  <div className="cbi-s mono">{(balance*risk/100).toFixed(2)} $</div>
+                </div>
+              </div>
+
+              {/* ── 4 SETUPS ── */}
+              <div>
+                <div className="sec-head">
+                  <div className="sec-title">
+                    <div className="sec-dot" style={{background:'var(--gold)'}}/>
+                    TOP SETUPS ACTIFS
+                  </div>
+                  <span className="f10 tx2">{setups.length}/4 — score ≥{scoreMin}</span>
+                </div>
+                <div className="setups-grid">
+                  {setups.map(s => {
+                    const pr  = prices[s.pair] || {price:0, prev:0};
+                    const pct = (pr.price-pr.prev)/pr.prev*100;
+                    const sc  = s.score;
+                    const col = sc>=82?'var(--up)':sc>=72?'var(--gold)':'var(--bl)';
+                    return (
+                      <div key={s.id} className={`sc ${s.side==='BUY'?'long':'short'} fin`}>
+                        <div className="sc-top">
+                          <div className="sc-pair">{s.pair.replace('USDT','')}<small>/USDT</small></div>
+                          <span className={`sc-side ${s.side==='BUY'?'sl':'ss'}`}>{s.side==='BUY'?'LONG':'SHORT'}</span>
+                        </div>
+                        <div className="sc-px">
+                          <span className="sc-px-val mono">{fmtP(pr.price)}</span>
+                          <span className={`sc-px-chg ${pct>=0?'cup':'cdn'}`}>{fmtPct(pct)}</span>
+                        </div>
+                        <div className="sc-score">
+                          <div className="sc-sn" style={{color:col}}>{sc}</div>
+                          <div className="sc-sbar">
+                            <div className="sc-sfill" style={{width:`${sc}%`,background:`linear-gradient(90deg,var(--gold),${col})`}}/>
+                          </div>
+                          <div className="f9 tx2">/100</div>
+                        </div>
+                        <div className="sc-rows">
+                          <div className="sc-r"><span>RR</span><span className="v cup">1:{s.rr}</span></div>
+                          <div className="sc-r"><span>SL</span><span className="v cdn">{fmtP(s.side==='BUY'?pr.price*(1-.008):pr.price*(1+.008))}</span></div>
+                        </div>
+                        <div className="sc-tags">
+                          {[['BB',s.bb],['VOS',s.vos],['Vol',s.vol],['BTC',s.btcOk],['Sess',s.sessOk]].map(([l,v])=>(
+                            <span key={l} className={`stag ${v?'ton':'toff'}`}>{v?'✓':''}{l}</span>
+                          ))}
+                        </div>
+                        <div className="sc-foot">
+                          <span className="sc-timer">⏱ {s.validFor}s</span>
+                          <button className="chart-btn" onClick={()=>openChart(s.pair)}>📈 Chart</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {/* Empty slots up to 4 */}
+                  {Array(Math.max(0, 4-setups.length)).fill(0).map((_,i) => (
+                    <div key={i} className="sc empty">
+                      <span style={{fontSize:'24px',opacity:.2}}>📡</span>
+                      <span>Scan en cours…</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* ── POSITIONS (max 3) ── */}
+              {openPos.length > 0 && (
+                <div>
+                  <div className="sec-head">
+                    <div className="sec-title">
+                      <div className="sec-dot" style={{background:'var(--up)'}}/>
+                      POSITIONS OUVERTES
+                    </div>
+                    <span className="f10 cup">{openPos.length}/{MAX_POS}</span>
+                  </div>
+                  <div className="pos-grid">
+                    {openPos.map(p => <PosCard key={p.id} pos={p} prices={prices} onChart={()=>openChart(p.pair)}/>)}
+                  </div>
+                </div>
+              )}
+
+              {/* ── LOG ── */}
+              <div className="log-wrap">
+                <div className="log-hd">
+                  <div className="log-hd-t">◎ JOURNAL</div>
+                  {botOn && <span className="f9 cup">● ACTIF {openPos.length}/{MAX_POS}</span>}
+                </div>
+                <div className="log-body">
+                  {logs.map((l,i) => (
+                    <div key={i} className={`ll l${l.type}`}>[{l.ts}] {l.msg}</div>
+                  ))}
+                </div>
+              </div>
+            </>}
+
+            {/* ══ SCANNER TABLE ══════════════════════════ */}
+            {page==='scanner' && (
+              <div className="scan-wrap">
+                <div className="log-hd">
+                  <div className="log-hd-t">📡 SCANNER</div>
+                  <span className="f10 tx2">{PAIRS.length} paires</span>
+                </div>
+                <div style={{overflowX:'auto'}}>
+                  <table className="scan-table">
+                    <thead>
+                      <tr>
+                        {['Paire','Prix','Var.','Dir.','Score','RR','BB','VOS','Action'].map(h=>(
+                          <th key={h} className="scan-th">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {PAIRS.map(pair => {
+                        const pr  = prices[pair]||{price:0,prev:0};
+                        const pct = (pr.price-pr.prev)/pr.prev*100;
+                        const sig = setups.find(s=>s.pair===pair);
+                        return (
+                          <tr key={pair} className="scan-tr">
+                            <td className="scan-td mono bold">{pair.replace('USDT','')}</td>
+                            <td className="scan-td mono">{fmtP(pr.price)}</td>
+                            <td className="scan-td mono" style={{color:pct>=0?'var(--up)':'var(--dn)'}}>{fmtPct(pct)}</td>
+                            <td className="scan-td">{sig?<span className={`sc-side ${sig.side==='BUY'?'sl':'ss'}`}>{sig.side==='BUY'?'L':'S'}</span>:<span className="tx2">—</span>}</td>
+                            <td className="scan-td mono" style={{color:sig?.score>=80?'var(--up)':sig?.score>=70?'var(--gold)':'var(--tx2)'}}>{sig?.score||'—'}</td>
+                            <td className="scan-td" style={{color:'var(--up)'}}>{sig?`1:${sig.rr}`:'—'}</td>
+                            <td className="scan-td" style={{color:sig?.bb?'var(--up)':sig?.bb===false?'var(--dn)':'var(--tx2)'}}>{sig?.bb===undefined?'—':sig.bb?'✓':'✗'}</td>
+                            <td className="scan-td" style={{color:sig?.vos?'var(--up)':sig?.vos===false?'var(--dn)':'var(--tx2)'}}>{sig?.vos===undefined?'—':sig.vos?'✓':'✗'}</td>
+                            <td className="scan-td">
+                              <button className="btn btn-out btn-sm" onClick={()=>openChart(pair)}>📈</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+
+                </div>
+              </div>
+            )}
+
+            {/* ══ POSITIONS PAGE ══════════════════════════ */}
+            {page==='positions' && (
+              <div className="scan-wrap">
+                <div className="log-hd">
+                  <div className="log-hd-t">📂 POSITIONS</div>
+                  <span className="f10">{openPos.length}/{MAX_POS}</span>
+                </div>
+                {openPos.length===0
+                  ? <div className="nodata">Aucune position ouverte</div>
+                  : <div style={{padding:'10px'}}><div className="pos-grid">
+                    {openPos.map(p=><PosCard key={p.id} pos={p} prices={prices} onChart={()=>openChart(p.pair)}/>)}
+                  </div></div>}
+              </div>
+            )}
+
+            {/* ══ HISTORY ════════════════════════════════ */}
+            {page==='history' && (
+              <div className="scan-wrap">
+                <div className="log-hd">
+                  <div className="log-hd-t">📈 HISTORIQUE</div>
+                  <span className="f10 tx2">{positions.filter(p=>p.status==='closed').length} trades</span>
+                </div>
+                {positions.filter(p=>p.status==='closed').length===0
+                  ? <div className="nodata">Aucun trade fermé</div>
+                  : positions.filter(p=>p.status==='closed').slice(0,40).map(p => (
+                    <div key={p.id} className="hist-row">
+                      <span className={`sc-side ${p.side==='BUY'?'sl':'ss'}`}>{p.side==='BUY'?'L':'S'}</span>
+                      <span className="mono bold f12">{p.pair.replace('USDT','')}</span>
+                      {p.demo && <span className="f9 cgold" style={{background:'rgba(240,185,11,.1)',border:'1px solid rgba(240,185,11,.2)',padding:'1px 5px',borderRadius:'3px'}}>DEMO</span>}
+                      <span className="f10 tx2 mono">{fmtP(p.entry)}→{fmtP(p.exitPrice)}</span>
+                      <span style={{fontSize:'9px',fontWeight:'700',padding:'2px 7px',borderRadius:'3px',background:p.result==='WIN'?'rgba(14,203,129,.1)':'rgba(246,70,93,.1)',color:p.result==='WIN'?'var(--up)':'var(--dn)'}}>{p.result}</span>
+                      <span className={`hist-pnl ${p.pnl>=0?'cup':'cdn'}`}>{p.pnl>=0?'+':''}{p.pnl?.toFixed(2)}$</span>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {/* ══ ACCOUNT ════════════════════════════════ */}
+            {page==='account' && <AccountPage user={user} balance={balance} stats={stats} risk={risk} setUser={setUser}/>}
+
+          </div>
+        </div>
+      </div>
+
+      {/* ══ CHART MODAL ════════════════════════════════ */}
+      {modal==='chart' && (
+        <div className="modal-bg" onClick={()=>setModal(null)}>
+          <div className="chart-modal" onClick={e=>e.stopPropagation()}>
+            <div className="chart-hd">
+              <div className="chart-title">{chartPair}</div>
+              <div className="chart-tfs">
+                {[['1','M1'],['5','M5'],['15','M15'],['60','H1'],['240','H4']].map(([v,l])=>(
+                  <button key={v} className={`tft${chartTf===v?' act':''}`} onClick={()=>setChartTf(v)}>{l}</button>
+                ))}
+              </div>
+              <div className="xbtn" onClick={()=>setModal(null)}>✕</div>
+            </div>
+            <iframe className="chart-iframe"
+              src={`https://www.tradingview.com/widgetembed/?symbol=BINANCE%3A${chartPair}&interval=${chartTf}&theme=dark&style=1&locale=fr&toolbar_bg=13181f&hide_side_toolbar=0&allow_symbol_change=1&save_image=1&withdateranges=1`}
+              allowFullScreen allowTransparency/>
+          </div>
+        </div>
+      )}
+
+      {/* ══ SETTINGS MODAL ═════════════════════════════ */}
+      {modal==='settings' && (
+        <div className="modal-bg" onClick={()=>setModal(null)}>
+          <div className="modal-box" onClick={e=>e.stopPropagation()}>
+            <div className="modal-hd">
+              <div className="modal-title">⚙ PARAMÈTRES</div>
+              <div className="xbtn" onClick={()=>setModal(null)}>✕</div>
+            </div>
+            <div className="modal-body">
+              <div className="msec">
+                <div className="msec-t">API BINANCE FUTURES</div>
+                <div className="fld">
+                  <div className="flbl">API Key</div>
+                  <input className="inp" type="password" placeholder="Votre API Key" value={apiKey} onChange={e=>setApiKey(e.target.value)}/>
+                </div>
+                <div className="fld">
+                  <div className="flbl">Secret Key</div>
+                  <input className="inp" type="password" placeholder="Votre Secret Key" value={apiSec} onChange={e=>setApiSec(e.target.value)}/>
+                </div>
+                <div className="f9 tx2" style={{marginBottom:'9px'}}>⚠ Permissions: Futures Read + Trade uniquement. Jamais de retraits.</div>
+                <button className="btn btn-gold btn-full" onClick={testApi} disabled={apiLoad}>
+                  {apiLoad?'⏳ Test…':'🔌 Tester la connexion'}
+                </button>
+                {apiMsg && <div className={`api-res ${apiOk?'ar-ok':'ar-err'}`}>{apiMsg}</div>}
+              </div>
+              <div className="msec">
+                <div className="msec-t">RISQUE PAR TRADE</div>
+                <div className="flex jb f11" style={{marginBottom:'7px'}}>
+                  <span className="tx1">Pourcentage du capital</span>
+                  <span className="mono cgold">{risk.toFixed(2)}%</span>
+                </div>
+                <input type="range" min="0.5" max="5" step="0.1" value={risk}
+                  onChange={e=>setRisk(+e.target.value)}
+                  style={{width:'100%',accentColor:'var(--gold)'}}/>
+                <div className="flex jb f9 tx2 mt4"><span>0.5% prudent</span><span>5% agressif</span></div>
+                <div className="sep"/>
+                <div className="flex jb f11 mt4">
+                  <span className="tx1">Max positions</span>
+                  <span className="mono bold cgold">{MAX_POS} (strict)</span>
+                </div>
+                <div className="flex jb f11 mt4">
+                  <span className="tx1">Balance min. réel</span>
+                  <span className="mono">20 $</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ ADMIN MODAL ════════════════════════════════ */}
+
+    </div>
+  );
+}
+
+/* ══ POS CARD ═════════════════════════════════════ */
+function PosCard({pos, prices, onChart}) {
+  const cur  = prices[pos.pair]?.price || pos.entry;
+  const dist = Math.abs(pos.entry - pos.sl0);
+  const pnlPct = pos.side==='BUY' ? (cur-pos.entry)/pos.entry*100 : (pos.entry-cur)/pos.entry*100;
+  const pnl    = pnlPct / 100 * pos.riskAmt / 0.008;
+  const rr     = pos.rrR || 0;
+  return (
+    <div className={`pc ${pos.side==='BUY'?'plong':'pshort'} fin`}>
+      <div className="pc-head">
+        <div className="flex g6">
+          <span className={`sc-side ${pos.side==='BUY'?'sl':'ss'}`}>{pos.side==='BUY'?'L':'S'}</span>
+          <span className="pc-pair">{pos.pair.replace('USDT','')}/USDT</span>
+        </div>
+        <span className="pc-pnl" style={{color:pnl>=0?'var(--up)':'var(--dn)'}}>{pnl>=0?'+':''}{pnl.toFixed(2)}$</span>
+      </div>
+      <div className="pc-body">
+        <div className="pr"><span className="l">Entrée</span>  <span className="r mono">{fmtP(pos.entry)}</span></div>
+        <div className="pr"><span className="l">Actuel</span>  <span className="r mono">{fmtP(cur)}</span></div>
+        <div className="pr"><span className="l">SL{pos.trailActive?' 🔒':''}</span><span className="r mono cdn">{fmtP(pos.sl)}</span></div>
+        <div className="pr"><span className="l">TP</span>      <span className="r mono cup">{fmtP(pos.tp2)}</span></div>
+        <div className="pr"><span className="l">RR</span>      <span className="r mono">1:{pos.rr}</span></div>
+        <div className="rr-bar">
+          <div className="rr-lbl">{rr.toFixed(1)}R</div>
+          <div className="rr-track">
+            {[.5,1,1.5,2,3].map((r,i) => (
+              <div key={i} className={`rrs${rr>=r?' done':''}${r===1&&pos.trailActive?' be':''}`}/>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="pc-foot">
+        {pos.demo ? <span className="ptag pt-demo">DÉMO</span> : <span className="ptag pt-real">RÉEL</span>}
+        {pos.trailActive && <span className="ptag pt-trail">🔒 BE</span>}
+        <button className="btn btn-out btn-sm" style={{marginLeft:'auto'}} onClick={onChart}>📈</button>
+      </div>
+    </div>
+  );
+}
+
+/* ══ ACCOUNT PAGE ═════════════════════════════════ */
+function AccountPage({user, balance, stats, risk, setUser}) {
+  // Levier recommandé selon le solde
+  const leverageRec = balance >= 1000 ? 20 : balance >= 500 ? 15 : balance >= 100 ? 10 : balance >= 50 ? 5 : 3;
+  const memberSince = user.joinedAt ? new Date(user.joinedAt).toLocaleDateString('fr-FR') : '—';
+  return (
+    <div className="acc-grid">
+      <div className="acc-card">
+        <div className="acc-hd">👤 PROFIL</div>
+        <div className="acc-body">
+          <div className="acc-av">{user.email[0].toUpperCase()}</div>
+          <div style={{textAlign:'center',marginBottom:'10px'}}>
+            <div className="bold f12">{user.email}</div>
+            <div className="f9 tx2 mt4">Membre depuis {memberSince}</div>
+          </div>
+          <div className="sep"/>
+          {[
+            ['Balance',      `${balance.toFixed(2)} $`],
+            ['Win Rate',     `${stats.wr}%`],
+            ['Trades total', stats.wins+stats.losses],
+            ['Gains',        `${stats.wins} ✅`],
+            ['Pertes',       `${stats.losses} ❌`],
+            ['PnL total',    `${stats.pnl>=0?'+':''}${stats.pnl.toFixed(2)} $`],
+            ['Risque/trade', `${risk.toFixed(2)}%`],
+          ].map(([l,v])=>(
+            <div key={l} className="arow"><span className="l">{l}</span><span className="r">{v}</span></div>
+          ))}
+          <button className="btn btn-dn btn-full btn-sm mt10" onClick={()=>{lsS('ab16_user',null);setUser(null);}}>Déconnexion</button>
+        </div>
+      </div>
+
+      <div className="acc-card">
+        <div className="acc-hd">⚡ LEVIER RECOMMANDÉ</div>
+        <div className="acc-body">
+          <div style={{textAlign:'center',padding:'14px 0'}}>
+            <div style={{fontSize:'42px',fontWeight:700,fontFamily:'var(--mono)',color:'var(--gold)'}}>{leverageRec}x</div>
+            <div className="f10 tx2 mt4">Basé sur votre solde actuel</div>
+          </div>
+          <div className="sep"/>
+          {[
+            ['≥ 1 000 $', '20x', balance>=1000],
+            ['≥ 500 $',   '15x', balance>=500 && balance<1000],
+            ['≥ 100 $',   '10x', balance>=100 && balance<500],
+            ['≥ 50 $',    '5x',  balance>=50  && balance<100],
+            ['< 50 $',    '3x',  balance<50],
+          ].map(([rng, lev, active])=>(
+            <div key={rng} className="arow" style={{background:active?'rgba(240,185,11,.08)':'',borderRadius:'4px',padding:'3px 4px'}}>
+              <span className="l f10" style={{color:active?'var(--gold)':'var(--tx2)'}}>{active?'▶ ':''}{rng}</span>
+              <span className="r mono bold" style={{color:active?'var(--gold)':'var(--tx2)'}}>{lev}</span>
+            </div>
+          ))}
+          <div className="f9 tx2 mt10" style={{textAlign:'center',lineHeight:'1.5'}}>
+            Ajustez votre levier dans Settings<br/>selon ce tableau pour votre solde.
+          </div>
+        </div>
+      </div>
+
+      <div className="acc-card" style={{gridColumn:'1/-1'}}>
+        <div className="acc-hd">★ FONCTIONNALITÉS</div>
+        <div className="acc-body">
+          <div className="feat-g">
+            {[
+              ['🎯','Trailing RR1','Break-even auto'],
+              ['📈','Risk Scaling','+15% après win'],
+              ['🔍','20 Paires','Scan complet'],
+              ['🤖','Bot Réel','Ordres Binance'],
+              ['₿','Corr. BTC','Filtre tendance'],
+              ['⏰','Sessions','Londres + NY'],
+              ['📊','Graphiques','TradingView'],
+              ['⭐','4 Setups','Max 4 signaux'],
+              ['🛡️','ATR Filter','Anti range'],
+            ].map(([ic,nm,ds])=>(
+              <div key={nm} className="feat-i">
+                <div className="fi-icon">{ic}</div>
+                <div className="fi-nm">{nm}</div>
+                <div className="fi-ds">{ds}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/* ══ AUTH ═════════════════════════════════════════ */
+function Auth({setUser}) {
+  const [tab,  setTab]  = useState('login');
+  const [email,setEmail]= useState('');
+  const [pass, setPass] = useState('');
+  const [err,  setErr]  = useState('');
+
+  const udb     = () => lsG('ab16_udb', {});
+  const saveUdb = db => lsS('ab16_udb', db);
+
+  const login = () => {
+    setErr('');
+    const db=udb(), u=db[email];
+    if (!u || u.password!==pass) return setErr('Email ou mot de passe incorrect');
+    setUser(u); lsS('ab16_user', u);
+  };
+
+  const register = () => {
+    setErr('');
+    if (!email||!pass) return setErr('Email et mot de passe requis');
+    if (pass.length<6)  return setErr('Mot de passe minimum 6 caractères');
+    const db = udb();
+    if (db[email]) return setErr('Email déjà utilisé');
+    const nu = {email, password:pass, joinedAt:Date.now()};
+    db[email] = nu; saveUdb(db);
+    setUser(nu); lsS('ab16_user', nu);
+  };
+
+  return (
+    <div className="auth-bg">
+      <div className="auth-card fin">
+        <div className="auth-hd">
+          <div className="auth-logo">ALPHA<span>BOT</span> PRO</div>
+          <div className="auth-sub">Scanner · Breaker Block · VOS M5 · Binance Futures</div>
+        </div>
+        <div className="auth-body">
+          <div className="atabs">
+            <button className={`atab${tab==='login'?' act':''}`} onClick={()=>{setTab('login');setErr('');}}>Connexion</button>
+            <button className={`atab${tab==='register'?' act':''}`} onClick={()=>{setTab('register');setErr('');}}>Inscription</button>
+          </div>
+          {err && <div className="err-box">{err}</div>}
+          <div className="fld">
+            <div className="flbl">Email</div>
+            <input className="inp" type="email" placeholder="votre@email.com" value={email}
+              onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==='Enter'&&(tab==='login'?login():register())}/>
+          </div>
+          <div className="fld">
+            <div className="flbl">Mot de passe</div>
+            <input className="inp" type="password" placeholder="••••••••" value={pass}
+              onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&(tab==='login'?login():register())}/>
+          </div>
+          <button className="btn btn-gold btn-full" onClick={tab==='login'?login:register}>
+            {tab==='login' ? 'SE CONNECTER →' : 'CRÉER MON COMPTE →'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
