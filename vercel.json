@@ -1,4 +1,6 @@
 {
+  "buildCommand": "npm install --include=dev && npm run build"
+}{
   "cleanUrls": true,
   "rewrites": [
     { "source": "/", "destination": "/index.html" }
