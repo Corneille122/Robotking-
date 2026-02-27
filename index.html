@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>AlphaBot Pro v24 — Ultra</title>
+<title>AlphaBot Pro v29 — Ultra</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
@@ -81,20 +81,45 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .user-chip:hover{ border-color:var(--gold); }
 .uav{ width:26px; height:26px; border-radius:50%; background:var(--gold); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#000; flex-shrink:0; }
 
+/* HAMBURGER BUTTON */
+.hamburger-btn{
+  width:36px; height:36px; background:var(--bg3); border:1px solid var(--bd);
+  border-radius:7px; cursor:pointer; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:4px; transition:var(--transition);
+  flex-shrink:0; margin-right:10px; position:relative; z-index:10;
+}
+.hamburger-btn:hover{ border-color:var(--gold); background:rgba(240,185,11,.08); }
+.hb-line{ width:16px; height:2px; background:var(--tx0); border-radius:1px; transition:all .25s ease; }
+.hamburger-btn.open .hb-line:nth-child(1){ transform:translateY(6px) rotate(45deg); }
+.hamburger-btn.open .hb-line:nth-child(2){ opacity:0; transform:scaleX(0); }
+.hamburger-btn.open .hb-line:nth-child(3){ transform:translateY(-6px) rotate(-45deg); }
+
+/* SIDEBAR OVERLAY */
+.sidebar-overlay{
+  position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:200;
+  backdrop-filter:blur(2px); animation:fadeIn .2s ease;
+}
+@media(min-width:861px){ .sidebar-overlay{ display:none!important; } }
+
 /* SIDEBAR */
 .sidebar{
-  width:210px; min-width:210px; flex-shrink:0;
+  width:230px; min-width:230px; flex-shrink:0;
   background:var(--bg2); border-right:1px solid var(--bd);
   display:flex; flex-direction:column; overflow-y:auto; overflow-x:hidden;
+  transition:transform .28s cubic-bezier(.4,0,.2,1);
 }
-@media(max-width:680px){
-  .sidebar{ width:52px; min-width:52px; }
-  .sitem-lbl,.sgroup-lbl,.sidebar-context,.bot-txt,.bot-mode-row,.bot-balance-row{ display:none!important; }
-  .sitem{ justify-content:center; padding:12px 0; }
-  .sidebar-btm{ padding:8px 4px; }
-  .bot-box{ padding:8px 4px; }
-  .bot-toggle{ padding:8px; }
-  .score-row{ display:none!important; }
+@media(max-width:860px){
+  .sidebar{
+    position:fixed; top:54px; left:0; bottom:0; z-index:210;
+    transform:translateX(-110%);
+    box-shadow:4px 0 30px rgba(0,0,0,.5);
+    width:270px; min-width:270px;
+  }
+  .sidebar.open{ transform:translateX(0); }
+  .hamburger-btn{ display:flex!important; }
+}
+@media(min-width:861px){
+  .hamburger-btn{ display:none!important; }
 }
 .sgroup{ padding:6px 8px 0; }
 .sgroup-lbl{ font-size:7px; color:var(--tx2); letter-spacing:2.5px; padding:8px 6px 3px; text-transform:uppercase; }
@@ -316,6 +341,50 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .risk-btn{ padding:8px; text-align:center; border-radius:6px; border:1px solid var(--bd); cursor:pointer; background:transparent; color:var(--tx1); font-family:'Rajdhani',sans-serif; font-weight:700; font-size:12px; transition:var(--transition); }
 .risk-btn.act{ background:rgba(240,185,11,.15); border-color:var(--gold); color:var(--gold); }
 .risk-btn:hover{ border-color:var(--gold); }
+/* BALANCE QUICK MODAL */
+.bal-modal{
+  position:fixed; top:60px; right:14px; z-index:300;
+  background:var(--bg2); border:1px solid var(--bd); border-radius:12px;
+  padding:18px; width:260px; box-shadow:0 12px 40px rgba(0,0,0,.5);
+  animation:scaleIn .2s cubic-bezier(.34,1.56,.64,1);
+}
+.bal-modal-title{ font-family:'Rajdhani',sans-serif; font-weight:700; font-size:13px; letter-spacing:1px; color:var(--tx1); margin-bottom:12px; }
+/* PDF DOWNLOAD CARD */
+.pdf-card{ background:linear-gradient(135deg,rgba(246,70,93,.08),rgba(240,185,11,.06)); border:1px solid rgba(246,70,93,.25); border-radius:10px; padding:16px; display:flex; gap:14px; align-items:center; cursor:pointer; transition:var(--transition); }
+.pdf-card:hover{ border-color:var(--gold); transform:translateY(-1px); }
+.pdf-icon{ font-size:36px; flex-shrink:0; }
+.pdf-info .title{ font-family:'Rajdhani',sans-serif; font-weight:700; font-size:14px; letter-spacing:.5px; margin-bottom:3px; }
+.pdf-info .sub{ font-size:10px; color:var(--tx2); line-height:1.5; }
+.pdf-btn{ padding:8px 16px; background:var(--gold); border:none; border-radius:6px; color:#000; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:12px; cursor:pointer; transition:var(--transition); white-space:nowrap; }
+.pdf-btn:hover{ background:var(--gold2); }
+/* TRADE CONFIRM MODAL */
+.trade-confirm-modal{ max-width:420px; border-radius:14px; overflow:hidden; }
+.tc-header{ padding:18px 20px; display:flex; align-items:center; gap:12px; }
+.tc-header-long{ background:linear-gradient(135deg,rgba(14,203,129,.15),rgba(14,203,129,.06)); border-bottom:1px solid rgba(14,203,129,.2); }
+.tc-header-short{ background:linear-gradient(135deg,rgba(246,70,93,.12),rgba(246,70,93,.06)); border-bottom:1px solid rgba(246,70,93,.2); }
+.tc-badge{ font-family:'Rajdhani',sans-serif; font-size:11px; font-weight:800; padding:3px 9px; border-radius:4px; letter-spacing:1px; }
+.tc-pair{ font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; }
+.tc-row{ display:flex; justify-content:space-between; align-items:center; padding:8px 20px; border-bottom:1px solid var(--bd); font-size:11px; }
+.tc-row .lbl{ color:var(--tx2); }
+.tc-row .val{ font-family:'JetBrains Mono',monospace; font-weight:700; font-size:12px; }
+.tc-disclaimer{ margin:12px 20px; background:rgba(240,185,11,.06); border:1px solid rgba(240,185,11,.2); border-radius:8px; padding:11px 13px; font-size:9px; color:var(--tx1); line-height:1.7; }
+.tc-btns{ padding:14px 20px; display:flex; gap:10px; }
+.tc-cancel{ flex:1; padding:12px; border-radius:8px; border:1px solid var(--bd); background:transparent; color:var(--tx1); font-family:'Rajdhani',sans-serif; font-weight:700; font-size:13px; cursor:pointer; transition:var(--transition); }
+.tc-cancel:hover{ border-color:var(--dn); color:var(--dn); }
+.tc-confirm-long{ flex:2; padding:12px; border-radius:8px; border:none; background:var(--up); color:#000; font-family:'Rajdhani',sans-serif; font-weight:800; font-size:13px; cursor:pointer; letter-spacing:.5px; }
+.tc-confirm-short{ flex:2; padding:12px; border-radius:8px; border:none; background:var(--dn); color:#fff; font-family:'Rajdhani',sans-serif; font-weight:800; font-size:13px; cursor:pointer; letter-spacing:.5px; }
+.mode-switch-pill{
+  display:flex; align-items:center; gap:3px;
+  background:var(--bg3); border:1px solid var(--bd); border-radius:20px;
+  padding:3px; flex-shrink:0;
+}
+.msw-btn{
+  padding:4px 12px; border-radius:16px; border:none; cursor:pointer;
+  font-family:'Rajdhani',sans-serif; font-size:10px; font-weight:700;
+  letter-spacing:.5px; transition:var(--transition); background:transparent; color:var(--tx1);
+}
+.msw-demo.act{ background:var(--gold); color:#000; }
+.msw-real.act{ background:var(--up); color:#000; }
 
 /* AUTH */
 .auth-bg{
@@ -562,6 +631,10 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .toast.warn{ border-left:3px solid var(--gold); }
 .toast.info{ border-left:3px solid var(--bl); }
 
+/* ABONNEMENT */
+.plan-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+@media(max-width:600px){ .plan-grid{ grid-template-columns:1fr; } }
+
 /* UTILS */
 .flex{ display:flex; align-items:center; }
 .jb{ justify-content:space-between; }
@@ -579,6 +652,318 @@ html,body{ height:100%; background:var(--bg); color:var(--tx0); font-family:'Syn
 .fin{ animation:fadeIn .2s ease; }
 @keyframes fadeIn{ from{opacity:0;transform:translateY(4px);} to{opacity:1;transform:none;} }
 .slider{ width:100%; accent-color:var(--gold); }
+
+/* ═══════════════════════════════════════════════
+   CHOREOGRAPHY & ENTRANCE ANIMATIONS
+═══════════════════════════════════════════════ */
+
+/* Staggered page load animations */
+@keyframes slideUp {
+  from { opacity:0; transform:translateY(20px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+@keyframes slideInLeft {
+  from { opacity:0; transform:translateX(-16px); }
+  to   { opacity:1; transform:translateX(0); }
+}
+@keyframes slideInRight {
+  from { opacity:0; transform:translateX(16px); }
+  to   { opacity:1; transform:translateX(0); }
+}
+@keyframes scaleIn {
+  from { opacity:0; transform:scale(.94); }
+  to   { opacity:1; transform:scale(1); }
+}
+@keyframes shimmer {
+  0%   { background-position:-200% center; }
+  100% { background-position:200% center; }
+}
+@keyframes glowPulse {
+  0%,100% { box-shadow:0 0 0 rgba(240,185,11,0); }
+  50%      { box-shadow:0 0 18px rgba(240,185,11,.18); }
+}
+@keyframes tickerIn {
+  from { opacity:0; transform:translateY(-6px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+@keyframes counterUp {
+  from { opacity:0; transform:translateY(8px) scale(.9); }
+  to   { opacity:1; transform:translateY(0) scale(1); }
+}
+@keyframes borderFlow {
+  0%   { border-color:rgba(240,185,11,.1); }
+  50%  { border-color:rgba(240,185,11,.35); }
+  100% { border-color:rgba(240,185,11,.1); }
+}
+@keyframes progressFill {
+  from { width:0%; }
+}
+@keyframes scanLine {
+  0%   { transform:translateY(-100%); opacity:0; }
+  10%  { opacity:.5; }
+  90%  { opacity:.5; }
+  100% { transform:translateY(100vh); opacity:0; }
+}
+
+/* Topbar entrance */
+.topbar { animation:slideUp .35s ease both; }
+/* NOTE: sidebar animation removed on mobile to avoid conflict with transform:translateX(-110%) */
+@media(min-width:861px){ .sidebar { animation:slideInLeft .4s ease .05s both; } }
+
+/* Dashboard cards stagger */
+.dash-anim-1 { animation:slideUp .4s ease .08s both; }
+.dash-anim-2 { animation:slideUp .4s ease .15s both; }
+.dash-anim-3 { animation:slideUp .4s ease .22s both; }
+.dash-anim-4 { animation:slideUp .4s ease .29s both; }
+.dash-anim-5 { animation:slideUp .4s ease .36s both; }
+.dash-anim-6 { animation:slideUp .4s ease .43s both; }
+.dash-anim-7 { animation:slideUp .4s ease .50s both; }
+
+/* Sidebar items stagger */
+.sitem { animation:slideInLeft .3s ease both; }
+.sitem:nth-child(1)  { animation-delay:.10s; }
+.sitem:nth-child(2)  { animation-delay:.14s; }
+.sitem:nth-child(3)  { animation-delay:.18s; }
+.sitem:nth-child(4)  { animation-delay:.22s; }
+.sitem:nth-child(5)  { animation-delay:.26s; }
+.sitem:nth-child(6)  { animation-delay:.30s; }
+.sitem:nth-child(7)  { animation-delay:.34s; }
+.sitem:nth-child(8)  { animation-delay:.38s; }
+.sitem:nth-child(9)  { animation-delay:.42s; }
+
+/* Number counter glow on change */
+.tstat-v  { transition:color .3s, transform .2s; }
+.tstat:hover .tstat-v { transform:scale(1.06); }
+
+/* Signal cards elegant reveal */
+.sc { animation:scaleIn .3s ease both; }
+.sc:nth-child(1) { animation-delay:.05s; }
+.sc:nth-child(2) { animation-delay:.12s; }
+.sc:nth-child(3) { animation-delay:.19s; }
+.sc:nth-child(4) { animation-delay:.26s; }
+
+/* Hover lift effect */
+.sc:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(0,0,0,.3), var(--glow-gold); }
+.pc:hover { transform:translateY(-1px); box-shadow:0 6px 20px rgba(0,0,0,.25); }
+.pc { transition:transform .2s ease, box-shadow .2s ease; }
+
+/* Gold border breathing for active bot */
+.bot-active-glow { animation:borderFlow 3s ease infinite; }
+
+/* Score bar animated fill */
+.sc-sfill { animation:progressFill .8s ease .3s both; }
+
+/* Log entries slide in */
+.ll { animation:slideInRight .2s ease both; }
+
+/* Scan table rows */
+.scan-tr { animation:slideUp .25s ease both; }
+
+/* Toast upgraded */
+.toast { animation:slideInRight .25s cubic-bezier(.34,1.56,.64,1); }
+
+/* Shimmer loading bar */
+.shimmer-bar {
+  background: linear-gradient(90deg, var(--bg3) 25%, var(--bd2) 50%, var(--bg3) 75%);
+  background-size:200% 100%;
+  animation:shimmer 1.5s infinite;
+}
+
+/* Active position PnL pulse */
+@keyframes pnlPulseUp   { 0%,100%{color:var(--up);}   50%{color:#7fffcc;} }
+@keyframes pnlPulseDn   { 0%,100%{color:var(--dn);}   50%{color:#ffaaaa;} }
+.pnl-live-up  { animation:pnlPulseUp 2.5s ease infinite; }
+.pnl-live-dn  { animation:pnlPulseDn 2.5s ease infinite; }
+
+/* Topbar ticker values */
+.tstat-v { animation:tickerIn .35s ease both; }
+.tstat:nth-child(1) .tstat-v { animation-delay:.1s; }
+.tstat:nth-child(2) .tstat-v { animation-delay:.15s; }
+.tstat:nth-child(3) .tstat-v { animation-delay:.2s; }
+.tstat:nth-child(4) .tstat-v { animation-delay:.25s; }
+.tstat:nth-child(5) .tstat-v { animation-delay:.3s; }
+.tstat:nth-child(6) .tstat-v { animation-delay:.35s; }
+.tstat:nth-child(7) .tstat-v { animation-delay:.4s; }
+
+/* API status breathing */
+.api-on .apidot {
+  box-shadow:0 0 6px currentColor;
+}
+.api-off .apidot {
+  opacity:.7;
+}
+
+/* User chip hover */
+.user-chip { transition:transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
+.user-chip:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(240,185,11,.15); }
+
+/* Theme button spin */
+.theme-btn:hover { transform:rotate(20deg); transition:transform .25s ease, border-color .15s ease; }
+
+/* Bot toggle pulse when active */
+.bt-on { animation:glowPulse 2.5s ease infinite; }
+
+/* Balance number counter animation */
+.balance-animated {
+  animation:counterUp .5s cubic-bezier(.34,1.56,.64,1) both;
+}
+
+/* Scan overlay scan effect */
+.scan-wrap {
+  position:relative;
+  overflow:hidden;
+}
+.scan-wrap::before {
+  content:'';
+  position:absolute;
+  top:0; left:0; right:0;
+  height:2px;
+  background:linear-gradient(90deg, transparent, rgba(240,185,11,.4), transparent);
+  animation:scanLine 4s linear infinite;
+  pointer-events:none;
+  z-index:1;
+}
+
+/* Section headers reveal */
+.sec-head { animation:slideUp .3s ease .1s both; }
+.sec-title::before {
+  content:'';
+  display:inline-block;
+  width:0;
+  height:1px;
+  background:var(--gold);
+  margin-right:0;
+  transition:width .4s ease, margin-right .4s ease;
+  vertical-align:middle;
+}
+.sec-head:hover .sec-title::before {
+  width:12px;
+  margin-right:6px;
+}
+
+/* Positions grid enhanced */
+.pos-grid { gap:12px; }
+
+/* Context mini cards */
+.ctx-mini {
+  transition:transform .2s ease, border-color .2s ease;
+}
+.ctx-mini:hover {
+  transform:translateY(-1px);
+  border-color:var(--bd2);
+}
+
+/* WR progress bar animated */
+@keyframes wrBarFill {
+  from { transform:scaleX(0); transform-origin:left; }
+  to   { transform:scaleX(1); transform-origin:left; }
+}
+
+/* Improved signal row hover */
+.sig-row-hover {
+  transition:all .15s ease;
+}
+.sig-row-hover:hover {
+  transform:translateX(3px);
+  border-color:var(--gold) !important;
+  background:rgba(240,185,11,.04) !important;
+}
+
+/* Modal animate in */
+.modal-bg { animation:fadeIn .2s ease; }
+.modal-box { animation:scaleIn .25s cubic-bezier(.34,1.56,.64,1); }
+
+/* Enhanced log body */
+.log-body .ll:first-child { font-weight:600; }
+
+/* Exec button enhanced */
+.exec-btn { transition:all .15s ease; }
+.exec-btn:hover { transform:scale(1.05); }
+.exec-demo:hover { background:var(--gold) !important; color:#000 !important; border-color:var(--gold) !important; }
+.exec-live:hover { background:var(--up) !important; color:#000 !important; }
+
+/* Auth page improved */
+.auth-feat-item { animation:slideInLeft .35s ease both; }
+.auth-feat-item:nth-child(1) { animation-delay:.2s; }
+.auth-feat-item:nth-child(2) { animation-delay:.27s; }
+.auth-feat-item:nth-child(3) { animation-delay:.34s; }
+.auth-feat-item:nth-child(4) { animation-delay:.41s; }
+.auth-feat-item:nth-child(5) { animation-delay:.48s; }
+.auth-feat-item:nth-child(6) { animation-delay:.55s; }
+.auth-right { animation:slideInRight .4s ease .1s both; }
+
+/* Hexagon logo spin on hover */
+.t-hex {
+  transition:transform .3s ease;
+}
+.t-logo:hover .t-hex {
+  transform:rotate(30deg) scale(1.1);
+}
+
+/* Improved card backgrounds with subtle gradients */
+[data-theme="dark"] .bot-box {
+  background:linear-gradient(135deg, var(--bg3) 0%, rgba(30,38,58,1) 100%);
+}
+[data-theme="dark"] .sc {
+  background:linear-gradient(160deg, var(--bg2) 0%, rgba(20,26,42,.95) 100%);
+}
+[data-theme="dark"] .pc {
+  background:linear-gradient(160deg, var(--bg2) 0%, rgba(20,26,42,.95) 100%);
+}
+
+/* Topbar gradient line */
+.topbar {
+  border-bottom:1px solid var(--bd);
+  box-shadow:0 1px 0 rgba(240,185,11,.05);
+}
+[data-theme="dark"] .topbar {
+  background:linear-gradient(180deg, rgba(22,28,44,1) 0%, var(--bg2) 100%);
+}
+
+/* Enhanced sidebar */
+[data-theme="dark"] .sidebar {
+  background:linear-gradient(180deg, rgba(18,24,38,1) 0%, var(--bg2) 100%);
+}
+
+/* WR bar improved */
+.wr-track {
+  height:4px;
+  background:var(--bg);
+  border-radius:2px;
+  overflow:hidden;
+}
+.wr-fill {
+  height:100%;
+  border-radius:2px;
+  transition:width .8s cubic-bezier(.4,0,.2,1);
+  animation:progressFill .8s ease .5s both;
+}
+
+/* Score fill improved */
+.sc-sfill {
+  background:linear-gradient(90deg, var(--gold), var(--up));
+}
+
+/* Toast improved with subtle gradient */
+.toast {
+  backdrop-filter:blur(8px);
+}
+[data-theme="dark"] .toast {
+  background:linear-gradient(135deg, rgba(22,28,44,.98) 0%, rgba(17,21,32,.98) 100%);
+}
+
+/* Improved scan table hover */
+.scan-tr:hover {
+  background:rgba(240,185,11,.04) !important;
+  transition:background .1s;
+}
+
+/* Price change flash */
+@keyframes flashGreen { 0%,100%{background:transparent;} 30%{background:rgba(14,203,129,.1);} }
+@keyframes flashRed   { 0%,100%{background:transparent;} 30%{background:rgba(246,70,93,.08);} }
+.price-up { animation:flashGreen .6s ease; }
+.price-dn { animation:flashRed .6s ease; }
+
 </style>
 </head>
 <body>
@@ -589,15 +974,16 @@ const {useState,useEffect,useRef,useCallback,useMemo} = React;
 /* ═══════════════════════════════════════════════
    CONSTANTS
 ═══════════════════════════════════════════════ */
+/* Signaux SPOT Binance — paires disponibles sur Binance Spot (pas Futures exclusivement) */
 const PAIRS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','ADAUSDT',
   'DOGEUSDT','AVAXUSDT','DOTUSDT','MATICUSDT','LINKUSDT','LTCUSDT',
-  'UNIUSDT','ATOMUSDT','NEARUSDT','APTUSDT','ARBUSDT','OPUSDT','INJUSDT','SUIUSDT'];
+  'UNIUSDT','ATOMUSDT','NEARUSDT','APTUSDT','SHIBUSDT','TRXUSDT','VETUSDT','ICPUSDT'];
 
 const BASE_PRICES = {
   BTCUSDT:68420,ETHUSDT:3812,SOLUSDT:183,BNBUSDT:562,XRPUSDT:0.621,
   ADAUSDT:0.584,DOGEUSDT:0.178,AVAXUSDT:41.8,DOTUSDT:9.18,MATICUSDT:0.952,
   LINKUSDT:18.2,LTCUSDT:94.8,UNIUSDT:11.9,ATOMUSDT:10.9,NEARUSDT:7.72,
-  APTUSDT:11.4,ARBUSDT:1.82,OPUSDT:3.12,INJUSDT:27.8,SUIUSDT:2.21
+  APTUSDT:11.4,SHIBUSDT:0.0000278,TRXUSDT:0.122,VETUSDT:0.0381,ICPUSDT:14.6
 };
 
 /* ─── BINANCE FEES ─── */
@@ -617,38 +1003,49 @@ const calcLiqPrice = (side, entry, leverage, maintenanceMargin = 0.004) => {
 };
 
 let MKT = {};
-let MKT_SOURCE = 'sim'; // 'real' | 'sim'
-PAIRS.forEach(p => { MKT[p] = {price:BASE_PRICES[p], prev:BASE_PRICES[p]}; });
+PAIRS.forEach(p => { MKT[p] = {price:BASE_PRICES[p], prev:BASE_PRICES[p], sim:true}; });
 
-// Fetch real Binance Futures public prices (no API key needed)
-const fetchRealPrices = async () => {
+/* Prix réels Binance — fetch toutes les 10s, fallback simulation ancrée */
+let PRICE_SOURCE = 'SIM'; // 'LIVE' ou 'SIM'
+const fetchBinancePrices = async () => {
   try {
-    const symbols = JSON.stringify(PAIRS);
-    const r = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbols=${encodeURIComponent(symbols)}`, {signal:AbortSignal.timeout(4000)});
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    const data = await r.json();
-    data.forEach(({symbol,price}) => {
-      if(MKT[symbol]) MKT[symbol] = {prev:MKT[symbol].price, price:parseFloat(price)};
+    const syms = JSON.stringify(PAIRS);
+    const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbols=${encodeURIComponent(syms)}`,{signal:AbortSignal.timeout(5000)});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    if(!Array.isArray(data)||!data.length) throw new Error('empty');
+    data.forEach(({symbol,price})=>{
+      if(MKT[symbol]!==undefined){
+        const p=parseFloat(price);
+        MKT[symbol]={prev:MKT[symbol].price, price:p, sim:false};
+        BASE_PRICES[symbol]=p; // re-ancrer la base sur le prix réel
+      }
     });
-    MKT_SOURCE = 'real';
+    PRICE_SOURCE='LIVE';
     return true;
-  } catch(e) {
-    return false; // CORS or network → fallback to simulation
-  }
+  } catch(e){ return false; }
 };
 
+/* Simulation ancrée ±15% autour du BASE_PRICE (pas de dérive infinie) */
 const tickMarket = () => {
-  // Simulation fallback : random walk ancré sur BASE_PRICES (±0.05% max par tick)
+  if(PRICE_SOURCE==='LIVE') return; // si LIVE, on ne simule pas
   PAIRS.forEach(p => {
-    const d = MKT[p];
-    const move = d.price * (Math.random() - 0.5) * 0.001;
-    // Ancrage : empêche la dérive > ±15% du prix de base
     const base = BASE_PRICES[p];
-    const next = Math.max(d.price + move, 0.0001);
-    const clamped = Math.max(base*0.85, Math.min(base*1.15, next));
-    MKT[p] = {prev:d.price, price:clamped};
+    const d = MKT[p];
+    // Random walk ancré : on ramène vers la base si on dévie trop
+    const deviation = (d.price - base) / base;
+    const anchor = -deviation * 0.05; // force de rappel vers base
+    const noise = (Math.random() - 0.5) * 0.0018;
+    const move = d.price * (noise + anchor);
+    const newPrice = Math.max(d.price + move, base * 0.85);
+    const capped = Math.min(newPrice, base * 1.15); // borne ±15%
+    MKT[p] = {prev:d.price, price:capped, sim:true};
   });
 };
+
+/* Lancer le fetch Binance immédiatement puis toutes les 10s */
+fetchBinancePrices();
+setInterval(fetchBinancePrices, 10000);
 
 /* ─── SESSION + JOURS ─── */
 const getSess = () => { const h=new Date().getUTCHours(); if(h>=8&&h<10)return'london'; if(h>=13&&h<21)return'ny'; return'asia'; };
@@ -798,7 +1195,7 @@ function Auth({setUser, totalUsers}) {
     if(pass.length<8) return setErr('Mot de passe minimum 8 caractères.');
     if(pass!==pass2) return setErr('Les mots de passe ne correspondent pas.');
     const db=udb();
-    if(db[email.toLowerCase()]) return setErr('Email déjà utilisé.');
+    if(db[email.toLowerCase()]) return setErr('Email déjà utilisé. Connectez-vous ou réinitialisez votre mot de passe.');
     let referredBy = null;
     if(refInput) {
       const referrer = Object.values(db).find(u=>u.refCode===refInput.toUpperCase());
@@ -814,11 +1211,14 @@ function Auth({setUser, totalUsers}) {
       isAdmin:false, balance:1000
     };
     db[email.toLowerCase()]=nu; saveUdb(db);
-    const sent = await sendEmail(email, code, 'Code vérification AlphaBot Pro');
+    // Try to send email but don't depend on it
+    let sent = false;
+    try { sent = await sendEmail(email, code, 'Code vérification AlphaBot Pro'); } catch(e){}
     setEmailSent(sent);
     setLoading(false);
     setStep('verify');
-    setOk(sent ? `✅ Email envoyé à ${email}` : `Email non configuré — code affiché ci-dessous`);
+    // Always show a clear message
+    setOk(sent ? `📧 Email envoyé à ${email} — Vérifiez aussi vos spams` : `⚙️ Email non configuré — utilisez le code affiché ci-dessous`);
   };
 
   const verifyEmail = (forcedCode) => {
@@ -847,7 +1247,11 @@ function Auth({setUser, totalUsers}) {
     setEmailSent(sent);
     setLoading(false);
     setStep('reset-code');
-    setOk(sent?`✅ Email envoyé à ${email}`:`Code affiché ci-dessous`);
+    // Toujours afficher le code quelle que soit la situation email
+    setOk(sent
+      ? `✅ Email envoyé à ${email} — Vérifiez vos spams si nécessaire`
+      : `⚠️ Email non livré — Utilisez le code affiché ci-dessous`
+    );
   };
 
   const doReset = () => {
@@ -928,20 +1332,20 @@ function Auth({setUser, totalUsers}) {
           )}
           {step==='verify'&&(
             <>
-              {emailSent?(
-                <div className="ok-box">📧 Email envoyé à <b>{email}</b></div>
-              ):(
-                <div className="sim-notice">
-                  <b>⚙️ Mode local — code affiché ici</b>
-                  <div onClick={()=>copyUniversal(simCode)} style={{fontSize:'32px',fontWeight:800,textAlign:'center',letterSpacing:'10px',marginTop:'8px',fontFamily:'JetBrains Mono,monospace',cursor:'pointer',background:'rgba(240,185,11,.1)',borderRadius:'7px',padding:'10px',border:'1px solid rgba(240,185,11,.3)'}}>
-                    {simCode}
-                  </div>
-                  <div style={{textAlign:'center',fontSize:'9px',marginTop:'4px',opacity:.7}}>Cliquez pour copier</div>
+              {/* Code ALWAYS shown — primary method */}
+              <div style={{background:'linear-gradient(135deg,rgba(240,185,11,.12),rgba(240,185,11,.06))',border:'2px solid rgba(240,185,11,.4)',borderRadius:'10px',padding:'16px',marginBottom:'14px',textAlign:'center'}}>
+                <div style={{fontSize:'10px',color:'var(--tx1)',letterSpacing:'1px',textTransform:'uppercase',marginBottom:'8px'}}>
+                  🔑 Votre code de vérification
                 </div>
-              )}
-              <div className="fld" style={{marginTop:'4px'}}><div className="flbl">Code à 6 chiffres</div>
-                <input className="inp" type="text" placeholder="123456" maxLength={6} value={verCode} onChange={e=>{const v=e.target.value.replace(/\D/g,'');setVerCode(v);if(v.length===6)setTimeout(()=>verifyEmail(v),200);}} style={{fontSize:'22px',textAlign:'center',letterSpacing:'10px'}}/></div>
-              <button className="btn btn-gold btn-full" onClick={verifyEmail}>✅ VÉRIFIER MON EMAIL →</button>
+                <div onClick={()=>copyUniversal(simCode)} style={{fontSize:'36px',fontWeight:800,letterSpacing:'12px',fontFamily:'JetBrains Mono,monospace',color:'var(--gold)',cursor:'pointer',userSelect:'all',padding:'6px 0'}}>
+                  {simCode}
+                </div>
+                <div style={{fontSize:'9px',color:'var(--tx2)',marginTop:'6px'}}>👆 Appuyez sur le code pour le copier</div>
+                {emailSent&&<div style={{fontSize:'9px',color:'var(--up)',marginTop:'4px'}}>📧 Également envoyé à {email}</div>}
+              </div>
+              <div className="fld" style={{marginTop:'4px'}}><div className="flbl">Entrez le code à 6 chiffres</div>
+                <input className="inp" type="number" placeholder="123456" maxLength={6} value={verCode} onChange={e=>{const v=e.target.value.replace(/\D/g,'').slice(0,6);setVerCode(v);if(v.length===6)setTimeout(()=>verifyEmail(v),200);}} style={{fontSize:'22px',textAlign:'center',letterSpacing:'10px'}}/></div>
+              <button className="btn btn-gold btn-full" onClick={()=>verifyEmail()}>✅ VÉRIFIER MON COMPTE →</button>
               <div style={{textAlign:'center',marginTop:'10px'}}><button className="txt-btn" onClick={()=>{setStep('form');setErr('');setOk('');setVerCode('');}}>← Retour</button></div>
             </>
           )}
@@ -954,16 +1358,18 @@ function Auth({setUser, totalUsers}) {
           )}
           {step==='reset-code'&&(
             <>
-              {!emailSent&&(
-                <div className="sim-notice">
-                  <b>⚙️ Code reset</b>
-                  <div onClick={()=>copyUniversal(simReset)} style={{fontSize:'32px',fontWeight:800,textAlign:'center',letterSpacing:'10px',marginTop:'8px',fontFamily:'JetBrains Mono,monospace',cursor:'pointer',background:'rgba(240,185,11,.1)',borderRadius:'7px',padding:'10px',border:'1px solid rgba(240,185,11,.3)'}}>
-                    {simReset}
-                  </div>
+              {/* Le code est TOUJOURS affiché — fallback garanti */}
+              <div style={{background:'rgba(240,185,11,.08)',border:'2px solid rgba(240,185,11,.4)',borderRadius:'10px',padding:'14px',marginBottom:'12px'}}>
+                <div style={{fontSize:'9px',color:'var(--tx2)',letterSpacing:'2px',textTransform:'uppercase',textAlign:'center',marginBottom:'8px'}}>
+                  {emailSent ? '📧 Code aussi envoyé par email — ou utilisez celui-ci :' : '🔑 Votre code de réinitialisation :'}
                 </div>
-              )}
+                <div onClick={()=>copyUniversal(simReset)} style={{fontSize:'34px',fontWeight:800,textAlign:'center',letterSpacing:'12px',fontFamily:'JetBrains Mono,monospace',cursor:'pointer',color:'var(--gold)',padding:'8px 0'}}>
+                  {simReset}
+                </div>
+                <div style={{textAlign:'center',fontSize:'9px',color:'var(--tx2)',marginTop:'4px'}}>👆 Cliquez pour copier · Valable 10 minutes</div>
+              </div>
               <div className="fld"><div className="flbl">Code reçu</div><input className="inp" type="text" placeholder="123456" maxLength={6} value={resetCode} onChange={e=>setResetCode(e.target.value.replace(/\D/g,''))} style={{textAlign:'center',letterSpacing:'8px',fontSize:'20px'}}/></div>
-              <div className="fld"><div className="flbl">Nouveau mot de passe</div><input className="inp" type="password" placeholder="Nouveau mot de passe" value={newPass} onChange={e=>setNewPass(e.target.value)}/></div>
+              <div className="fld"><div className="flbl">Nouveau mot de passe (min. 8 car.)</div><input className="inp" type="password" placeholder="Nouveau mot de passe" value={newPass} onChange={e=>setNewPass(e.target.value)}/></div>
               <button className="btn btn-gold btn-full" onClick={doReset}>🔑 RÉINITIALISER →</button>
               <div style={{textAlign:'center',marginTop:'10px'}}><button className="txt-btn" onClick={()=>{setStep('form');setErr('');setOk('');}}>← Retour connexion</button></div>
             </>
@@ -981,31 +1387,211 @@ function DisclaimerModal({onAccept, onClose}) {
     <div className="modal-bg">
       <div className="modal-box disc-modal">
         <div className="disc-header">
-          <div className="disc-icon">⚠️</div>
-          <div className="disc-title">AVERTISSEMENT — RISQUES ÉLEVÉS</div>
-          <div className="f10 tx1" style={{marginTop:'6px'}}>À lire attentivement avant d'utiliser l'API Binance Futures</div>
+          <div className="disc-icon">⚖️</div>
+          <div className="disc-title">DÉCLARATION LÉGALE — MODE RÉEL</div>
+          <div className="f10 tx1" style={{marginTop:'6px'}}>À lire et accepter avant d'utiliser l'API Binance Futures en mode réel</div>
         </div>
         <div className="disc-body">
           <ul className="disc-points">
-            <li><b>Risque de perte totale :</b> Le trading sur les marchés à effet de levier comporte un risque très élevé de perte en capital.</li>
-            <li><b>Frais Binance :</b> Chaque trade génère des frais maker/taker (0.02%/0.04%). Ces frais sont <b>intégrés dans les calculs de performance</b> de ce robot.</li>
-            <li><b>Prix de liquidation :</b> Toujours visible dans vos positions. Une position peut être liquidée si le prix l'atteint.</li>
-            <li><b>Non-conseil financier :</b> AlphaBot Pro n'est pas un conseiller agréé. Signaux purement indicatifs.</li>
-            <li><b>Sécurité API :</b> Permissions <b>Futures Read + Trade</b> uniquement. Ne jamais activer le retrait.</li>
+            <li><b>Outil informatif uniquement :</b> AlphaBot Pro est un outil d'analyse algorithmique. Il ne constitue <b>en aucun cas un conseil en investissement, une recommandation financière ou une offre d'achat/vente</b>.</li>
+            <li><b>Risque de perte totale :</b> Le trading sur les marchés à effet de levier comporte un risque très élevé de perte partielle ou <b>totale</b> du capital investi. N'investissez que ce que vous pouvez perdre.</li>
+            <li><b>Performances non garanties :</b> Les performances passées ne préjugent pas des performances futures. AlphaBot Pro <b>décline toute responsabilité</b> quant aux résultats financiers.</li>
+            <li><b>Frais Binance intégrés :</b> Chaque trade génère des frais (0.02%/0.04%) intégrés dans les calculs de performance affichés.</li>
+            <li><b>Sécurité API :</b> Permissions <b>Futures Read + Trade</b> uniquement. <span style={{color:'var(--dn)'}}>Ne jamais activer le retrait.</span></li>
           </ul>
           <label className="disc-check">
             <input type="checkbox" checked={checked} onChange={e=>setChecked(e.target.checked)}/>
-            <span>J'ai lu et j'accepte les risques. Je suis seul responsable de mes décisions.</span>
+            <span>Je reconnais avoir lu ces avertissements. Je suis seul(e) responsable de mes décisions de trading. AlphaBot Pro et ses opérateurs ne pourront être tenus responsables de mes pertes.</span>
           </label>
           <div style={{display:'flex',gap:'10px'}}>
             <button className="btn btn-out" style={{flex:1}} onClick={onClose}>Annuler</button>
-            <button className="btn btn-gold" style={{flex:2}} onClick={()=>checked&&onAccept()} disabled={!checked}>✅ ACCEPTER ET CONTINUER</button>
+            <button className="btn btn-gold" style={{flex:2}} onClick={()=>checked&&onAccept()} disabled={!checked}>✅ J'ACCEPTE ET CONTINUE EN MODE RÉEL</button>
           </div>
         </div>
       </div>
     </div>
   );
 }
+
+/* ═══════════════════════════════════════════════
+   DEMO BALANCE EDITOR
+═══════════════════════════════════════════════ */
+function DemoBalanceEditor({balance, setBalance, stats, setStats, lsS, toast, log}) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(balance.toString());
+
+  const applyBalance = (b) => {
+    const n = parseFloat(b);
+    if(isNaN(n)||n<1) return;
+    setBalance(n); lsS('ab24_bal',n);
+    toast(`Solde démo → ${n.toFixed(0)} $`, 'success', 2000);
+    log(`💰 Solde démo modifié: ${n.toFixed(0)}$`, 'wrn');
+    setEditing(false);
+  };
+
+  const resetStats = () => {
+    const clean = {wins:0,losses:0,pnl:0,wr:0,totalFees:0};
+    setStats(clean); lsS('ab24_stats',clean);
+    toast('Stats remises à zéro', 'success', 2000);
+    log('🗑 Stats réinitialisées', 'wrn');
+  };
+
+  const PRESETS = [500, 1000, 5000, 10000];
+
+  return (
+    <div style={{background:'var(--bg2)',border:'1px solid rgba(240,185,11,.2)',borderRadius:'10px',padding:'13px 15px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px'}}>
+        <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:'12px',letterSpacing:'1px',color:'var(--tx1)'}}>💰 SOLDE DÉMO</div>
+        <button onClick={resetStats} style={{fontSize:'9px',padding:'3px 9px',background:'rgba(246,70,93,.08)',border:'1px solid rgba(246,70,93,.25)',color:'var(--dn)',borderRadius:'5px',cursor:'pointer',fontFamily:"'Rajdhani',sans-serif",fontWeight:700}}>
+          🗑 Reset Stats
+        </button>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'10px'}}>
+        {editing ? (
+          <>
+            <input
+              autoFocus
+              type="number" min="1"
+              value={val}
+              onChange={e=>setVal(e.target.value)}
+              onKeyDown={e=>{if(e.key==='Enter')applyBalance(val);if(e.key==='Escape')setEditing(false);}}
+              onBlur={()=>applyBalance(val)}
+              style={{flex:1,background:'var(--bg)',border:'1px solid var(--gold)',borderRadius:'6px',color:'var(--gold)',fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:'16px',padding:'6px 10px',outline:'none'}}
+            />
+            <span style={{fontSize:'14px',color:'var(--gold)',fontWeight:700}}>$</span>
+          </>
+        ) : (
+          <div onClick={()=>{setVal(balance.toString());setEditing(true);}} style={{flex:1,background:'var(--bg)',border:'1px dashed rgba(240,185,11,.3)',borderRadius:'6px',cursor:'text',padding:'8px 12px',display:'flex',alignItems:'center',justifyContent:'space-between',transition:'border-color .2s'}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor='var(--gold)'}
+            onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(240,185,11,.3)'}>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:'18px',color:'var(--gold)'}}>{balance.toFixed(2)}</span>
+            <span style={{fontSize:'10px',color:'var(--tx2)'}}>✏️ modifier</span>
+          </div>
+        )}
+      </div>
+      <div style={{display:'flex',gap:'5px',flexWrap:'wrap'}}>
+        {PRESETS.map(p=>(
+          <button key={p} onClick={()=>{applyBalance(p);}}
+            style={{flex:1,minWidth:'50px',padding:'5px 4px',fontSize:'10px',fontFamily:"'Rajdhani',sans-serif",fontWeight:700,background:Math.abs(balance-p)<0.5?'var(--gold)':'var(--bg3)',color:Math.abs(balance-p)<0.5?'#000':'var(--tx1)',border:`1px solid ${Math.abs(balance-p)<0.5?'var(--gold)':'var(--bd)'}`,borderRadius:'5px',cursor:'pointer',transition:'all .15s'}}>
+            {p>=1000?`${p/1000}K`:`${p}`}$
+          </button>
+        ))}
+      </div>
+      <div style={{fontSize:'9px',color:'var(--tx2)',marginTop:'7px'}}>Cliquez sur le montant pour le modifier ou choisissez un preset · Trades ouverts non affectés</div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════
+   PDF / DOCUMENT GENERATORS
+═══════════════════════════════════════════════ */
+const generateGuideHTML = () => `
+<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Guide AlphaBot Pro</title>
+<style>body{font-family:Arial,sans-serif;max-width:800px;margin:40px auto;padding:0 20px;color:#1a202c;}
+h1{color:#F0B90B;border-bottom:3px solid #F0B90B;padding-bottom:10px;}
+h2{color:#1890ff;margin-top:30px;} h3{color:#333;}
+.warn{background:#fff3cd;border-left:4px solid #F0B90B;padding:12px;margin:15px 0;border-radius:4px;}
+.danger{background:#fee;border-left:4px solid #e53e3e;padding:12px;margin:15px 0;border-radius:4px;}
+.ok{background:#f0fff4;border-left:4px solid #0ecb81;padding:12px;margin:15px 0;border-radius:4px;}
+table{width:100%;border-collapse:collapse;margin:15px 0;}
+th{background:#F0B90B;color:#000;padding:8px 12px;text-align:left;}
+td{padding:8px 12px;border-bottom:1px solid #e2e8f0;}
+tr:hover td{background:#f7f8fa;}</style></head><body>
+<h1>📘 Guide Complet AlphaBot Pro v30</h1>
+<div class="warn">⚠️ <b>AVERTISSEMENT :</b> Les performances passées ne garantissent pas les résultats futurs. Le trading comporte un risque élevé de perte en capital. Ce guide est fourni à titre informatif uniquement.</div>
+<h2>1. Introduction</h2>
+<p>AlphaBot Pro est un outil d'analyse algorithmique des marchés crypto. Il analyse 20 paires sur Binance Spot en temps réel et génère des signaux basés sur plusieurs indicateurs techniques.</p>
+<h2>2. Installation</h2>
+<h3>Option A — Utilisation locale (Android)</h3>
+<ol><li>Télécharger le fichier <code>alphabot_pro_v30.html</code></li><li>Ouvrir avec Chrome</li><li>Menu (⋮) → Ajouter à l'écran d'accueil</li></ol>
+<h3>Option B — Déploiement en ligne (Netlify)</h3>
+<ol><li>Aller sur <a href="https://netlify.com/drop">netlify.com/drop</a></li><li>Glisser le fichier HTML</li><li>Votre site est en ligne en 30 secondes</li></ol>
+<h2>3. Configuration API Binance</h2>
+<div class="danger">🚨 <b>JAMAIS</b> activer les permissions de retrait sur vos clés API.</div>
+<ol><li>Ouvrir Binance → Profil → Gestion des API</li><li>Créer une nouvelle clé → Activer <b>Lecture</b> + <b>Futures</b> uniquement</li><li>Restreindre aux IP de votre serveur si déployé</li><li>Copier l'API Key et Secret Key dans les paramètres d'AlphaBot Pro</li></ol>
+<h2>4. Indicateurs — Signaux</h2>
+<table><tr><th>Indicateur</th><th>Score</th><th>Signal</th></tr>
+<tr><td>Bollinger Bands (BB)</td><td>28 pts</td><td>Prix hors des bandes → retour probable</td></tr>
+<tr><td>Volume Out-of-Session (VOS)</td><td>22 pts</td><td>Volume anormal → mouvement imminent</td></tr>
+<tr><td>Volume</td><td>15 pts</td><td>Volume > moyenne → confirmation</td></tr>
+<tr><td>RSI</td><td>10 pts</td><td>Surachat/survente détecté</td></tr>
+<tr><td>Tendance BTC</td><td>15 pts</td><td>Alignement avec la tendance BTC</td></tr>
+<tr><td>Session</td><td>10 pts</td><td>Session de trading active</td></tr></table>
+<p>Un signal est affiché si le score ≥ votre minimum configuré (défaut: 60/100).</p>
+<h2>5. Gestion du Risque</h2>
+<div class="ok">✅ Règle d'or : Ne jamais risquer plus de 1-2% du capital par trade.</div>
+<table><tr><th>Capital</th><th>Levier recommandé</th><th>Risque max/trade</th></tr>
+<tr><td>&lt; 50 $</td><td>3x</td><td>1 $</td></tr>
+<tr><td>50-100 $</td><td>5x</td><td>2 $</td></tr>
+<tr><td>100-500 $</td><td>10x</td><td>5 $</td></tr>
+<tr><td>500-1000 $</td><td>15x</td><td>15 $</td></tr>
+<tr><td>&gt; 1000 $</td><td>20x</td><td>20 $</td></tr></table>
+<h2>6. Mise à Jour</h2>
+<p>Pour mettre à jour : télécharger la nouvelle version et remplacer l'ancien fichier HTML. Vos données (comptes, stats) sont stockées dans le navigateur (localStorage) et seront conservées.</p>
+<p style="color:#888;font-size:12px;margin-top:40px;border-top:1px solid #e2e8f0;padding-top:15px;">© AlphaBot Pro — Ce document est fourni à titre informatif uniquement et ne constitue pas un conseil financier.</p>
+</body></html>`;
+
+const generateRisksHTML = () => `
+<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Risques — AlphaBot Pro</title>
+<style>body{font-family:Arial,sans-serif;max-width:800px;margin:40px auto;padding:0 20px;color:#1a202c;}
+h1{color:#e53e3e;border-bottom:3px solid #e53e3e;padding-bottom:10px;}
+h2{color:#e53e3e;margin-top:30px;}
+.box{background:#fff5f5;border:1px solid #fed7d7;padding:16px;margin:15px 0;border-radius:8px;}
+.gold{background:#fffbeb;border:1px solid #F0B90B;padding:16px;margin:15px 0;border-radius:8px;}</style></head><body>
+<h1>⚠️ Document Risques & Avertissements Légaux — AlphaBot Pro</h1>
+<div class="box"><h2>1. Nature du Service</h2>
+<p>AlphaBot Pro est un outil d'analyse algorithmique à usage informatif. Il <b>n'est pas</b> un conseiller en investissement agréé au sens de la réglementation financière. Les signaux générés sont le résultat d'algorithmes automatiques et ne constituent <b>en aucun cas</b> des recommandations d'achat ou de vente.</p></div>
+<div class="box"><h2>2. Risque de Perte en Capital</h2>
+<p>Le trading de crypto-actifs, notamment sur les marchés à effet de levier (Futures), comporte un risque très élevé de perte partielle ou totale du capital investi. Il est possible de perdre plus que son investissement initial. N'investissez que des sommes que vous pouvez vous permettre de perdre intégralement.</p></div>
+<div class="box"><h2>3. Performances Non Garanties</h2>
+<p><b>Les performances passées ne préjugent pas des performances futures.</b> Les résultats affichés en démo ou en mode test ne reflètent pas nécessairement les performances réelles. Les conditions de marché varient constamment.</p></div>
+<div class="box"><h2>4. Responsabilité</h2>
+<p>AlphaBot Pro et ses opérateurs <b>déclinent toute responsabilité</b> pour toute perte financière, directe ou indirecte, résultant de l'utilisation de cette plateforme. L'utilisateur est seul responsable de ses décisions de trading et de leur exécution.</p></div>
+<div class="gold"><h2>5. Réglementation</h2>
+<p>Les crypto-actifs ne sont pas des instruments financiers réglementés dans toutes les juridictions. Vérifiez la légalité du trading de crypto-actifs dans votre pays. AlphaBot Pro ne peut être tenu responsable de l'utilisation non conforme à la réglementation locale.</p></div>
+<p>En utilisant AlphaBot Pro, vous attestez avoir lu, compris et accepté l'intégralité de ces avertissements.</p>
+<p style="color:#888;font-size:11px;margin-top:30px;">Document généré le ${new Date().toLocaleDateString('fr-FR')} — AlphaBot Pro v30</p>
+</body></html>`;
+
+const generateDeployHTML = () => `
+<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Guide Déploiement — AlphaBot Pro</title>
+<style>body{font-family:Arial,sans-serif;max-width:800px;margin:40px auto;padding:0 20px;color:#1a202c;}
+h1{color:#0ecb81;border-bottom:3px solid #0ecb81;padding-bottom:10px;}
+h2{color:#1890ff;margin-top:25px;}
+.step{display:flex;gap:15px;margin:12px 0;align-items:flex-start;}
+.num{background:#F0B90B;color:#000;font-weight:bold;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.ok{background:#f0fff4;border-left:4px solid #0ecb81;padding:10px;margin:10px 0;border-radius:4px;}
+code{background:#f7f8fa;padding:2px 6px;border-radius:4px;font-size:13px;}</style></head><body>
+<h1>🚀 Guide Déploiement AlphaBot Pro v30</h1>
+<h2>Option 1 — Netlify Drop (Gratuit · 30 secondes)</h2>
+<div class="step"><div class="num">1</div><div>Aller sur <a href="https://app.netlify.com/drop">app.netlify.com/drop</a></div></div>
+<div class="step"><div class="num">2</div><div>Glisser-déposer le fichier <code>alphabot_pro_v30.html</code> dans la zone</div></div>
+<div class="step"><div class="num">3</div><div>Votre site est en ligne à une adresse type <code>https://xxx.netlify.app</code></div></div>
+<div class="ok">✅ Pour mettre à jour : retourner sur Netlify, déployer à nouveau avec le nouveau fichier.</div>
+<h2>Option 2 — Android / PWA (Sans hébergement)</h2>
+<div class="step"><div class="num">1</div><div>Copier <code>alphabot_pro_v30.html</code> sur le téléphone (Bluetooth, USB, email)</div></div>
+<div class="step"><div class="num">2</div><div>Ouvrir Chrome Android → Naviguer vers le fichier</div></div>
+<div class="step"><div class="num">3</div><div>Menu (⋮) → <b>Ajouter à l'écran d'accueil</b></div></div>
+<div class="step"><div class="num">4</div><div>L'application est installée comme une app native</div></div>
+<h2>Option 3 — GitHub Pages (Gratuit · Permanent)</h2>
+<div class="step"><div class="num">1</div><div>Créer un compte sur <a href="https://github.com">github.com</a></div></div>
+<div class="step"><div class="num">2</div><div>Nouveau repository → Uploader <code>alphabot_pro_v30.html</code> renommé en <code>index.html</code></div></div>
+<div class="step"><div class="num">3</div><div>Settings → Pages → Source: main branch → Save</div></div>
+<div class="step"><div class="num">4</div><div>Votre site : <code>https://votre-username.github.io/nom-repo</code></div></div>
+<p style="color:#888;font-size:11px;margin-top:30px;">AlphaBot Pro v30 — Guide Déploiement</p>
+</body></html>`;
+
+const downloadDoc = (doc) => {
+  const blob = new Blob([doc.content], {type:'text/html;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = doc.title.replace(/[^a-zA-Z0-9]/g,'_')+'_AlphaBotPro.html';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
 
 /* ═══════════════════════════════════════════════
    MAIN APP
@@ -1017,6 +1603,8 @@ function App() {
   const [chartPair,setChartPair]=useState('BTCUSDT');
   const [chartTf,setChartTf]=useState('5');
   const [theme,setTheme]=useState(()=>lsG('ab24_theme','dark'));
+  const [sidebarOpen,setSidebarOpen]=useState(false);
+  const [balModalOpen,setBalModalOpen]=useState(false);
 
   const [prices,setPrices]=useState({...MKT});
   const [btcT,setBtcT]=useState('RANGE');
@@ -1033,6 +1621,7 @@ function App() {
   const [risk,setRisk]=useState(()=>lsG('ab24_risk',1.5));
   const [leverage,setLeverage]=useState(()=>lsG('ab24_lev',10));
   const [scoreMin,setScoreMin]=useState(60);
+  const [maxMargin,setMaxMargin]=useState(()=>lsG('ab24_maxmargin',100)); // Marge max en USDT
   // SL Follower: s'active à RR1 comme prévu (sécurisé)
   const SL_TRAIL_ACTIVATION_RR = 1.0;
 
@@ -1046,6 +1635,7 @@ function App() {
   const [showDisc,setShowDisc]=useState(false);
   const [pendingSig,setPendingSig]=useState(null);
   const [toasts,setToasts]=useState([]);
+  const [priceSource,setPriceSource]=useState('SIM');
   const [totalUsers]=useState(()=>lsG('ab24_tu',1258));
 
   const isAdmin = user?.isAdmin || user?.email==='admin@alphabot.pro';
@@ -1073,22 +1663,20 @@ function App() {
     setLogs(p=>[{msg,type,ts:ts()},...p].slice(0,150));
   },[]);
 
-  /* Market tick - Prix réels Binance toutes les 10s, simulation ancrée entre les deux */
-  const [priceSource, setPriceSource] = React.useState('sim');
+  /* Market tick */
   useEffect(()=>{
-    const doSnap = () => {
-      const snap={}; PAIRS.forEach(p=>{snap[p]={...MKT[p]};});
-      setPrices(snap); setPriceSource(MKT_SOURCE);
-      const b=MKT['BTCUSDT']; setBtcT(btcTrendCalc(b.price,b.prev));
-      setSession(getSess()); setDayRisk(getDayRisk());
-    };
-    // Fetch prix réels immédiatement
-    fetchRealPrices().then(()=>doSnap());
-    // Rafraîchissement réel toutes les 10s
-    const realT = setInterval(()=>{ fetchRealPrices().then(()=>doSnap()); }, 10000);
-    // Simulation ancrée entre les fetches (toutes les 2s)
-    const simT = setInterval(()=>{ if(MKT_SOURCE==='sim') tickMarket(); doSnap(); }, 2000);
-    return ()=>{ clearInterval(realT); clearInterval(simT); };
+    const t=setInterval(()=>{
+      tickMarket();
+      const snap={};
+      PAIRS.forEach(p=>{snap[p]={...MKT[p]};});
+      setPrices(snap);
+      setPriceSource(PRICE_SOURCE);
+      const b=MKT['BTCUSDT'];
+      setBtcT(btcTrendCalc(b.price,b.prev));
+      setSession(getSess());
+      setDayRisk(getDayRisk());
+    },2000);
+    return ()=>clearInterval(t);
   },[]);
 
   /* Countdown */
@@ -1260,18 +1848,42 @@ function App() {
     setApiLoad(false);
   };
 
+  const [tradeConfirm,setTradeConfirm]=useState(null); // {sig, price, sl, tp, riskAmt, qty, estimatedFees}
+
   const executeSignal = async (sig) => {
     if(!apiOk){toast('Connectez votre API Binance d\'abord','error');return;}
-    if(botDemo){toast('Passez en mode Réel pour exécuter sur Binance','warn');return;}
+    if(botDemo){
+      // Démo: exécuter directement sans confirmation réelle
+      const price=MKT[sig.pair]?.price||100;
+      const slDist=price*0.008;
+      const sl=sig.side==='BUY'?price-slDist:price+slDist;
+      const tp=sig.side==='BUY'?price+slDist*parseFloat(sig.rr):price-slDist*parseFloat(sig.rr);
+      const riskAmt=Math.min(balance*risk/100, maxMargin);
+      const estimatedFees=calcFeesForTrade(riskAmt*(leverage||10));
+      const liqPrice=calcLiqPrice(sig.side,price,leverage||10);
+      const newPos={id:Date.now(),pair:sig.pair,side:sig.side,entry:price,sl,sl0:sl,tp2:tp,riskAmt,rr:sig.rr,status:'open',trailActive:false,rrR:0,demo:true,ts:ts(),estimatedFees,liqPrice,notional:riskAmt*(leverage||10),leverage:leverage||10};
+      setPositions(p=>{const n=[...p,newPos];lsS('ab24_pos',n);return n;});
+      log(`🎮 Position démo: ${sig.pair} ${sig.side} @ ${fmtP(price)} (marge: ${riskAmt.toFixed(2)}$)`,'inf');
+      toast(`Position démo ouverte: ${sig.pair} ${sig.side}`,'info');
+      return;
+    }
     if(!discAccepted){setPendingSig(sig);setShowDisc(true);return;}
+    // Mode réel: afficher la confirmation obligatoire
     const price=MKT[sig.pair]?.price||100;
     const slDist=price*0.008;
     const sl=sig.side==='BUY'?price-slDist:price+slDist;
     const tp=sig.side==='BUY'?price+slDist*parseFloat(sig.rr):price-slDist*parseFloat(sig.rr);
-    const riskAmt=balance*risk/100;
+    const riskAmt=Math.min(balance*risk/100, maxMargin);
     const qty=Math.max((riskAmt/slDist).toFixed(6),0.001);
     const estimatedFees=calcFeesForTrade(riskAmt*(leverage||10));
-    log(`📤 Envoi ordre ${sig.pair} ${sig.side} qty:${qty} fees:~${estimatedFees.toFixed(2)}$`,'inf');
+    setTradeConfirm({sig, price, sl, tp, riskAmt, qty, estimatedFees});
+  };
+
+  const doExecuteReal = async () => {
+    if(!tradeConfirm) return;
+    const {sig, price, sl, tp, riskAmt, qty, estimatedFees} = tradeConfirm;
+    setTradeConfirm(null);
+    log(`📤 Envoi ordre RÉEL ${sig.pair} ${sig.side} qty:${qty} marge:${riskAmt.toFixed(2)}$ fees:~${estimatedFees.toFixed(2)}$`,'inf');
     try {
       const timestamp2=Date.now();
       const params=new URLSearchParams({symbol:sig.pair,side:sig.side,type:'MARKET',quantity:qty,timestamp:timestamp2});
@@ -1315,12 +1927,99 @@ function App() {
 
   return (
     <div className="shell">
+      {/* BALANCE QUICK MODAL */}
+      {balModalOpen&&(
+        <>
+          <div style={{position:'fixed',inset:0,zIndex:290}} onClick={()=>setBalModalOpen(false)}/>
+          <div className="bal-modal">
+            <div className="bal-modal-title">💰 Modifier le solde de test</div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'26px',fontWeight:800,color:'var(--gold)',marginBottom:'10px',textAlign:'center'}}>
+              {balance.toFixed(2)} $
+            </div>
+            <div style={{display:'flex',gap:'5px',flexWrap:'wrap',marginBottom:'10px'}}>
+              {[100,500,1000,5000,10000].map(p=>(
+                <button key={p} onClick={()=>{setBalance(p);lsS('ab24_bal',p);toast(`Solde → ${p}$`,'success',2000);}}
+                  style={{flex:1,minWidth:'50px',padding:'6px 4px',fontSize:'11px',fontFamily:"'Rajdhani',sans-serif",fontWeight:700,
+                    background:Math.abs(balance-p)<0.5?'var(--gold)':'var(--bg3)',
+                    color:Math.abs(balance-p)<0.5?'#000':'var(--tx1)',
+                    border:`1px solid ${Math.abs(balance-p)<0.5?'var(--gold)':'var(--bd)'}`,
+                    borderRadius:'5px',cursor:'pointer'}}>
+                  {p>=1000?`${p/1000}K$`:`${p}$`}
+                </button>
+              ))}
+            </div>
+            <div style={{display:'flex',gap:'6px'}}>
+              <input type="number" min="1" placeholder="Montant custom"
+                className="inp" style={{flex:1,fontSize:'13px'}}
+                onKeyDown={e=>{if(e.key==='Enter'){const v=parseFloat(e.target.value);if(v>=1){setBalance(v);lsS('ab24_bal',v);toast(`Solde → ${v}$`,'success',2000);setBalModalOpen(false);}}}}/>
+              <button className="btn btn-gold" onClick={()=>setBalModalOpen(false)}>OK</button>
+            </div>
+            <div style={{fontSize:'9px',color:'var(--tx2)',marginTop:'6px'}}>Appuyez Entrée pour confirmer · Mode démo uniquement</div>
+          </div>
+        </>
+      )}
+
       {/* TOASTS */}
       <div className="toast-container">
         {toasts.map(t=>(
           <div key={t.id} className={`toast ${t.type}`}>{t.msg}</div>
         ))}
       </div>
+
+      {/* TRADE CONFIRMATION MODAL — MODE RÉEL */}
+      {tradeConfirm&&(
+        <div className="modal-bg" onClick={()=>setTradeConfirm(null)}>
+          <div className="modal-box trade-confirm-modal" onClick={e=>e.stopPropagation()}>
+            {/* Header coloré selon direction */}
+            <div className={`tc-header ${tradeConfirm.sig.side==='BUY'?'tc-header-long':'tc-header-short'}`}>
+              <div>
+                <div style={{fontSize:'10px',color:'var(--tx2)',letterSpacing:'1.5px',textTransform:'uppercase',marginBottom:'5px'}}>⚡ CONFIRMER L'ORDRE RÉEL</div>
+                <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+                  <span className={`tc-badge ${tradeConfirm.sig.side==='BUY'?'sl':'ss'}`}>
+                    {tradeConfirm.sig.side==='BUY'?'▲ LONG':'▼ SHORT'}
+                  </span>
+                  <span className="tc-pair">{tradeConfirm.sig.pair.replace('USDT','/USDT')}</span>
+                </div>
+              </div>
+              <div style={{marginLeft:'auto',textAlign:'right'}}>
+                <div style={{fontSize:'8px',color:'var(--tx2)',marginBottom:'3px'}}>SCORE SIGNAL</div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'20px',fontWeight:800,color:tradeConfirm.sig.score>=80?'var(--up)':'var(--gold)'}}>{tradeConfirm.sig.score}</div>
+              </div>
+            </div>
+
+            {/* Détails de l'ordre */}
+            <div style={{paddingTop:'4px'}}>
+              {[
+                ['Prix d\'entrée', fmtP(tradeConfirm.price)],
+                ['Stop Loss', fmtP(tradeConfirm.sl), 'cdn'],
+                ['Take Profit', fmtP(tradeConfirm.tp), 'cup'],
+                ['Marge utilisée', `${tradeConfirm.riskAmt.toFixed(2)} USDT`, 'cgold'],
+                ['Levier', `${leverage}x`, ''],
+                ['Quantité', tradeConfirm.qty, ''],
+                ['Frais estimés', `~${tradeConfirm.estimatedFees.toFixed(3)} USDT`, 'cdn'],
+                ['Risk/Reward', `1 : ${tradeConfirm.sig.rr}`, 'cup'],
+              ].map(([l,v,cls=''])=>(
+                <div key={l} className="tc-row">
+                  <span className="lbl">{l}</span>
+                  <span className={`val ${cls}`}>{v}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Disclaimer obligatoire */}
+            <div className="tc-disclaimer">
+              <b style={{color:'var(--gold)'}}>⚖️ AVERTISSEMENT LÉGAL :</b> Cet ordre sera exécuté sur votre compte Binance Futures en argent réel. AlphaBot Pro est un outil d'analyse algorithmique et <b>ne constitue pas un conseil financier</b>. Les performances passées <b>ne garantissent pas les résultats futurs</b>. Le bot fournit une appréciation du marché à l'instant T uniquement. <b>Vous êtes seul(e) responsable de cette décision.</b> La perte maximale est limitée à votre Stop Loss.
+            </div>
+
+            <div className="tc-btns">
+              <button className="tc-cancel" onClick={()=>setTradeConfirm(null)}>✕ Annuler</button>
+              <button className={tradeConfirm.sig.side==='BUY'?'tc-confirm-long':'tc-confirm-short'} onClick={doExecuteReal}>
+                {tradeConfirm.sig.side==='BUY'?'✅ CONFIRMER LONG ▲':'✅ CONFIRMER SHORT ▼'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* DISCLAIMER */}
       {showDisc&&(
@@ -1336,10 +2035,16 @@ function App() {
 
       {/* TOPBAR */}
       <div className="topbar">
+        {/* Hamburger - visible on mobile */}
+        <button className={`hamburger-btn${sidebarOpen?' open':''}`} onClick={()=>setSidebarOpen(o=>!o)}>
+          <div className="hb-line"/>
+          <div className="hb-line"/>
+          <div className="hb-line"/>
+        </button>
         <div className="t-logo">
           <div className="t-hex">A</div>
           <span className="t-name">ALPHA<span>BOT</span></span>
-          <span className="t-ver">v24 PRO</span>
+          <span className="t-ver">v31 PRO</span>
         </div>
         <div className="t-stats">
           <div className="tstat">
@@ -1354,21 +2059,21 @@ function App() {
             <div className="tstat-l">Positions</div>
             <div className="tstat-v">{openPos.length}<span className="tx2">/{getMaxPos()}</span></div>
           </div>
-          <div className="tstat">
-            <div className="tstat-l">Balance</div>
+          <div className="tstat" onClick={()=>setBalModalOpen(o=>!o)} style={{cursor:'pointer'}} title="Cliquez pour modifier">
+            <div className="tstat-l">Balance ✏️</div>
             <div className="tstat-v mono" style={{color:balance>=1000?'var(--up)':'var(--gold)'}}>{balance.toFixed(0)}$</div>
           </div>
           <div className="tstat">
-            <div className="tstat-l">PnL net</div>
-            <div className="tstat-v mono" style={{color:stats.pnl>=0?'var(--up)':'var(--dn)'}}>{stats.pnl>=0?'+':''}{stats.pnl.toFixed(0)}$</div>
+            <div className="tstat-l">PnL NET session</div>
+            <div className="tstat-v mono" style={{color:stats.pnl>=0?'var(--up)':'var(--dn)'}}>{stats.wins+stats.losses===0?'—':(stats.pnl>=0?'+':'')+stats.pnl.toFixed(2)+'$'}</div>
+          </div>
+          <div className="tstat">
+            <div className="tstat-l">WR {stats.wins+stats.losses>0?`(${stats.wins}W/${stats.losses}L)`:''}</div>
+            <div className="tstat-v mono" style={{color:stats.wins+stats.losses===0?'var(--tx2)':stats.wr>=60?'var(--up)':stats.wr>=40?'var(--gold)':'var(--dn)'}}>{stats.wins+stats.losses===0?'—':stats.wr+'%'}</div>
           </div>
           <div className="tstat">
             <div className="tstat-l">Session</div>
             <div className="tstat-v" style={{color:session==='asia'?'var(--dn)':'var(--up)',fontSize:'10px'}}>{sessLbl[session]}</div>
-          </div>
-          <div className="tstat">
-            <div className="tstat-l">Prix</div>
-            <div className="tstat-v" style={{color:priceSource==='real'?'var(--up)':'var(--gold)',fontSize:'10px'}}>{priceSource==='real'?'● LIVE':'● SIM'}</div>
           </div>
           {isAdmin&&(
             <div className="tstat">
@@ -1378,6 +2083,20 @@ function App() {
           )}
         </div>
         <div className="t-right">
+          {/* Mode Démo / Réel switch */}
+          <div className="mode-switch-pill">
+            <button className={`msw-btn msw-demo${botDemo?' act':''}`}
+              onClick={()=>{ setBotDemo(true); log('🎮 Mode Démo activé','wrn'); }}>
+              DÉMO
+            </button>
+            <button className={`msw-btn msw-real${!botDemo?' act':''}`}
+              onClick={()=>{
+                if(!discAccepted){setShowDisc(true);return;}
+                setBotDemo(false); log('⚡ Mode Réel activé','wrn');
+              }}>
+              RÉEL
+            </button>
+          </div>
           <button className="theme-btn" onClick={()=>setTheme(t=>t==='dark'?'light':'dark')} title="Thème">
             {theme==='dark'?'☀️':'🌙'}
           </button>
@@ -1393,14 +2112,25 @@ function App() {
       </div>
 
       <div className="body-row">
+        {/* SIDEBAR OVERLAY — mobile */}
+        {sidebarOpen&&<div className="sidebar-overlay" onClick={()=>setSidebarOpen(false)}/>}
         {/* SIDEBAR */}
-        <div className="sidebar">
+        <div className={`sidebar${sidebarOpen?' open':''}`}>
           {/* BOT CONTROL — EN HAUT À GAUCHE */}
           <div style={{padding:'8px'}}>
             <div className="bot-box">
               <div className="bot-txt">🤖 Bot Contrôle</div>
 
-              {/* API Status dans la sidebar */}
+              {/* Mini solde dans sidebar */}
+              <div className="bot-balance-row" style={{background:'rgba(240,185,11,.07)',border:'1px solid rgba(240,185,11,.15)',borderRadius:'6px',padding:'7px 9px',marginBottom:'7px'}}>
+                <div style={{fontSize:'7px',color:'var(--tx2)',letterSpacing:'1.5px',textTransform:'uppercase',marginBottom:'3px'}}>SOLDE</div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'15px',fontWeight:800,color:'var(--gold)'}}>{balance.toFixed(0)}<span style={{fontSize:'9px',color:'var(--tx2)',marginLeft:'2px'}}>$</span></div>
+                <div style={{fontSize:'8px',color:stats.pnl>=0?'var(--up)':'var(--dn)',marginTop:'2px',fontFamily:"'JetBrains Mono',monospace"}}>
+                  PnL {stats.wins+stats.losses===0?'—':(stats.pnl>=0?'+':'')+stats.pnl.toFixed(0)+'$'}
+                </div>
+              </div>
+
+              {/* API Status */}
               <div className={`api-sidebar-status ${apiOk?'api-sb-on':'api-sb-off'}`}>
                 <span style={{fontSize:'8px'}}>{apiOk?'●':'○'}</span>
                 <div style={{flex:1}}>
@@ -1414,18 +2144,7 @@ function App() {
 
               <div className="bot-mode-row" style={{marginBottom:'7px'}}>
                 <span className="f9 tx2">Mode</span>
-                <div className="mode-btns">
-                  {['Démo','Réel'].map(m=>(
-                    <button key={m}
-                      className={`mbtn${(m==='Démo'&&botDemo)||(m==='Réel'&&!botDemo)?' act':''}`}
-                      onClick={()=>{
-                        if(m==='Réel'&&!discAccepted){setShowDisc(true);return;}
-                        setBotDemo(m==='Démo');
-                      }}>
-                      {m}
-                    </button>
-                  ))}
-                </div>
+                <div className={`f10 bold ${botDemo?'cgold':'cup'}`}>{botDemo?'🎮 DÉMO':'⚡ RÉEL'}</div>
               </div>
 
               <div className={`bot-status${botOn?' live':''}`} style={{marginBottom:'7px'}}>
@@ -1440,7 +2159,6 @@ function App() {
                 {botOn?'⏹ ARRÊTER':'▶ DÉMARRER'}
               </button>
 
-              {/* Warning session/jour */}
               {botOn&&(session==='asia'||!dayRisk.ok)&&(
                 <div style={{marginTop:'7px',background:'rgba(240,185,11,.08)',border:'1px solid rgba(240,185,11,.2)',borderRadius:'5px',padding:'5px 7px',fontSize:'8px',color:'var(--gold)'}}>
                   ⚠️ ACTIF · Vol. réduit
@@ -1453,6 +2171,20 @@ function App() {
                   <span>{scoreMin}</span>
                 </div>
                 <input type="range" min="60" max="90" value={scoreMin} onChange={e=>setScoreMin(+e.target.value)} className="slider"/>
+              </div>
+
+              {/* Mini WR dans sidebar */}
+              <div className="bot-balance-row" style={{marginTop:'8px',background:'var(--bg3)',border:'1px solid var(--bd)',borderRadius:'6px',padding:'7px 9px'}}>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:'8px',color:'var(--tx2)',marginBottom:'4px'}}>
+                  <span>WIN RATE</span>
+                  <span style={{color:stats.wins+stats.losses===0?'var(--tx2)':stats.wr>=60?'var(--up)':stats.wr>=40?'var(--gold)':'var(--dn)',fontFamily:"'JetBrains Mono',monospace",fontWeight:700}}>
+                    {stats.wins+stats.losses===0?'—':stats.wr+'%'}
+                  </span>
+                </div>
+                <div style={{height:'3px',background:'var(--bg)',borderRadius:'2px',overflow:'hidden'}}>
+                  <div style={{width:stats.wins+stats.losses===0?'0%':`${stats.wr}%`,height:'100%',background:stats.wr>=60?'var(--up)':stats.wr>=40?'var(--gold)':'var(--dn)',transition:'width .6s'}}/>
+                </div>
+                <div style={{fontSize:'7px',color:'var(--tx2)',marginTop:'4px'}}>{stats.wins}W · {stats.losses}L · {stats.wins+stats.losses} trades</div>
               </div>
             </div>
           </div>
@@ -1467,10 +2199,11 @@ function App() {
               {id:'history',  icon:'📈',lbl:'Historique'},
               {id:'news',     icon:'📰',lbl:'Fondamentaux'},
               {id:'canal',    icon:'📺',lbl:'Canal'},
+              {id:'abonnement',icon:'💎',lbl:'Abonnement', badge:'SOON',btype:'warn'},
               {id:'account',  icon:'👤',lbl:'Mon Compte'},
               ...(isAdmin?[{id:'admin',icon:'⚙️',lbl:'Admin',badge:'•',btype:'warn'}]:[]),
             ].map(n=>(
-              <div key={n.id} className={`sitem${page===n.id?' act':''}`} onClick={()=>setPage(n.id)}>
+              <div key={n.id} className={`sitem${page===n.id?' act':''}`} onClick={()=>{setPage(n.id);setSidebarOpen(false);}}>
                 <span className="sitem-icon">{n.icon}</span>
                 <span className="sitem-lbl">{n.lbl}</span>
                 {n.badge&&<span className={`sitem-badge${n.btype?' '+n.btype:''}`}>{n.badge}</span>}
@@ -1504,9 +2237,61 @@ function App() {
             {/* ═════ DASHBOARD ═════ */}
             {page==='dashboard'&&<>
 
-              {/* Session/Day warning */}
+              {/* ① CARTE SOLDE + STATS — TOUT EN HAUT */}
+              <div className="dash-anim-1" style={{background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'12px',overflow:'hidden'}}>
+                {/* Ligne solde principal */}
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',background:'var(--bg3)',borderBottom:'1px solid var(--bd)'}}>
+                  <div style={{padding:'14px 16px',borderRight:'1px solid var(--bd)'}}>
+                    <div style={{fontSize:'8px',color:'var(--tx2)',letterSpacing:'2px',textTransform:'uppercase',marginBottom:'5px'}}>
+                      💰 SOLDE {apiOk?'BINANCE':'DÉMO'}
+                    </div>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'24px',fontWeight:800,color:'var(--gold)',lineHeight:1}}>{balance.toFixed(2)}<span style={{fontSize:'13px',color:'var(--tx2)',marginLeft:'4px'}}>$</span></div>
+                    <div style={{fontSize:'9px',color:'var(--tx2)',marginTop:'4px'}}>{botDemo?'Mode Démo':'Mode Réel'} · Risque {risk.toFixed(1)}%/trade</div>
+                  </div>
+                  <div style={{padding:'14px 16px',borderRight:'1px solid var(--bd)'}}>
+                    <div style={{fontSize:'8px',color:'var(--tx2)',letterSpacing:'2px',textTransform:'uppercase',marginBottom:'5px'}}>📈 PnL NET GLOBAL</div>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'24px',fontWeight:800,color:stats.pnl>=0?'var(--up)':'var(--dn)',lineHeight:1}}>
+                      {stats.wins+stats.losses===0?'—':(stats.pnl>=0?'+':'')+stats.pnl.toFixed(2)+'$'}
+                    </div>
+                    <div style={{fontSize:'9px',color:'var(--tx2)',marginTop:'4px'}}>Brut {stats.wins+stats.losses>0?(((stats.pnl+(stats.totalFees||0))>=0?'+':'')+((stats.pnl+(stats.totalFees||0)).toFixed(2))+'$'):'—'} · Frais -{(stats.totalFees||0).toFixed(2)}$</div>
+                  </div>
+                  <div style={{padding:'14px 16px'}}>
+                    <div style={{fontSize:'8px',color:'var(--tx2)',letterSpacing:'2px',textTransform:'uppercase',marginBottom:'5px'}}>🎯 WIN RATE</div>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'24px',fontWeight:800,lineHeight:1,color:stats.wins+stats.losses===0?'var(--tx2)':stats.wr>=60?'var(--up)':stats.wr>=40?'var(--gold)':'var(--dn)'}}>
+                      {stats.wins+stats.losses===0?'—':stats.wr+'%'}
+                    </div>
+                    <div style={{fontSize:'9px',color:'var(--tx2)',marginTop:'4px'}}>{stats.wins}W · {stats.losses}L · {stats.wins+stats.losses} trades</div>
+                  </div>
+                </div>
+
+                {/* Mini-tableau des trades */}
+                <div style={{padding:'0'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',background:'var(--bg3)',borderBottom:'1px solid var(--bd)'}}>
+                    {[
+                      ['TRADES','#', stats.wins+stats.losses, stats.wins+stats.losses>0?'cup':'tx2'],
+                      ['GAGNANTS','✅', stats.wins, 'cup'],
+                      ['PERDANTS','❌', stats.losses, stats.losses>0?'cdn':'tx2'],
+                      ['FRAIS','-$', (stats.totalFees||0).toFixed(2)+'$', 'cdn'],
+                      ['POSITIONS','📂', `${openPos.length}/${getMaxPos()}`, openPos.length>0?'cup':'tx2'],
+                    ].map(([lbl,ic,val,cls])=>(
+                      <div key={lbl} style={{padding:'9px 10px',textAlign:'center',borderRight:'1px solid var(--bd)'}}>
+                        <div style={{fontSize:'7px',color:'var(--tx2)',letterSpacing:'1.5px',marginBottom:'3px'}}>{lbl}</div>
+                        <div className={`mono bold f12 ${cls}`}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Barre progression WR */}
+                  {stats.wins+stats.losses>0&&(
+                    <div style={{height:'3px',background:'var(--bg)'}}>
+                      <div style={{width:`${stats.wr}%`,height:'100%',background:stats.wr>=60?'var(--up)':stats.wr>=40?'var(--gold)':'var(--dn)',transition:'width .6s'}}/>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ② SESSION WARNING */}
               {(session==='asia'||!dayRisk.ok)?(
-                <div className="session-warning">
+                <div className="session-warning dash-anim-2">
                   <span style={{fontSize:'20px'}}>⚠️</span>
                   <div>
                     <div style={{fontWeight:700}}>{session==='asia'?'Session Asie — Liquidité réduite':dayRisk.label}</div>
@@ -1514,7 +2299,7 @@ function App() {
                   </div>
                 </div>
               ):(
-                <div className="session-safe">
+                <div className="session-safe dash-anim-2">
                   <span style={{fontSize:'20px'}}>✅</span>
                   <div>
                     <div style={{fontWeight:700}}>{dayRisk.label} · {sessLbl[session]}</div>
@@ -1523,164 +2308,29 @@ function App() {
                 </div>
               )}
 
-              {/* BARRE STATS */}
-              <div className="ctx-bar">
-                <div className="cbi">
-                  <div className="cbi-l">BTC</div>
-                  <div className={`cbi-v ${btcT==='BULL'?'cup':btcT==='BEAR'?'cdn':'cgold'}`}>{btcT} — {fmtP(btcP.price)}$</div>
-                  <div className="cbi-s">SL suiveur actif à RR{SL_TRAIL_ACTIVATION_RR}.0</div>
+              {/* ③ SOLDE DEMO MODIFIABLE */}
+              {botDemo&&!apiOk&&(
+                <div className="dash-anim-3">
+                <DemoBalanceEditor balance={balance} setBalance={setBalance} stats={stats} setStats={setStats} lsS={lsS} toast={toast} log={log}/>
                 </div>
-                <div className="cbi">
-                  <div className="cbi-l">Win Rate (net)</div>
-                  <div className={`cbi-v mono ${stats.wr>=60?'cup':stats.wr>=40?'cgold':'cdn'}`}>
-                    {stats.wins+stats.losses===0?'—':stats.wr+'%'}
-                  </div>
-                  <div className="cbi-s">
-                    {stats.wins+stats.losses===0?'Aucun trade fermé':`${stats.wins}W / ${stats.losses}L · PnL net ${stats.pnl>=0?'+':''}${stats.pnl.toFixed(0)}$`}
-                  </div>
-                  {stats.wins+stats.losses>0&&(
-                    <div style={{height:'3px',background:'var(--bg3)',borderRadius:'2px',marginTop:'4px'}}>
-                      <div style={{height:'100%',width:`${Math.min(100,stats.wr)}%`,background:stats.wr>=60?'var(--up)':stats.wr>=40?'var(--gold)':'var(--dn)',borderRadius:'2px',transition:'width .5s'}}/>
-                    </div>
-                  )}
-                </div>
-                <div className="cbi">
-                  <div className="cbi-l">Source Prix {priceSource==='real'?<span style={{color:'var(--up)',fontSize:'8px',marginLeft:'4px'}}>● LIVE</span>:<span style={{color:'var(--gold)',fontSize:'8px',marginLeft:'4px'}}>● SIM</span>}</div>
-                  <div className="cbi-v mono cgold">{balance.toFixed(2)} $</div>
-                  <div className="cbi-s">Balance {apiOk?'(Binance)':'(Démo)'} · Frais: {(stats.totalFees||0).toFixed(2)}$</div>
-                </div>
-                <div className="cbi">
-                  <div className="cbi-l">Positions</div>
-                  <div className={`cbi-v mono ${openPos.length>0?'cup':'tx2'}`}>{openPos.length}/{getMaxPos()}</div>
-                  <div className="cbi-s">{balance<200?'Marge faible → 1 pos max':'Capacité normale'}</div>
-                </div>
-              </div>
+              )}
 
-              {/* COMPTE BINANCE BALANCE si connecté */}
+              {/* ④ BINANCE CONNECTÉ */}
               {apiOk&&apiFuturesBalance&&(
-                <div className="balance-card">
+                <div className="balance-card dash-anim-3">
                   <div className="balance-card-title">🔌 Compte Binance Futures Connecté</div>
                   <div className="balance-card-val">{apiFuturesBalance.toFixed(2)} USDT</div>
                   <div className="balance-card-sub">Solde disponible · Mis à jour à chaque connexion API</div>
                   <div className="balance-margin-row">
-                    <div className="balance-mini">
-                      <div className="balance-mini-val cup">{(apiFuturesBalance*0.8).toFixed(2)}$</div>
-                      <div className="balance-mini-lbl">Marge dispo</div>
-                    </div>
-                    <div className="balance-mini">
-                      <div className="balance-mini-val cgold">{(balance*risk/100).toFixed(2)}$</div>
-                      <div className="balance-mini-lbl">Risque/trade</div>
-                    </div>
-                    <div className="balance-mini">
-                      <div className="balance-mini-val cdn">{calcFeesForTrade(balance*risk/100*leverage).toFixed(3)}$</div>
-                      <div className="balance-mini-lbl">Frais est.</div>
-                    </div>
+                    <div className="balance-mini"><div className="balance-mini-val cup">{(apiFuturesBalance*0.8).toFixed(2)}$</div><div className="balance-mini-lbl">Marge dispo</div></div>
+                    <div className="balance-mini"><div className="balance-mini-val cgold">{(balance*risk/100).toFixed(2)}$</div><div className="balance-mini-lbl">Risque/trade</div></div>
+                    <div className="balance-mini"><div className="balance-mini-val cdn">{calcFeesForTrade(balance*risk/100*leverage).toFixed(3)}$</div><div className="balance-mini-lbl">Frais est.</div></div>
                   </div>
                 </div>
               )}
 
-              {/* 2 cols: bot + api */}
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
-                <div className="ctrl-card">
-                  <div className="ctrl-card-title">🤖 Contrôle du Bot</div>
-                  <div className="ctrl-mode-row">
-                    {['Démo','Réel'].map(m=>(
-                      <button key={m}
-                        className={`ctrl-mode-btn${(m==='Démo'&&botDemo)||(m==='Réel'&&!botDemo)?' act':''}`}
-                        onClick={()=>{
-                          if(m==='Réel'&&!discAccepted){setShowDisc(true);return;}
-                          setBotDemo(m==='Démo');
-                          log(m==='Réel'?'⚡ Mode Réel activé':'🎮 Mode Démo activé','wrn');
-                        }}>
-                        {m==='Démo'?'🎮 DÉMO':'⚡ RÉEL'}
-                      </button>
-                    ))}
-                  </div>
-                  <button className={`ctrl-big-btn ${botOn?'ctrl-stop':'ctrl-start'}`}
-                    onClick={()=>{
-                      setBotOn(!botOn);
-                      log(botOn?'⏹ Bot arrêté':'▶ Bot démarré',botOn?'wrn':'up');
-                      if(!botOn) toast('Bot démarré !','success');
-                    }}>
-                    <span style={{fontSize:'28px'}}>{botOn?'⏹':'▶'}</span>
-                    <span>{botOn?'ARRÊTER LE BOT':'DÉMARRER LE BOT'}</span>
-                  </button>
-                  <div className={`ctrl-status ${botOn?'live':''}`}>
-                    {botOn?`● Bot actif — ${botDemo?'DÉMO':'RÉEL'} — ${openPos.length}/${getMaxPos()} pos · Max ${getMaxPos()} (selon marge)`: '○ Bot inactif'}
-                  </div>
-                  <div style={{marginTop:'12px',background:'rgba(240,185,11,.06)',border:'1px solid rgba(240,185,11,.15)',borderRadius:'7px',padding:'9px 11px',fontSize:'10px',color:'var(--tx1)'}}>
-                    <b style={{color:'var(--gold)'}}>🔒 SL Follower:</b> S'active à <b style={{color:'var(--up)'}}>RR {SL_TRAIL_ACTIVATION_RR}.0</b> — Break-even garanti<br/>
-                    <b style={{color:'var(--dn)'}}>⚡ Frais Binance:</b> ~{(BINANCE_TAKER_FEE*200).toFixed(2)}% déductés automatiquement<br/>
-                    <b style={{color:'var(--bl)'}}>📊 Max positions:</b> {getMaxPos()} (solde {balance.toFixed(0)}$)
-                  </div>
-                  <div style={{marginTop:'8px'}}>
-                    <div style={{display:'flex',justifyContent:'space-between',fontSize:'10px',color:'var(--tx2)',marginBottom:'4px'}}>
-                      <span>Score minimum signaux</span>
-                      <span style={{color:'var(--gold)',fontFamily:"'JetBrains Mono',monospace"}}>{scoreMin}/100</span>
-                    </div>
-                    <input type="range" min="60" max="90" value={scoreMin} onChange={e=>setScoreMin(+e.target.value)} className="slider"/>
-                  </div>
-                  {botDemo&&(
-                    <div style={{marginTop:'10px',background:'rgba(240,185,11,.06)',border:'1px solid rgba(240,185,11,.25)',borderRadius:'7px',padding:'9px 11px'}}>
-                      <div style={{fontSize:'9px',color:'var(--gold)',fontWeight:700,letterSpacing:'1px',marginBottom:'6px'}}>💰 SOLDE DÉMO</div>
-                      <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
-                        <input type="number" min="100" max="100000" step="100"
-                          style={{flex:1,background:'var(--bg3)',border:'1px solid var(--bd2)',borderRadius:'5px',padding:'6px 8px',color:'var(--gold)',fontFamily:"'JetBrains Mono',monospace",fontSize:'14px',fontWeight:700,outline:'none'}}
-                          defaultValue={Math.round(balance)}
-                          onBlur={e=>{const v=parseFloat(e.target.value);if(v>=100){setBalance(v);lsS('ab24_bal',v);toast(`Solde démo → ${v.toFixed(0)}$`,'success');}}}
-                          onKeyDown={e=>{if(e.key==='Enter'){const v=parseFloat(e.target.value);if(v>=100){setBalance(v);lsS('ab24_bal',v);toast(`Solde démo → ${v.toFixed(0)}$`,'success');e.target.blur();}}}}
-                        />
-                        <span style={{color:'var(--tx2)',fontSize:'12px',fontFamily:"'JetBrains Mono',monospace"}}>$</span>
-                      </div>
-                      <div style={{display:'flex',gap:'4px',marginTop:'6px',flexWrap:'wrap'}}>
-                        {[500,1000,5000,10000].map(v=>(
-                          <button key={v} onClick={()=>{setBalance(v);lsS('ab24_bal',v);toast(`Solde démo → ${v}$`,'success');}}
-                            style={{flex:1,padding:'4px 2px',background:'var(--bg3)',border:'1px solid var(--bd)',borderRadius:'4px',color:'var(--tx1)',fontSize:'9px',cursor:'pointer',fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>
-                            {v}$
-                          </button>
-                        ))}
-                      </div>
-                      <button onClick={()=>{setStats({wins:0,losses:0,pnl:0,wr:0,totalFees:0});lsS('ab24_stats',{wins:0,losses:0,pnl:0,wr:0,totalFees:0});toast('Stats réinitialisées','success');}}
-                        style={{width:'100%',marginTop:'6px',padding:'4px',background:'rgba(246,70,93,.08)',border:'1px solid rgba(246,70,93,.2)',borderRadius:'4px',color:'var(--dn)',fontSize:'9px',cursor:'pointer',fontWeight:600}}>
-                        🗑 Reset stats (Win Rate)
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* API BINANCE */}
-                <div className="ctrl-card">
-                  <div className="ctrl-card-title">🔌 Connexion Binance Futures</div>
-                  <div className={`api-status-badge ${apiOk?'api-badge-on':'api-badge-off'}`}>
-                    <span style={{fontSize:'20px'}}>{apiOk?'✅':'🔴'}</span>
-                    <div>
-                      <div style={{fontWeight:700,fontSize:'14px'}}>{apiOk?'CONNECTÉ':'NON CONNECTÉ'}</div>
-                      <div style={{fontSize:'10px',opacity:.7}}>
-                        {apiOk?`Binance Futures active${apiFuturesBalance?` · ${apiFuturesBalance.toFixed(2)} USDT`:''}` : 'Entrez vos clés API'}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="fld" style={{marginBottom:'8px'}}>
-                    <div className="flbl">API Key</div>
-                    <input className="inp" type="password" placeholder="Votre API Key Binance" value={apiKey} onChange={e=>setApiKey(e.target.value)} style={{fontSize:'11px'}}/>
-                  </div>
-                  <div className="fld" style={{marginBottom:'10px'}}>
-                    <div className="flbl">Secret Key</div>
-                    <input className="inp" type="password" placeholder="Votre Secret Key Binance" value={apiSec} onChange={e=>setApiSec(e.target.value)} style={{fontSize:'11px'}}/>
-                  </div>
-                  <button className="btn btn-gold btn-full" onClick={()=>{if(!discAccepted)setShowDisc(true);else testApi();}} disabled={apiLoad}>
-                    {apiLoad?'⏳ Connexion…':'🔌 Connecter à Binance'}
-                  </button>
-                  {apiMsg&&<div className={`api-res ${apiOk?'ar-ok':'ar-err'}`} style={{marginTop:'8px'}}>{apiMsg}</div>}
-                  <div className="hint" style={{marginTop:'6px'}}>
-                    ⚠️ Permissions requises : <b>Futures Read + Trade</b> uniquement. <span style={{color:'var(--dn)'}}>Jamais de retrait.</span>
-                    {apiOk&&<><br/>✅ <b>Le solde réel Binance remplace le solde de test</b> une fois connecté.</>}
-                  </div>
-                </div>
-              </div>
-
-              {/* POSITIONS EN COURS */}
-              <div>
+              {/* ⑤ POSITIONS EN COURS */}
+              <div className="dash-anim-4">
                 <div className="sec-head">
                   <div className="sec-title">
                     <div className="sec-dot" style={{background:openPos.length>0?'var(--up)':'var(--tx2)'}}/>
@@ -1704,9 +2354,9 @@ function App() {
                 )}
               </div>
 
-              {/* SIGNAUX DISPONIBLES */}
+              {/* ⑥ SIGNAUX */}
               {setups.length>0&&(
-                <div>
+                <div className="dash-anim-5">
                   <div className="sec-head">
                     <div className="sec-title"><div className="sec-dot" style={{background:'var(--gold)'}}/>Signaux disponibles</div>
                     <button className="chart-btn" onClick={()=>setPage('signals')}>Voir détails →</button>
@@ -1716,7 +2366,7 @@ function App() {
                       const pr=prices[s.pair]||{price:0,prev:0};
                       const col=s.score>=82?'var(--up)':s.score>=72?'var(--gold)':'var(--bl)';
                       return (
-                        <div key={s.id} style={{background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'8px',padding:'10px 14px',display:'flex',alignItems:'center',gap:'12px',cursor:'pointer',transition:'border-color .15s'}}
+                        <div key={s.id} className="sig-row-hover" style={{background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'8px',padding:'10px 14px',display:'flex',alignItems:'center',gap:'12px',cursor:'pointer'}}
                           onMouseEnter={e=>e.currentTarget.style.borderColor='var(--gold)'}
                           onMouseLeave={e=>e.currentTarget.style.borderColor='var(--bd)'}>
                           <span className={`sc-side ${s.side==='BUY'?'sl':'ss'}`} style={{flexShrink:0}}>{s.side==='BUY'?'L':'S'}</span>
@@ -1743,10 +2393,78 @@ function App() {
                 </div>
               )}
 
-              {/* JOURNAL */}
-              <div className="log-wrap">
+              {/* ⑦ BOT + API — en bas */}
+              <div className="dash-anim-6" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
+                <div className="ctrl-card">
+                  <div className="ctrl-card-title">🤖 Contrôle du Bot</div>
+                  <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 12px',borderRadius:'8px',border:'1px solid',marginBottom:'12px',background:botDemo?'rgba(240,185,11,.07)':'rgba(14,203,129,.07)',borderColor:botDemo?'rgba(240,185,11,.3)':'rgba(14,203,129,.3)'}}>
+                    <span style={{fontSize:'16px'}}>{botDemo?'🎮':'⚡'}</span>
+                    <div>
+                      <div style={{fontWeight:700,fontSize:'12px',color:botDemo?'var(--gold)':'var(--up)'}}>{botDemo?'MODE DÉMO':'MODE RÉEL'}</div>
+                      <div style={{fontSize:'9px',color:'var(--tx2)'}}>Modifier via le toggle en haut</div>
+                    </div>
+                  </div>
+                  <button className={`ctrl-big-btn ${botOn?'ctrl-stop':'ctrl-start'}`}
+                    onClick={()=>{
+                      setBotOn(!botOn);
+                      log(botOn?'⏹ Bot arrêté':'▶ Bot démarré',botOn?'wrn':'up');
+                      if(!botOn) toast('Bot démarré !','success');
+                    }}>
+                    <span style={{fontSize:'28px'}}>{botOn?'⏹':'▶'}</span>
+                    <span>{botOn?'ARRÊTER LE BOT':'DÉMARRER LE BOT'}</span>
+                  </button>
+                  <div className={`ctrl-status ${botOn?'live':''}`}>
+                    {botOn?`● Bot actif — ${botDemo?'DÉMO':'RÉEL'} — ${openPos.length}/${getMaxPos()} pos`: '○ Bot inactif'}
+                  </div>
+                  <div style={{marginTop:'8px'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',fontSize:'10px',color:'var(--tx2)',marginBottom:'4px'}}>
+                      <span>Score minimum signaux</span>
+                      <span style={{color:'var(--gold)',fontFamily:"'JetBrains Mono',monospace"}}>{scoreMin}/100</span>
+                    </div>
+                    <input type="range" min="60" max="90" value={scoreMin} onChange={e=>setScoreMin(+e.target.value)} className="slider"/>
+                  </div>
+                  <div style={{marginTop:'8px',padding:'8px',background:'var(--bg3)',borderRadius:'6px',border:'1px solid var(--bd)'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',fontSize:'10px',color:'var(--tx2)',marginBottom:'4px'}}>
+                      <span>Marge max / trade</span>
+                      <span style={{color:'var(--gold)',fontFamily:"'JetBrains Mono',monospace"}}>{maxMargin}$</span>
+                    </div>
+                    <input type="range" min="5" max="1000" step="5" value={maxMargin} onChange={e=>{setMaxMargin(+e.target.value);lsS('ab24_maxmargin',+e.target.value);}} className="slider"/>
+                  </div>
+                </div>
+
+                <div className="ctrl-card">
+                  <div className="ctrl-card-title">🔌 Connexion Binance Futures</div>
+                  <div className={`api-status-badge ${apiOk?'api-badge-on':'api-badge-off'}`}>
+                    <span style={{fontSize:'20px'}}>{apiOk?'✅':'🔴'}</span>
+                    <div>
+                      <div style={{fontWeight:700,fontSize:'14px'}}>{apiOk?'CONNECTÉ':'NON CONNECTÉ'}</div>
+                      <div style={{fontSize:'10px',opacity:.7}}>
+                        {apiOk?`Binance Futures${apiFuturesBalance?` · ${apiFuturesBalance.toFixed(2)} USDT`:''}` : 'Entrez vos clés API'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="fld" style={{marginBottom:'8px'}}>
+                    <div className="flbl">API Key</div>
+                    <input className="inp" type="password" placeholder="Votre API Key Binance" value={apiKey} onChange={e=>setApiKey(e.target.value)} style={{fontSize:'11px'}}/>
+                  </div>
+                  <div className="fld" style={{marginBottom:'10px'}}>
+                    <div className="flbl">Secret Key</div>
+                    <input className="inp" type="password" placeholder="Votre Secret Key Binance" value={apiSec} onChange={e=>setApiSec(e.target.value)} style={{fontSize:'11px'}}/>
+                  </div>
+                  <button className="btn btn-gold btn-full" onClick={()=>{if(!discAccepted)setShowDisc(true);else testApi();}} disabled={apiLoad}>
+                    {apiLoad?'⏳ Connexion…':'🔌 Connecter à Binance'}
+                  </button>
+                  {apiMsg&&<div className={`api-res ${apiOk?'ar-ok':'ar-err'}`} style={{marginTop:'8px'}}>{apiMsg}</div>}
+                  <div className="hint" style={{marginTop:'6px'}}>
+                    ⚠️ Permissions : <b>Futures Read + Trade</b> uniquement. <span style={{color:'var(--dn)'}}>Jamais de retrait.</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ⑧ JOURNAL */}
+              <div className="log-wrap dash-anim-7">
                 <div className="log-hd">
-                  <div className="log-hd-t">◎ Journal (avec frais Binance)</div>
+                  <div className="log-hd-t">◎ Journal (frais Binance déduits)</div>
                   {botOn&&<span className="f9 cup">● {openPos.length}/{getMaxPos()}</span>}
                 </div>
                 <div className="log-body">
@@ -1759,13 +2477,19 @@ function App() {
 
             {/* ═════ SIGNALS ═════ */}
             {page==='signals'&&<>
+              <div style={{background:'rgba(14,203,129,.06)',border:'1px solid rgba(14,203,129,.2)',borderRadius:'8px',padding:'10px 14px',display:'flex',alignItems:'center',gap:'10px',fontSize:'10px',color:'var(--up)'}}>
+                <span style={{fontSize:'18px'}}>📡</span>
+                <div>
+                  <b>Signaux SPOT Binance — Prix réels {priceSource==='LIVE'?'● LIVE':'(simulation)'}.</b> Ces signaux sont générés algorithmiquement à partir d'indicateurs techniques en temps réel. <span style={{color:'var(--gold)'}}>Ils ne constituent pas des conseils financiers.</span>
+                </div>
+              </div>
               <div className="soon-banner">
                 <div className="soon-text">🔔 <b>Version Payante :</b> Signaux Premium · Entries précises · Alertes Telegram</div>
                 <div className="soon-badge">COMING SOON</div>
               </div>
               <div>
                 <div className="sec-head">
-                  <div className="sec-title"><div className="sec-dot" style={{background:'var(--gold)'}}/>Top Signaux — Score 100% → Preuves complètes</div>
+                  <div className="sec-title"><div className="sec-dot" style={{background:'var(--gold)'}}/>Signaux SPOT — Score complet · Preuves complètes</div>
                   <span className="f10 tx2">{setups.length}/{MAX_SETUPS}</span>
                 </div>
                 <div className="setups-grid">
@@ -1922,9 +2646,42 @@ function App() {
 
             {/* ═════ CANAL ═════ */}
             {page==='canal'&&(
-              <div>
+              <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
                 <div className="sec-head">
-                  <div className="sec-title"><div className="sec-dot" style={{background:'var(--purple)'}}/>Communauté AlphaBot</div>
+                  <div className="sec-title"><div className="sec-dot" style={{background:'var(--purple)'}}/>Communauté AlphaBot Pro</div>
+                </div>
+
+                {/* LEGAL DISCLAIMER — PROMINENT */}
+                <div style={{background:'rgba(240,185,11,.06)',border:'1px solid rgba(240,185,11,.25)',borderRadius:'10px',padding:'14px 16px'}}>
+                  <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:800,fontSize:'12px',letterSpacing:'1px',color:'var(--gold)',marginBottom:'7px'}}>⚖️ AVERTISSEMENT LÉGAL — À LIRE OBLIGATOIREMENT</div>
+                  <div style={{fontSize:'10px',color:'var(--tx1)',lineHeight:'1.8'}}>
+                    Les signaux, analyses et performances affichés sur AlphaBot Pro sont fournis à titre <b style={{color:'var(--gold)'}}>purement informatif</b> et ne constituent en aucun cas un <b>conseil en investissement, une recommandation financière ou une offre d'achat/vente de valeurs mobilières</b> au sens de la directive MiFID II ou de toute réglementation applicable.
+                    <br/><br/>
+                    <b style={{color:'var(--dn)'}}>Les performances passées ne préjugent pas des performances futures.</b> Le trading sur les marchés de crypto-actifs comporte un risque élevé de perte partielle ou totale en capital. AlphaBot Pro et ses opérateurs <b>déclinent toute responsabilité</b> quant aux pertes financières résultant de l'utilisation de cette plateforme.
+                    <br/><br/>
+                    En utilisant AlphaBot Pro, vous reconnaissez avoir pris connaissance de ces risques et être seul responsable de vos décisions de trading.
+                  </div>
+                </div>
+
+                {/* PDF DOWNLOAD */}
+                <div style={{background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'10px',padding:'16px'}}>
+                  <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:'13px',letterSpacing:'1px',color:'var(--tx1)',marginBottom:'12px'}}>📥 GUIDES & RESSOURCES — Télécharger</div>
+                  <div style={{display:'flex',flexDirection:'column',gap:'10px'}}>
+                    {[
+                      {icon:'📘',title:'Guide Complet AlphaBot Pro',desc:'Installation · Configuration API Binance · Stratégies · Gestion du risque · FAQ',color:'var(--bl)',content:generateGuideHTML()},
+                      {icon:'⚠️',title:'Document Risques & Avertissements',desc:'Obligations légales · Risques du trading crypto · Conditions d\'utilisation',color:'var(--gold)',content:generateRisksHTML()},
+                      {icon:'🔧',title:'Guide Déploiement VPS / Netlify',desc:'Déployer AlphaBot Pro en ligne en 10 minutes · Hébergement gratuit',color:'var(--up)',content:generateDeployHTML()},
+                    ].map((doc,i)=>(
+                      <div key={i} className="pdf-card" onClick={()=>downloadDoc(doc)}>
+                        <span className="pdf-icon">{doc.icon}</span>
+                        <div className="pdf-info" style={{flex:1}}>
+                          <div className="title" style={{color:doc.color}}>{doc.title}</div>
+                          <div className="sub">{doc.desc}</div>
+                        </div>
+                        <button className="pdf-btn">⬇ PDF</button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 {/* TikTok Challenge Banner */}
@@ -1932,24 +2689,24 @@ function App() {
                   <div className="tt-icon">🎯</div>
                   <div className="tt-text">
                     <div className="title">CHALLENGE <span>TIKTOK</span> — 4H POUR LANCER LE BOT</div>
-                    <div className="sub">Rejoins le challenge en direct ce soir — lance le site en 4h et fais exploser ton capital 🚀<br/>Partage ton résultat avec #AlphaBotPro</div>
+                    <div className="sub">Rejoins le challenge en direct — lance le site en 4h · #AlphaBotPro</div>
                   </div>
-                  <button className="tt-btn" onClick={()=>window.open('https://tiktok.com','_blank')}>
+                  <button className="tt-btn" onClick={()=>window.open('https://tiktok.com/@alphabotpro','_blank')}>
                     📱 VOIR LE LIVE
                   </button>
                 </div>
 
-                <div className="canal-card" style={{marginTop:'12px'}}>
+                <div className="canal-card">
                   <div className="canal-title">REJOINS LA <span>COMMUNAUTÉ</span></div>
                   <div className="canal-desc">
-                    Accède aux signaux premium, aux analyses en direct, aux alertes Telegram et aux vidéos TikTok exclusives sur le trading crypto avec AlphaBot Pro.
+                    Signaux premium en temps réel · Analyses de marchés · Alertes Telegram · Tutoriels exclusifs.
                   </div>
                   <div className="canal-links">
                     <a className="canal-link canal-tg" href="https://t.me/alphabotpro" target="_blank" rel="noopener">
                       <span className="canal-link-icon">✈️</span>
                       <div className="canal-link-info">
                         <div className="title">TELEGRAM — Canal Signaux</div>
-                        <div className="sub">Alertes en temps réel · Signaux premium · Analyses</div>
+                        <div className="sub">Alertes temps réel · Signaux premium · Analyses</div>
                       </div>
                       <span className="canal-link-arrow">→</span>
                     </a>
@@ -1957,7 +2714,7 @@ function App() {
                       <span className="canal-link-icon">🎵</span>
                       <div className="canal-link-info">
                         <div className="title">TIKTOK — @alphabotpro</div>
-                        <div className="sub">Vidéos trading · Challenge 4H · Résultats en live</div>
+                        <div className="sub">Vidéos trading · Challenge 4H · Résultats live</div>
                       </div>
                       <span className="canal-link-arrow">→</span>
                     </a>
@@ -1965,34 +2722,17 @@ function App() {
                       <span className="canal-link-icon">▶️</span>
                       <div className="canal-link-info">
                         <div className="title">YOUTUBE — Tutoriels</div>
-                        <div className="sub">Déploiement VPS · Configuration API · Stratégies</div>
+                        <div className="sub">Déploiement · Configuration API · Stratégies</div>
                       </div>
                       <span className="canal-link-arrow">→</span>
                     </a>
                   </div>
                 </div>
-
-                <div style={{marginTop:'12px',background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'10px',padding:'16px'}}>
-                  <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:'13px',letterSpacing:'1px',marginBottom:'12px',color:'var(--tx1)'}}>📱 DÉPLOIEMENT ANDROID — Ce soir en 4H</div>
-                  {[
-                    {step:'1',title:'Télécharger le fichier HTML','desc':'Copier alphabot_pro_v24_fixed.html sur ton téléphone','time':'5 min','icon':'📥'},
-                    {step:'2',title:'Ouvrir avec Chrome Android','desc':'Appuyer longuement → Ouvrir avec → Chrome','time':'1 min','icon':'🌐'},
-                    {step:'3',title:'Installer PWA sur écran d\'accueil','desc':'Chrome → ⋮ → Ajouter à l\'écran d\'accueil','time':'2 min','icon':'📱'},
-                    {step:'4',title:'Optionnel: VPS pour API réelle','desc':'Netlify Drop (glisser le .html) — gratuit et instantané','time':'10 min','icon':'🚀'},
-                    {step:'5',title:'Configurer les clés API Binance','desc':'Binance App → API Management → Futures Read+Trade','time':'5 min','icon':'🔑'},
-                  ].map(s=>(
-                    <div key={s.step} style={{display:'flex',gap:'12px',padding:'10px 0',borderBottom:'1px solid var(--bd)'}}>
-                      <div style={{width:'28px',height:'28px',borderRadius:'50%',background:'rgba(240,185,11,.1)',border:'1px solid rgba(240,185,11,.2)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'12px',fontWeight:700,fontFamily:"'JetBrains Mono',monospace",color:'var(--gold)'}}>{s.step}</div>
-                      <div style={{flex:1}}>
-                        <div style={{fontSize:'12px',fontWeight:700}}>{s.icon} {s.title}</div>
-                        <div style={{fontSize:'10px',color:'var(--tx2)',marginTop:'2px'}}>{s.desc}</div>
-                      </div>
-                      <div style={{fontSize:'9px',color:'var(--gold)',fontFamily:"'JetBrains Mono',monospace",whiteSpace:'nowrap'}}>{s.time}</div>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
+
+            {/* ═════ ABONNEMENT / DEPOT CRYPTO ═════ */}
+            {page==='abonnement'&&<AbonnementPage user={user} toast={toast}/>}
 
             {/* ═════ ACCOUNT ═════ */}
             {page==='account'&&(
@@ -2009,17 +2749,40 @@ function App() {
                 leverage={leverage} setLeverage={setLeverage}
                 balance={balance} setBalance={setBalance}
                 scoreMin={scoreMin} setScoreMin={setScoreMin}
+                maxMargin={maxMargin} setMaxMargin={setMaxMargin}
                 totalUsers={totalUsers} stats={stats}
                 log={log} toast={toast}
               />
             )}
+
+            {/* LEGAL FOOTER */}
+            <div style={{marginTop:'8px',padding:'10px 14px',background:'var(--bg3)',border:'1px solid var(--bd)',borderRadius:'8px',fontSize:'9px',color:'var(--tx2)',lineHeight:'1.6',textAlign:'center'}}>
+              ⚖️ <b>AlphaBot Pro</b> est un outil d'analyse informatif uniquement · Les signaux ne constituent pas des conseils financiers · Les performances passées ne préjugent pas des performances futures · Trading à risque élevé de perte en capital · Vous êtes seul(e) responsable de vos décisions
+            </div>
 
           </div>
         </div>
       </div>
 
       {/* CHART MODAL */}
-      {modal==='chart'&&(\n        <div className="modal-bg" onClick={()=>setModal(null)}>\n          <div className="chart-modal" onClick={e=>e.stopPropagation()}>\n            <div className="chart-hd">\n              <div className="chart-title">{chartPair.replace('USDT','')} <span style={{fontSize:'10px',color:'var(--tx2)'}}>/ USDT</span></div>\n              <div className="chart-tfs">\n                {[['1','M1'],['5','M5'],['15','M15'],['60','H1'],['240','H4'],['D','D1'],['W','W1']].map(([v,l])=>(\n                  <button key={v} className={`tft${chartTf===v?' act':''}`} onClick={()=>setChartTf(v)}>{l}</button>\n                ))}\n              </div>\n              <div style={{display:'flex',gap:'6px',alignItems:'center'}}>\n                <span style={{fontSize:'9px',color:'var(--tx2)'}}>📊 TradingView</span>\n                <div className="xbtn" onClick={()=>setModal(null)}>✕</div>\n              </div>\n            </div>\n            <iframe className="chart-iframe"\n              src={`https://www.tradingview.com/widgetembed/?symbol=BINANCE%3A${chartPair}&interval=${chartTf}&theme=${theme}&style=1&locale=fr&toolbar_bg=${theme==='dark'?'13181f':'ffffff'}&hide_side_toolbar=0&allow_symbol_change=1&save_image=1&withdateranges=1&studies=RSI%40tv-basicstudies%1FBB%40tv-basicstudies%1FMACD%40tv-basicstudies&studies_overrides=%7B%7D`}\n              allowFullScreen allowTransparency/>\n          </div>\n        </div>\n      )}
+      {modal==='chart'&&(
+        <div className="modal-bg" onClick={()=>setModal(null)}>
+          <div className="chart-modal" onClick={e=>e.stopPropagation()}>
+            <div className="chart-hd">
+              <div className="chart-title">{chartPair}</div>
+              <div className="chart-tfs">
+                {[['1','M1'],['5','M5'],['15','M15'],['60','H1'],['240','H4'],['D','D1'],['W','W1']].map(([v,l])=>(
+                  <button key={v} className={`tft${chartTf===v?' act':''}`} onClick={()=>setChartTf(v)}>{l}</button>
+                ))}
+              </div>
+              <div className="xbtn" onClick={()=>setModal(null)}>✕</div>
+            </div>
+            <iframe className="chart-iframe"
+              src={`https://www.tradingview.com/widgetembed/?symbol=BINANCE%3A${chartPair}&interval=${chartTf}&theme=${theme}&style=1&locale=fr&toolbar_bg=${theme==='dark'?'13181f':'ffffff'}&hide_side_toolbar=0&allow_symbol_change=1&save_image=1&withdateranges=1&studies=RSI%40tv-basicstudies%1FBB%40tv-basicstudies%1FMACD%40tv-basicstudies`}
+              allowFullScreen allowTransparency/>
+          </div>
+        </div>
+      )}
 
       {/* SETTINGS MODAL */}
       {modal==='settings'&&(
@@ -2158,7 +2921,7 @@ function PosCard({pos, prices, onChart, leverage}) {
           <span className={`sc-side ${pos.side==='BUY'?'sl':'ss'}`}>{pos.side==='BUY'?'L':'S'}</span>
           <span className="pc-pair">{pos.pair.replace('USDT','')}/USDT</span>
         </div>
-        <span className="pc-pnl" style={{color:pnl>=0?'var(--up)':'var(--dn)'}}>{pnl>=0?'+':''}{pnl.toFixed(2)}$</span>
+        <span className={`pc-pnl ${pnl>=0?'pnl-live-up':'pnl-live-dn'}`} style={{color:pnl>=0?'var(--up)':'var(--dn)'}}>{pnl>=0?'+':''}{pnl.toFixed(2)}$</span>
       </div>
       <div className="pc-body">
         <div className="pr"><span className="l">Entrée</span><span className="r mono">{fmtP(pos.entry)}</span></div>
@@ -2230,17 +2993,18 @@ function AccountPage({user,balance,setBalance,stats,risk,setUser,onCopy,refLink,
           )}
           <div className="sep"/>
           {[
-            ['Balance actuelle',`${balance.toFixed(2)} $`],
-            ['Win Rate (net)', `${stats.wr}%`],
-            ['Trades total',   stats.wins+stats.losses],
-            ['Gagnants',       `${stats.wins} ✅`],
-            ['Perdants',       `${stats.losses} ❌`],
-            ['PnL net total',  `${stats.pnl>=0?'+':''}${stats.pnl.toFixed(2)} $`],
-            ['Frais Binance cumulés',`-${(stats.totalFees||0).toFixed(2)} $`],
-            ['Risque/trade',   `${risk.toFixed(2)}%`],
-            ['Parrainages',    `${refCount} utilisateurs`],
-          ].map(([l,v])=>(
-            <div key={l} className="arow"><span className="l">{l}</span><span className="r">{v}</span></div>
+            ['Balance actuelle',`${balance.toFixed(2)} $`, balance>=1000?'cup':'cgold'],
+            ['Win Rate (net)', stats.wins+stats.losses===0?'—':stats.wr+'%', stats.wr>=60?'cup':stats.wr>=40?'cgold':'cdn'],
+            ['Trades total',   stats.wins+stats.losses, ''],
+            ['Gagnants ✅',    stats.wins, 'cup'],
+            ['Perdants ❌',    stats.losses, 'cdn'],
+            ['PnL BRUT',      `${(stats.pnl+(stats.totalFees||0))>=0?'+':''}${(stats.pnl+(stats.totalFees||0)).toFixed(2)} $`, (stats.pnl+(stats.totalFees||0))>=0?'cup':'cdn'],
+            ['Frais Binance', `-${(stats.totalFees||0).toFixed(2)} $`, 'cdn'],
+            ['PnL NET réel',  `${stats.pnl>=0?'+':''}${stats.pnl.toFixed(2)} $`, stats.pnl>=0?'cup':'cdn'],
+            ['Risque/trade',  `${risk.toFixed(2)}%`, ''],
+            ['Parrainages',   `${refCount} utilisateurs`, ''],
+          ].map(([l,v,cls])=>(
+            <div key={l} className="arow"><span className="l">{l}</span><span className={`r mono bold ${cls}`}>{v}</span></div>
           ))}
           <div className="sep"/>
           {editBal?(
@@ -2333,20 +3097,211 @@ function AccountPage({user,balance,setBalance,stats,risk,setUser,onCopy,refLink,
 }
 
 /* ═══════════════════════════════════════════════
+   ABONNEMENT / DEPOT CRYPTO
+═══════════════════════════════════════════════ */
+const PLANS = [
+  { id:'starter', name:'Starter', price:9, desc:'Accès signaux · 20 paires · Email alerts', color:'var(--bl)' },
+  { id:'pro', name:'Pro', price:29, desc:'Tout Starter + Bot auto · API Binance · Priorité signaux', color:'var(--gold)', popular:true },
+  { id:'elite', name:'Elite', price:79, desc:'Tout Pro + VIP Telegram · Coaching · Analytics avancées', color:'var(--purple)' },
+];
+
+const WALLETS = {
+  USDT_TRC20: { label:'USDT (TRC-20 / Tron)', symbol:'TRX', icon:'🟢', addr:'ADRESSE FOURNIE PAR TELEGRAM @alphabotpro', network:'Tron (TRC-20) — Frais ultra-bas', color:'#26a17b' },
+  USDT_MATIC:  { label:'USDT (Polygon / MATIC)', symbol:'MATIC', icon:'🟣', addr:'ADRESSE FOURNIE PAR TELEGRAM @alphabotpro', network:'Polygon (MATIC) — Frais quasi-nuls', color:'#8247e5' },
+  USDT_ERC20:  { label:'USDT (ERC-20 / Ethereum)', symbol:'ETH', icon:'🔷', addr:'ADRESSE FOURNIE PAR TELEGRAM @alphabotpro', network:'Ethereum (ERC-20) — Standard', color:'#627eea' },
+};
+
+function AbonnementPage({user, toast}) {
+  const [selectedPlan, setSelectedPlan] = useState('pro');
+  const [selectedWallet, setSelectedWallet] = useState('USDT_TRC20');
+  const [copied, setCopied] = useState(false);
+  const [step, setStep] = useState('plan'); // 'plan' | 'pay' | 'confirm'
+  const [txHash, setTxHash] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+
+  const plan = PLANS.find(p=>p.id===selectedPlan);
+  const wallet = WALLETS[selectedWallet];
+
+  const copyAddr = () => {
+    copyUniversal(wallet.addr)
+      .then(()=>{ setCopied(true); setTimeout(()=>setCopied(false),2500); toast('Adresse copiée !','success',2000); })
+      .catch(()=>toast('Sélectionnez l\'adresse manuellement','warn'));
+  };
+
+  const submitTx = async () => {
+    if(txHash.length<10) return toast('Entrez un hash de transaction valide','error');
+    // Envoyer un email de confirmation à l'utilisateur
+    const subject = `AlphaBot Pro — Paiement ${plan.name} reçu`;
+    const body = `Paiement soumis\nPlan: ${plan.name} — ${plan.price} USDT/mois\nRéseau: ${wallet.label}\nTxID: ${txHash}\nCompte: ${user?.email}\nActivation sous 24h. Rejoignez notre Telegram @alphabotpro pour le suivi.`;
+    try {
+      await emailjs.send('service_t36sjs6','template_zf05y1a',{
+        to_email: user?.email,
+        subject,
+        code: txHash.substring(0,12)+'…',
+        app_name:'AlphaBot Pro — Paiement'
+      });
+    } catch(e) {}
+    setSubmitted(true);
+    toast('✅ Transaction soumise — confirmation email envoyée sous 24h','success',5000);
+  };
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
+
+      {/* CRITICAL WARNING */}
+      <div style={{background:'rgba(246,70,93,.08)',border:'2px solid rgba(246,70,93,.35)',borderRadius:'10px',padding:'14px 18px',display:'flex',alignItems:'flex-start',gap:'12px'}}>
+        <span style={{fontSize:'24px',flexShrink:0}}>⚠️</span>
+        <div>
+          <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:800,fontSize:'13px',color:'var(--dn)',marginBottom:'5px',letterSpacing:'.5px'}}>NE JAMAIS ENVOYER DE CRYPTO SANS CONFIRMATION</div>
+          <div style={{fontSize:'10px',color:'var(--tx1)',lineHeight:'1.7'}}>
+            L'adresse de dépôt vous sera <b style={{color:'var(--gold)'}}>communiquée directement via Telegram @alphabotpro</b> après avoir choisi votre plan. N'envoyez JAMAIS de fonds à une adresse non confirmée par notre équipe. Rejoignez le Telegram pour obtenir l'adresse officielle et sécurisée.
+          </div>
+          <a href="https://t.me/alphabotpro" target="_blank" rel="noopener" style={{display:'inline-block',marginTop:'8px',padding:'6px 14px',background:'rgba(0,136,204,.15)',border:'1px solid rgba(0,136,204,.4)',borderRadius:'6px',color:'#29a8dd',fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:'11px',textDecoration:'none'}}>
+            ✈️ Rejoindre @alphabotpro sur Telegram →
+          </a>
+        </div>
+      </div>
+
+      {/* Header */}
+      <div style={{background:'linear-gradient(135deg,rgba(124,58,237,.12),rgba(240,185,11,.08))',border:'1px solid rgba(124,58,237,.3)',borderRadius:'12px',padding:'18px 20px'}}>
+        <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:'18px',fontWeight:800,letterSpacing:'1.5px',marginBottom:'5px'}}>
+          💎 ALPHABOT PRO — <span style={{color:'var(--gold)'}}>ABONNEMENT</span>
+        </div>
+        <div style={{fontSize:'11px',color:'var(--tx1)',lineHeight:'1.6'}}>
+          Paiement direct en crypto · Pas de banque · Pas de KYC · Activation sous <b style={{color:'var(--up)'}}>24h max</b>
+        </div>
+      </div>
+
+      {/* Étape 1 : Choisir le plan */}
+      <div style={{background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'10px',overflow:'hidden'}}>
+        <div style={{padding:'12px 15px',background:'var(--bg3)',borderBottom:'1px solid var(--bd)',fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:'13px',letterSpacing:'1px',color:'var(--tx1)'}}>
+          ÉTAPE 1 — Choisir votre plan
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',padding:'14px'}}>
+          {PLANS.map(p=>(
+            <div key={p.id} onClick={()=>setSelectedPlan(p.id)}
+              style={{background:selectedPlan===p.id?`rgba(${p.id==='pro'?'240,185,11':p.id==='elite'?'124,58,237':'24,144,255'},.08)`:'var(--bg3)',border:`2px solid ${selectedPlan===p.id?p.color:'var(--bd)'}`,borderRadius:'10px',padding:'14px 12px',cursor:'pointer',transition:'all .2s',position:'relative'}}>
+              {p.popular&&<div style={{position:'absolute',top:'-8px',left:'50%',transform:'translateX(-50%)',background:'var(--gold)',color:'#000',fontSize:'8px',fontWeight:800,padding:'2px 10px',borderRadius:'20px',fontFamily:"'Rajdhani',sans-serif",letterSpacing:'1px',whiteSpace:'nowrap'}}>⭐ POPULAIRE</div>}
+              <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:800,fontSize:'14px',color:p.color,marginBottom:'4px'}}>{p.name}</div>
+              <div style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:'20px',color:'var(--tx0)',marginBottom:'6px'}}>{p.price}<span style={{fontSize:'11px',color:'var(--tx2)'}}> $/mois</span></div>
+              <div style={{fontSize:'9px',color:'var(--tx1)',lineHeight:'1.5'}}>{p.desc}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Étape 2 : Choisir le réseau */}
+      <div style={{background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'10px',overflow:'hidden'}}>
+        <div style={{padding:'12px 15px',background:'var(--bg3)',borderBottom:'1px solid var(--bd)',fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:'13px',letterSpacing:'1px',color:'var(--tx1)'}}>
+          ÉTAPE 2 — Choisir le réseau de paiement
+        </div>
+        <div style={{padding:'14px',display:'flex',flexDirection:'column',gap:'8px'}}>
+          {Object.entries(WALLETS).map(([key,w])=>(
+            <div key={key} onClick={()=>setSelectedWallet(key)}
+              style={{display:'flex',alignItems:'center',gap:'12px',padding:'12px 14px',background:selectedWallet===key?'rgba(240,185,11,.06)':'var(--bg3)',border:`1px solid ${selectedWallet===key?'rgba(240,185,11,.4)':'var(--bd)'}`,borderRadius:'8px',cursor:'pointer',transition:'all .2s'}}>
+              <span style={{fontSize:'22px'}}>{w.icon}</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:'12px',color:selectedWallet===key?'var(--gold)':'var(--tx0)'}}>{w.label}</div>
+                <div style={{fontSize:'9px',color:'var(--tx2)',marginTop:'2px'}}>{w.network}</div>
+              </div>
+              <div style={{width:'16px',height:'16px',borderRadius:'50%',border:`2px solid ${selectedWallet===key?'var(--gold)':'var(--bd)'}`,background:selectedWallet===key?'var(--gold)':'transparent',transition:'all .2s'}}/>
+            </div>
+          ))}
+          <div style={{background:'rgba(246,70,93,.05)',border:'1px solid rgba(246,70,93,.15)',borderRadius:'7px',padding:'9px 12px',fontSize:'9px',color:'var(--dn)',lineHeight:'1.6'}}>
+            ⚠️ <b>IMPORTANT :</b> Envoyez uniquement du <b>USDT</b> sur le réseau indiqué. Tout envoi sur le mauvais réseau sera perdu. TRC-20 recommandé (frais ~0.01$).
+          </div>
+        </div>
+      </div>
+
+      {/* Étape 3 : Obtenir l'adresse via Telegram */}
+      <div style={{background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'10px',overflow:'hidden'}}>
+        <div style={{padding:'12px 15px',background:'var(--bg3)',borderBottom:'1px solid var(--bd)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:'13px',letterSpacing:'1px',color:'var(--tx1)'}}>ÉTAPE 3 — Obtenir l'adresse de paiement</div>
+          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'16px',fontWeight:800,color:'var(--gold)'}}>{plan.price} USDT</div>
+        </div>
+        <div style={{padding:'16px'}}>
+          <div style={{background:'rgba(0,136,204,.07)',border:'1px solid rgba(0,136,204,.25)',borderRadius:'8px',padding:'14px',marginBottom:'12px',textAlign:'center'}}>
+            <div style={{fontSize:'28px',marginBottom:'6px'}}>✈️</div>
+            <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:800,fontSize:'14px',color:'#29a8dd',marginBottom:'5px'}}>CONTACTEZ NOTRE ÉQUIPE SUR TELEGRAM</div>
+            <div style={{fontSize:'10px',color:'var(--tx1)',lineHeight:'1.7',marginBottom:'10px'}}>
+              Pour recevoir l'adresse de paiement officielle et sécurisée, rejoignez notre Telegram.<br/>
+              Précisez votre plan choisi : <b style={{color:'var(--gold)'}}>{plan.name} — {plan.price} USDT/mois</b><br/>
+              Réseau sélectionné : <b>{wallet.label}</b>
+            </div>
+            <a href="https://t.me/alphabotpro" target="_blank" rel="noopener"
+              style={{display:'inline-block',padding:'12px 24px',background:'#29a8dd',border:'none',borderRadius:'8px',color:'#fff',fontFamily:"'Rajdhani',sans-serif",fontWeight:800,fontSize:'14px',letterSpacing:'.5px',textDecoration:'none',cursor:'pointer'}}>
+              ✈️ OUVRIR @alphabotpro SUR TELEGRAM
+            </a>
+          </div>
+          <div style={{background:'rgba(240,185,11,.05)',border:'1px solid rgba(240,185,11,.2)',borderRadius:'7px',padding:'9px 12px',fontSize:'9px',color:'var(--gold)',lineHeight:'1.6'}}>
+            🔐 <b>Sécurité :</b> Ne jamais envoyer de fonds sans avoir confirmé l'adresse directement avec notre équipe Telegram. Méfiez-vous des imposteurs.
+          </div>
+        </div>
+      </div>
+
+      {/* Étape 4 : Confirmer la transaction */}
+      {!submitted ? (
+        <div style={{background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:'10px',overflow:'hidden'}}>
+          <div style={{padding:'12px 15px',background:'var(--bg3)',borderBottom:'1px solid var(--bd)',fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:'13px',letterSpacing:'1px',color:'var(--tx1)'}}>
+            ÉTAPE 4 — Confirmer votre paiement
+          </div>
+          <div style={{padding:'14px'}}>
+            <div style={{fontSize:'10px',color:'var(--tx1)',marginBottom:'10px',lineHeight:'1.6'}}>
+              Après l'envoi, collez votre <b style={{color:'var(--gold)'}}>hash de transaction (TxID)</b> ci-dessous pour que nous puissions vérifier votre paiement.
+            </div>
+            <div className="fld" style={{marginBottom:'10px'}}>
+              <div className="flbl">Hash de transaction (TxID)</div>
+              <input className="inp" type="text" placeholder="Ex: 0x7f3a... ou abc123def..." value={txHash} onChange={e=>setTxHash(e.target.value)} style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'10px'}}/>
+            </div>
+            <div className="fld" style={{marginBottom:'12px'}}>
+              <div className="flbl">Plan sélectionné</div>
+              <div style={{background:'var(--bg3)',border:'1px solid var(--bd)',borderRadius:'6px',padding:'9px 12px',fontSize:'11px',fontWeight:700,color:'var(--gold)'}}>{plan.name} — {plan.price} USDT/mois</div>
+            </div>
+            <div className="fld" style={{marginBottom:'12px'}}>
+              <div className="flbl">Email associé au compte</div>
+              <div style={{background:'var(--bg3)',border:'1px solid var(--bd)',borderRadius:'6px',padding:'9px 12px',fontSize:'11px',color:'var(--tx1)',fontFamily:"'JetBrains Mono',monospace"}}>{user?.email||'—'}</div>
+            </div>
+            <button onClick={submitTx} className="btn btn-gold btn-full" style={{padding:'13px',fontSize:'13px',letterSpacing:'1px'}}>
+              ✅ CONFIRMER MON PAIEMENT
+            </button>
+            <div style={{fontSize:'9px',color:'var(--tx2)',textAlign:'center',marginTop:'8px',lineHeight:'1.6'}}>
+              Activation sous 24h · En cas de problème : Telegram @alphabotpro
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{background:'rgba(14,203,129,.08)',border:'1px solid rgba(14,203,129,.3)',borderRadius:'10px',padding:'20px',textAlign:'center'}}>
+          <div style={{fontSize:'36px',marginBottom:'10px'}}>🎉</div>
+          <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:800,fontSize:'16px',color:'var(--up)',marginBottom:'6px'}}>PAIEMENT SOUMIS !</div>
+          <div style={{fontSize:'11px',color:'var(--tx1)',lineHeight:'1.7'}}>
+            Votre transaction est en cours de vérification.<br/>
+            <b style={{color:'var(--gold)'}}>Plan {plan.name}</b> activé sous <b>24h maximum</b>.<br/>
+            Un message de confirmation sera envoyé sur Telegram.<br/>
+            TxID : <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'9px',color:'var(--tx2)'}}>{txHash.substring(0,20)}…</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════
    ADMIN PAGE
 ═══════════════════════════════════════════════ */
-function AdminPage({risk,setRisk,leverage,setLeverage,balance,setBalance,scoreMin,setScoreMin,totalUsers,stats,log,toast}) {
+function AdminPage({risk,setRisk,leverage,setLeverage,balance,setBalance,scoreMin,setScoreMin,maxMargin,setMaxMargin,totalUsers,stats,log,toast}) {
   const [globalRisk,setGlobalRisk]=useState(risk);
   const [globalLev,setGlobalLev]=useState(leverage);
   const [globalScore,setGlobalScore]=useState(scoreMin);
+  const [globalMargin,setGlobalMargin]=useState(maxMargin);
   const [testBalance,setTestBalance]=useState(balance.toString());
 
   const apply=()=>{
     setRisk(globalRisk);lsS('ab24_risk',globalRisk);
     setLeverage(globalLev);lsS('ab24_lev',globalLev);
     setScoreMin(globalScore);
+    setMaxMargin(globalMargin);lsS('ab24_maxmargin',globalMargin);
     const b=parseFloat(testBalance);if(b>=1){setBalance(b);lsS('ab24_bal',b);}
-    log(`⚙ Admin: Risque=${globalRisk}% Lev=${globalLev}x Score>=${globalScore}`,'wrn');
+    log(`⚙ Admin: Risque=${globalRisk}% Lev=${globalLev}x Score>=${globalScore} MargeMax=${globalMargin}$`,'wrn');
     toast('Paramètres admin appliqués','success');
   };
 
@@ -2382,6 +3337,16 @@ function AdminPage({risk,setRisk,leverage,setLeverage,balance,setBalance,scoreMi
               <input type="range" min="1" max="50" step="1" value={globalLev} onChange={e=>setGlobalLev(+e.target.value)} className="slider"/>
             </div>
             <div className="fld">
+              <div className="flbl">Marge maximum par trade (USDT)</div>
+              <div className="flex g8 mb4"><span className="f11 mono cgold">{globalMargin} $</span></div>
+              <input type="range" min="5" max="1000" step="5" value={globalMargin} onChange={e=>setGlobalMargin(+e.target.value)} className="slider"/>
+              <div style={{display:'flex',gap:'5px',marginTop:'6px',flexWrap:'wrap'}}>
+                {[10,25,50,100,250,500].map(v=>(
+                  <button key={v} className={`risk-btn${globalMargin===v?' act':''}`} style={{fontSize:'10px',padding:'4px 8px'}} onClick={()=>setGlobalMargin(v)}>{v}$</button>
+                ))}
+              </div>
+            </div>
+            <div className="fld">
               <div className="flbl">Score minimum signaux</div>
               <div className="flex g8 mb4"><span className="f11 mono cgold">{globalScore}/100</span></div>
               <input type="range" min="60" max="90" step="1" value={globalScore} onChange={e=>setGlobalScore(+e.target.value)} className="slider"/>
@@ -2400,7 +3365,7 @@ function AdminPage({risk,setRisk,leverage,setLeverage,balance,setBalance,scoreMi
               <div key={u.email} className="adm-row">
                 <div>
                   <div className="f11 bold">{u.email.split('@')[0]}</div>
-                  <div className="f9 tx2">{u.email} {u.isAdmin?'⚙':''} {!u.verified?'(non vérifié)':''}</div>
+                  <div className="f9 tx2">{u.isAdmin?'⚙ Admin ':''}{!u.verified?'(non vérifié)':'✅'}</div>
                 </div>
                 <div style={{textAlign:'right'}}>
                   <div className="f10 cgold mono">{u.refCode}</div>
