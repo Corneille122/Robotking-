@@ -1,0 +1,10 @@
+# AlphaBot Pro — Dépendances
+# Installe tout avec : pip install -r requirements.txt
+
+python-telegram-bot==20.7
+requests
+nest_asyncio
+
+# Pour le trading automatique Binance (optionnel)
+# Active BINANCE_TRADING_ACTIF = True dans le bot une fois installé
+python-binance
